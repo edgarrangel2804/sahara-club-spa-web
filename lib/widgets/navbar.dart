@@ -2,6 +2,8 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../pages/reception_login_page.dart';
 import '../pages/wellness_platform_page.dart';
+import '../features/memberships/vip_memberships_page.dart';
+import '../features/cart/cart_page.dart';
 
 class Navbar extends StatelessWidget {
   final bool isScrolled;
@@ -57,9 +59,13 @@ class Navbar extends StatelessWidget {
                     _navItem("NOTICIAS", 3),
                     _navItem("CONTACTO", 4),
                     const SizedBox(width: 20),
+                    _vipButton(context),
+                    const SizedBox(width: 20),
                     _wellnessButton(context),
                     const SizedBox(width: 20),
                     _receptionButton(context),
+                    const SizedBox(width: 10),
+                    _cartButton(context),
                   ],
                 ),
               ],
@@ -107,6 +113,36 @@ class Navbar extends StatelessWidget {
         );
       },
       child: const Text("WELLNESS", style: TextStyle(fontSize: 11, letterSpacing: 2, fontWeight: FontWeight.bold)),
+    );
+  }
+
+  Widget _vipButton(BuildContext context) {
+    return InkWell(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const VipMembershipsPage()),
+        );
+      },
+      child: const Row(
+        children: [
+          Icon(Icons.diamond, color: Color(0xFFC6A76A), size: 14),
+          SizedBox(width: 4),
+          Text("VIP CLUB", style: TextStyle(color: Color(0xFFC6A76A), fontSize: 11, letterSpacing: 2, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
+  Widget _cartButton(BuildContext context) {
+    return IconButton(
+      icon: const Icon(Icons.shopping_bag_outlined, color: Colors.white70),
+      onPressed: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const CartPage()),
+        );
+      },
     );
   }
 }
