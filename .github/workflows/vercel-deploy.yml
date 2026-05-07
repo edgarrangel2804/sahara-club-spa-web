@@ -16,7 +16,7 @@ jobs:
 
       - name: Install Flutter SDK and build
         run: |
-          git clone https://github.com/flutter/flutter.git -b 3.19.6 --depth 1 ~/flutter
+          git clone https://github.com/flutter/flutter.git -b 3.22.0 --depth 1 ~/flutter
           export PATH="$PATH:~/flutter/bin:~/flutter/bin/cache/dart-sdk/bin"
           flutter --version
           flutter pub get
