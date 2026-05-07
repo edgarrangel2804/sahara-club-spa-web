@@ -136,6 +136,11 @@ class _WellnessPlatformPageState extends State<WellnessPlatformPage>
                       // Continue Your Ritual
                       const ContinueRitualSection(),
 
+                      const SizedBox(height: 40),
+
+                      // Sahara Boutique - Luxury Shop
+                      const SaharaBoutiqueSection(),
+
                       const SizedBox(height: 60),
                     ]),
                   ),

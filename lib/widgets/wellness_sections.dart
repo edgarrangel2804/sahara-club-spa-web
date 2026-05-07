@@ -701,3 +701,281 @@ class ContinueRitualSection extends StatelessWidget {
     );
   }
 }
+
+// Sahara Boutique Section - Luxury Wellness Shop
+class SaharaBoutiqueSection extends StatelessWidget {
+  const SaharaBoutiqueSection({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Row(
+            children: [
+              Text(
+                'Sahara Boutique',
+                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                  color: SaharaTheme.beige,
+                  fontSize: 24,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.shopping_bag, color: SaharaTheme.gold, size: 24),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        SizedBox(
+          height: 280,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            itemCount: 5,
+            itemBuilder: (context, index) {
+              final products = [
+                {
+                  'name': 'VIP Annual Membership',
+                  'price': '\$999',
+                  'description': 'Unlimited access to all premium content',
+                  'icon': Icons.star,
+                  'badge': 'BEST SELLER'
+                },
+                {
+                  'name': 'Desert Rose Essential Oil',
+                  'price': '\$89',
+                  'description': 'Pure organic oil for meditation rituals',
+                  'icon': Icons.spa,
+                  'badge': 'POPULAR'
+                },
+                {
+                  'name': 'Crystal Healing Set',
+                  'price': '\$149',
+                  'description': 'Complete set of healing crystals',
+                  'icon': Icons.diamond,
+                  'badge': 'LIMITED'
+                },
+                {
+                  'name': 'Luxury Wellness Retreat',
+                  'price': '\$2,499',
+                  'description': '7-day exclusive desert experience',
+                  'icon': Icons.hotel,
+                  'badge': 'PREMIUM'
+                },
+                {
+                  'name': 'Personal Meditation Guide',
+                  'price': '\$299',
+                  'description': '1-on-1 sessions with master teachers',
+                  'icon': Icons.person,
+                  'badge': 'EXCLUSIVE'
+                },
+              ];
+
+              final product = products[index];
+
+              return Container(
+                width: 200,
+                margin: const EdgeInsets.only(right: 16),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  gradient: LinearGradient(
+                    colors: [SaharaTheme.burgundy.withOpacity(0.8), SaharaTheme.black],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: SaharaTheme.gold.withOpacity(0.2),
+                      blurRadius: 15,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: Stack(
+                  children: [
+                    // Product badge
+                    Positioned(
+                      top: 12,
+                      right: 12,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: SaharaTheme.gold.withOpacity(0.9),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          product['badge'] as String,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: SaharaTheme.black,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Product icon
+                          Container(
+                            width: 60,
+                            height: 60,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: SaharaTheme.goldGradient,
+                            ),
+                            child: Icon(
+                              product['icon'] as IconData,
+                              color: Colors.white,
+                              size: 30,
+                            ),
+                          ),
+
+                          const SizedBox(height: 16),
+
+                          // Product name
+                          Text(
+                            product['name'] as String,
+                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              color: SaharaTheme.beige,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+
+                          const SizedBox(height: 8),
+
+                          // Product description
+                          Text(
+                            product['description'] as String,
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Colors.white70,
+                              fontSize: 12,
+                              height: 1.4,
+                            ),
+                          ),
+
+                          const Spacer(),
+
+                          // Price and buy button
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                product['price'] as String,
+                                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                  color: SaharaTheme.gold,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              ElevatedButton(
+                                onPressed: () {},
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: SaharaTheme.gold,
+                                  foregroundColor: SaharaTheme.black,
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                ),
+                                child: const Text(
+                                  'Add to Cart',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+
+        // Shopping cart summary
+        Container(
+          margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            gradient: LinearGradient(
+              colors: [SaharaTheme.burgundy.withOpacity(0.3), SaharaTheme.black.withOpacity(0.5)],
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+            ),
+            border: Border.all(
+              color: SaharaTheme.gold.withOpacity(0.3),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 50,
+                height: 50,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: SaharaTheme.goldGradient,
+                ),
+                child: const Icon(
+                  Icons.shopping_cart,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Your Luxury Cart',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: SaharaTheme.beige,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Exclusive wellness products await',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.white60,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: SaharaTheme.gold.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  '0 items',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: SaharaTheme.gold,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}

@@ -19,8 +19,7 @@ A premium digital experience featuring:
 - **Exclusive Sahara Sessions**: VIP-locked premium content with membership access
 - **Wellness Courses**: Cinematic course thumbnails with progress tracking
 - **Your Healing Journey**: Personalized recommendations based on user preferences
-- **Continue Your Ritual**: Resume previously started sessions
-
+- **Continue Your Ritual**: Resume previously started sessions- **Sahara Boutique**: Luxury wellness shop with premium products and memberships
 #### Design Philosophy
 - **Cinematic Experience**: Slow fade transitions, floating smoke effects, soft glowing highlights
 - **Luxury Aesthetics**: Deep black and burgundy gradients, warm gold accents
