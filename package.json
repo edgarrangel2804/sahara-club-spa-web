@@ -4,7 +4,7 @@
   "description": "Luxury wellness digital platform for Sahara Club Spa",
   "main": "index.js",
   "scripts": {
-    "build": "flutter build web --release --web-renderer canvaskit",
+    "build": "flutter build web --release",
     "dev": "flutter run -d web"
   },
   "keywords": ["flutter", "spa", "wellness", "luxury"],
