@@ -27,6 +27,7 @@ Deberías ver:
   - "Wellness Courses"
   - "Your Healing Journey"
   - "Continue Your Ritual"
+  - **"Sahara Boutique" - Tienda de productos de lujo**
 
 ### 3. Verifica las características:
 - ✅ Tema oscuro con gradientes burdeos y oro
