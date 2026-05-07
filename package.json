@@ -1,0 +1,16 @@
+{
+  "name": "sahara-club-spa-web",
+  "version": "1.0.0",
+  "description": "Luxury wellness digital platform for Sahara Club Spa",
+  "main": "index.js",
+  "scripts": {
+    "build": "flutter build web --release --web-renderer canvaskit",
+    "dev": "flutter run -d web"
+  },
+  "keywords": ["flutter", "spa", "wellness", "luxury"],
+  "author": "Sahara Club Spa",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
