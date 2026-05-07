@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../pages/wellness_platform_page.dart';
 
 class HeroSection extends StatefulWidget {
   const HeroSection({super.key});
@@ -79,7 +80,7 @@ class _HeroSectionState extends State<HeroSection> {
                   children: [
                     _primaryButton(),
                     const SizedBox(width: 32),
-                    _secondaryButton(),
+                    _wellnessButton(context),
                   ],
                 ),
               ],
@@ -137,6 +138,39 @@ class _HeroSectionState extends State<HeroSection> {
             fontWeight: FontWeight.bold,
             letterSpacing: 2,
             fontSize: 12,
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ✨ BOTÓN WELLNESS
+  Widget _wellnessButton(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const WellnessPlatformPage()),
+          );
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
+          padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 24),
+          decoration: BoxDecoration(
+            color: Colors.transparent,
+            border: Border.all(color: const Color(0xFFC6A76A)),
+            borderRadius: BorderRadius.circular(0),
+          ),
+          child: const Text(
+            "IR A WELLNESS",
+            style: TextStyle(
+              color: Color(0xFFC6A76A),
+              fontWeight: FontWeight.bold,
+              letterSpacing: 2,
+              fontSize: 12,
+            ),
           ),
         ),
       ),
