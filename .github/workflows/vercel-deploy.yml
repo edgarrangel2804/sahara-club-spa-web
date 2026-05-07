@@ -14,18 +14,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Flutter SDK
+      - name: Install Flutter SDK and build
         run: |
-          git clone https://github.com/flutter/flutter.git -b 3.19.6 --depth 1 $HOME/flutter
-          echo "$HOME/flutter/bin" >> $GITHUB_PATH
-          echo "$HOME/flutter/bin/cache/dart-sdk/bin" >> $GITHUB_PATH
+          git clone https://github.com/flutter/flutter.git -b 3.19.6 --depth 1 ~/flutter
+          export PATH="$PATH:~/flutter/bin:~/flutter/bin/cache/dart-sdk/bin"
           flutter --version
-
-      - name: Install dependencies
-        run: flutter pub get
-
-      - name: Build Flutter web
-        run: flutter build web --release
+          flutter pub get
+          flutter build web --release
 
       - name: Deploy to Vercel
         uses: amondnet/vercel-action@v20
