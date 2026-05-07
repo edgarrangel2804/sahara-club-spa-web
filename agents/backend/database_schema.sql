@@ -1,0 +1,2 @@
+-- Database Schema
+-- Define tables, relationships and RLS policies here.
