@@ -21,11 +21,7 @@ class _ReceptionLoginPageState extends State<ReceptionLoginPage> {
         password: _passwordController.text.trim(),
       );
       if (mounted) {
-        // Redirigir a la Agenda (Simulado por ahora con un SnackBar)
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Acceso concedido. Entrando a la Agenda...')),
-        );
-        // Navigator.pushReplacementNamed(context, '/agenda');
+        Navigator.pushReplacementNamed(context, '/agenda');
       }
     } catch (e) {
       if (mounted) {
