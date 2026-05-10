@@ -136,9 +136,8 @@ class _ClientsModuleState extends State<ClientsModule> {
       while (true) {
         try {
           data = await Supabase.instance.client
-              .from('profiles')
+              .from('clients')
               .select(columns.join(', '))
-              .eq('role', 'client')
               .order('full_name') as List;
           break;
         } on PostgrestException catch (e) {
@@ -470,11 +469,11 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
       final data = await Supabase.instance.client
           .from('bookings')
           .select('''
-            id, booking_date, booking_time, status,
+            id, booking_date, booking_time, status, client_notes,
             services(name),
             therapist:profiles!bookings_therapist_id_fkey(full_name)
           ''')
-          .eq('client_id', widget.client.id)
+          .eq('client_record_id', widget.client.id)
           .order('booking_date', ascending: false)
           .order('booking_time', ascending: false)
           .limit(20) as List;
@@ -736,7 +735,7 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
     if (ok != true || !ctx.mounted) return;
     try {
       await Supabase.instance.client
-          .from('profiles')
+          .from('clients')
           .delete()
           .eq('id', widget.client.id);
       widget.onDeleted();
@@ -809,7 +808,6 @@ class _ClientFormDialogState extends State<_ClientFormDialog> {
         'email':      _emailCtrl.text.trim(),
         'phone':      _phoneCtrl.text.trim(),
         'notes':      _notesCtrl.text.trim(),
-        'role':       'client',
         if (_birthDate != null) 'birth_date': _birthDate,
       };
 
@@ -820,11 +818,11 @@ class _ClientFormDialogState extends State<_ClientFormDialog> {
           try {
             if (id == null) {
               await Supabase.instance.client
-                  .from('profiles')
+                  .from('clients')
                   .update(current)
                   .eq('id', widget.editClient!.id);
             } else {
-              await Supabase.instance.client.from('profiles').insert(current);
+              await Supabase.instance.client.from('clients').insert(current);
             }
             return;
           } on PostgrestException catch (e) {

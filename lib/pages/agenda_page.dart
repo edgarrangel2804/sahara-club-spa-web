@@ -68,17 +68,19 @@ class _Booking {
     final t = (m['booking_time'] as String? ?? '09:00:00').split(':');
     return _Booking(
       id:              m['id'] as String,
-      clientId:        m['client_id']   as String? ?? '',
-      clientName:      (m['client']   as Map?)?['full_name'] as String? ?? 'Cliente',
+      clientId:        m['client_record_id'] as String? ??
+          m['client_id'] as String? ?? '',
+      clientName:      (m['client_record'] as Map?)?['full_name'] as String? ??
+          (m['client'] as Map?)?['full_name'] as String? ?? 'Cliente',
       serviceId:       m['service_id'] as String? ?? '',
       serviceName:     (m['services'] as Map?)?['name']      as String? ?? 'Servicio',
       therapistId:     m['therapist_id'] as String? ?? '',
       therapistName:   (m['therapist'] as Map?)?['full_name'] as String? ?? 'Terapeuta',
       date:            DateTime.parse(m['booking_date'] as String),
       startMinute:     int.parse(t[0]) * 60 + int.parse(t[1]),
-      durationMinutes: ((m['services'] as Map?)?['duration'] as int?) ?? 60,
+      durationMinutes: (m['duration_min'] as int?) ?? 60,
       status:          m['status'] as String? ?? 'scheduled',
-      notes:           m['notes'] as String? ?? '',
+      notes:           m['client_notes'] as String? ?? '',
     );
   }
 
@@ -219,8 +221,9 @@ class _AgendaPageState extends State<AgendaPage> {
     setState(() => _loading = true);
     try {
       dynamic q = Supabase.instance.client.from('bookings').select('''
-        id, client_id, service_id, booking_date, booking_time, status, therapist_id, notes,
+        id, client_id, client_record_id, service_id, booking_date, booking_time, duration_min, status, therapist_id, client_notes,
         client:profiles!bookings_client_id_fkey(full_name),
+        client_record:clients!bookings_client_record_id_fkey(full_name),
         therapist:profiles!bookings_therapist_id_fkey(full_name),
         services(name)
       ''')
@@ -2256,6 +2259,21 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
     } catch (_) { return ''; }
   }
 
+  Map<String, dynamic>? get _selectedService {
+    if (_serviceId == null) return null;
+    try {
+      return _services.firstWhere((s) => s['id'] == _serviceId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  int get _selectedServiceDuration =>
+      (_selectedService?['duration'] as num?)?.toInt() ?? 60;
+
+  String get _selectedServiceName =>
+      _selectedService?['name'] as String? ?? '';
+
   static const _statusMeta = {
     'scheduled': ('Reservado',   Color(0xFF5B8FF9)),
     'confirmed': ('Confirmado',  Color(0xFFFFB347)),
@@ -2390,9 +2408,8 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
     if (q.length < 2) return const [];
     try {
       final data = await Supabase.instance.client
-          .from('profiles')
+          .from('clients')
           .select('id, full_name, email')
-          .eq('role', 'client')
           .ilike('full_name', '%$q%')
           .order('full_name')
           .limit(8);
@@ -2403,9 +2420,8 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
       }
       try {
         final data = await Supabase.instance.client
-            .from('profiles')
+            .from('clients')
             .select('id, full_name')
-            .eq('role', 'client')
             .ilike('full_name', '%$q%')
             .order('full_name')
             .limit(8);
@@ -2443,8 +2459,8 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
       String? finalClientId = _clientId;
       if (finalClientId == null || finalClientId.isEmpty) {
         final nameQ = await Supabase.instance.client
-            .from('profiles').select('id')
-            .eq('full_name', _clientCtrl.text.trim()).eq('role', 'client').maybeSingle();
+            .from('clients').select('id')
+            .eq('full_name', _clientCtrl.text.trim()).maybeSingle();
         finalClientId = nameQ?['id'] as String?;
         if (finalClientId == null) throw Exception('Cliente no encontrado. Verifica el nombre.');
       }
@@ -2452,13 +2468,15 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
       final timeStr =
           '${_hour.toString().padLeft(2, '0')}:${_minute.toString().padLeft(2, '0')}:00';
       final payload = {
-        'client_id':    finalClientId,
+        'client_record_id': finalClientId,
         'therapist_id': _therapistId,
         'service_id':   _serviceId,
         'booking_date': _yyyyMMdd(_date),
         'booking_time': timeStr,
+        'duration_min': _selectedServiceDuration,
         'status':       _status,
-        'notes':        _notesCtrl.text.trim(),
+        'client_notes': _notesCtrl.text.trim(),
+        'service_name': _selectedServiceName,
       };
 
       if (widget.editBooking != null) {
