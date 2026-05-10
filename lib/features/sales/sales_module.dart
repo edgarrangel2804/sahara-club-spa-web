@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../theme/sahara_theme.dart';
+import 'receipt_generator.dart';
+
 
 // ── UUID helper ───────────────────────────────────────────────────────────────
 String _genUuid() {
@@ -712,6 +714,18 @@ class _SaleDetail extends StatelessWidget {
                         fontSize: 12, fontWeight: FontWeight.w600)),
               ),
             const Spacer(),
+            OutlinedButton.icon(
+              onPressed: () => _printReceipt(context, sale),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.black87,
+                side: const BorderSide(color: Color(0xFFECECEC)),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+              ),
+              icon: const Icon(Icons.print, size: 14),
+              label: Text('Imprimir', style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600)),
+            ),
+            const SizedBox(width: 8),
             if (sale.status == 'pending')
               FilledButton.icon(
                 onPressed: () => _changeStatus(context, 'paid'),
@@ -732,6 +746,41 @@ class _SaleDetail extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  Future<void> _printReceipt(BuildContext context, _Sale sale) async {
+    try {
+      final methodInfo = _kMethods.firstWhere(
+          (m) => m.$1 == sale.paymentMethod,
+          orElse: () => _kMethods[0]);
+      
+      // Ensure safe mapping
+      final items = sale.items.map((dynamic item) {
+        final Map<String, dynamic> i = Map<String, dynamic>.from(item as Map);
+        return {
+          'name': i['name'] ?? 'Item',
+          'qty': i['quantity'] ?? 1,
+          'price': (i['price'] as num?)?.toDouble() ?? 0,
+          'subtotal': ((i['price'] as num?)?.toDouble() ?? 0) * ((i['quantity'] as num?)?.toInt() ?? 1),
+        };
+      }).toList();
+
+      await printSaharaReceipt(
+        saleId: sale.id,
+        clientName: sale.clientName,
+        date: sale.createdAt,
+        paymentMethod: methodInfo.$2,
+        total: sale.total,
+        items: items,
+        status: sale.status,
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al imprimir: $e'), backgroundColor: Colors.red.shade100),
+        );
+      }
+    }
   }
 
   Future<void> _changeStatus(BuildContext ctx, String newStatus) async {
@@ -796,7 +845,7 @@ class _NewSaleDialogState extends State<_NewSaleDialog> {
           .from('services')
           .select('id, name, price')
           .order('name') as List;
-      if (mounted) setState(() => _services = data.cast());
+      if (mounted) setState(() => _services = List<Map<String, dynamic>>.from(data));
     } catch (_) {}
   }
 
@@ -1273,8 +1322,6 @@ class _ItemRowState extends State<_ItemRow> {
       text: widget.item.price > 0 ? widget.item.price.toStringAsFixed(0) : '');
   late final _qtyCtrl   = TextEditingController(
       text: widget.item.quantity.toString());
-  bool _showServices = false;
-  String _search = '';
 
   @override
   void dispose() {
@@ -1286,13 +1333,6 @@ class _ItemRowState extends State<_ItemRow> {
 
   @override
   Widget build(BuildContext context) {
-    final filtered = widget.services.where((s) {
-      if (_search.isEmpty) return true;
-      return (s['name'] as String? ?? '')
-          .toLowerCase()
-          .contains(_search.toLowerCase());
-    }).toList();
-
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Column(
@@ -1302,65 +1342,63 @@ class _ItemRowState extends State<_ItemRow> {
             // Name
             Expanded(
               flex: 3,
-              child: Stack(children: [
-                TextField(
-                  controller:  _nameCtrl,
-                  style: GoogleFonts.inter(
-                      fontSize: 13, color: Colors.black87),
-                  decoration: _deco('Nombre del ítem…', null),
-                  onChanged: (v) {
-                    widget.onChange(() => widget.item.name = v);
-                    setState(() => _showServices = v.length >= 2);
-                    _search = v;
-                  },
-                  onTap: () =>
-                      setState(() => _showServices = _nameCtrl.text.length >= 2),
-                ),
-                if (_showServices && filtered.isNotEmpty)
-                  Positioned(
-                    top: 42, left: 0, right: 0,
+              child: Autocomplete<Map<String, dynamic>>(
+                displayStringForOption: (option) => option['name'] as String? ?? '',
+                optionsBuilder: (TextEditingValue textEditingValue) {
+                  if (textEditingValue.text.length < 2) return const Iterable<Map<String, dynamic>>.empty();
+                  return widget.services.where((s) {
+                    return (s['name'] as String? ?? '')
+                        .toLowerCase()
+                        .contains(textEditingValue.text.toLowerCase());
+                  });
+                },
+                onSelected: (Map<String, dynamic> selection) {
+                  final price = (selection['price'] as num?)?.toDouble() ?? 0;
+                  widget.onChange(() {
+                    widget.item.name = selection['name'] as String? ?? '';
+                    widget.item.price = price;
+                  });
+                  _nameCtrl.text = widget.item.name;
+                  _priceCtrl.text = price.toStringAsFixed(0);
+                },
+                fieldViewBuilder: (context, controller, focusNode, onEditingComplete) {
+                  if (controller.text.isEmpty && _nameCtrl.text.isNotEmpty) {
+                    controller.text = _nameCtrl.text;
+                  }
+                  controller.addListener(() {
+                    if (controller.text != _nameCtrl.text) {
+                       _nameCtrl.text = controller.text;
+                       widget.onChange(() => widget.item.name = controller.text);
+                    }
+                  });
+                  return TextField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    style: GoogleFonts.inter(fontSize: 13, color: Colors.black87),
+                    decoration: _deco('Nombre del ítem…', null),
+                  );
+                },
+                optionsViewBuilder: (context, onSelected, options) {
+                  return Align(
+                    alignment: Alignment.topLeft,
                     child: Material(
                       elevation: 8,
                       borderRadius: BorderRadius.circular(8),
                       child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxHeight: 160),
+                        constraints: BoxConstraints(maxHeight: 200, maxWidth: MediaQuery.of(context).size.width * 0.3),
                         child: ListView.builder(
-                          padding:    EdgeInsets.zero,
+                          padding: EdgeInsets.zero,
                           shrinkWrap: true,
-                          itemCount:  filtered.length,
-                          itemBuilder: (_, i) {
-                            final s = filtered[i];
+                          itemCount: options.length,
+                          itemBuilder: (BuildContext context, int index) {
+                            final option = options.elementAt(index);
                             return InkWell(
-                              onTap: () {
-                                final price = (s['price'] as num?)
-                                        ?.toDouble() ?? 0;
-                                widget.onChange(() {
-                                  widget.item.name  = s['name'] as String? ?? '';
-                                  widget.item.price = price;
-                                });
-                                _nameCtrl.text  = widget.item.name;
-                                _priceCtrl.text = price.toStringAsFixed(0);
-                                setState(() {
-                                  _showServices = false;
-                                  _search = '';
-                                });
-                              },
+                              onTap: () => onSelected(option),
                               child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 14, vertical: 9),
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                                 child: Row(children: [
-                                  Expanded(child: Text(
-                                    s['name'] as String? ?? '',
-                                    style: GoogleFonts.inter(
-                                        fontSize: 13,
-                                        color: Colors.black87),
-                                  )),
-                                  Text(
-                                    '\$${_fmtFull((s['price'] as num?)?.toDouble() ?? 0)}',
-                                    style: GoogleFonts.inter(
-                                        fontSize: 12,
-                                        color: Colors.black45),
-                                  ),
+                                  Expanded(child: Text(option['name'] as String? ?? '', style: GoogleFonts.inter(fontSize: 13, color: Colors.black87))),
+                                  Text('\$${_fmtFull((option['price'] as num?)?.toDouble() ?? 0)}', style: GoogleFonts.inter(fontSize: 12, color: Colors.black45)),
                                 ]),
                               ),
                             );
@@ -1368,8 +1406,9 @@ class _ItemRowState extends State<_ItemRow> {
                         ),
                       ),
                     ),
-                  ),
-              ]),
+                  );
+                },
+              ),
             ),
             const SizedBox(width: 6),
             // Price

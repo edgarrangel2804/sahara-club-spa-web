@@ -95,9 +95,9 @@ class _AdminModuleState extends State<AdminModule>
     try {
       if (_tab.index == 0) {
         final data = await Supabase.instance.client
-            .from('profiles')
+            .from('staff')
             .select()
-            .inFilter('role', ['therapist', 'reception', 'admin'])
+            .inFilter('role', ['therapist', 'receptionist', 'admin'])
             .order('full_name');
         if (!mounted) return;
         _staff = (data as List)
@@ -120,7 +120,7 @@ class _AdminModuleState extends State<AdminModule>
   Future<void> _toggleStaffActive(_Staff s) async {
     try {
       await Supabase.instance.client
-          .from('profiles')
+          .from('staff')
           .update({'active': !s.active})
           .eq('id', s.id);
       _load();
@@ -155,7 +155,7 @@ class _AdminModuleState extends State<AdminModule>
     final ok = await _confirmDelete(context, 'Eliminar staff',
         '¿Eliminar a "${s.fullName}"? Esta acción no se puede deshacer.');
     if (ok != true) return;
-    await Supabase.instance.client.from('profiles').delete().eq('id', s.id);
+    await Supabase.instance.client.from('staff').delete().eq('id', s.id);
     _load();
   }
 
@@ -590,10 +590,10 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
         'active':    _active,
       };
       if (widget.staff == null) {
-        await Supabase.instance.client.from('profiles').insert(payload);
+        await Supabase.instance.client.from('staff').insert(payload);
       } else {
         await Supabase.instance.client
-            .from('profiles').update(payload).eq('id', widget.staff!.id);
+            .from('staff').update(payload).eq('id', widget.staff!.id);
       }
       if (mounted) {
         Navigator.pop(context);
@@ -658,7 +658,7 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
                   decoration: _deco(null),
                   items: const [
                     DropdownMenuItem(value: 'therapist',  child: Text('Terapeuta')),
-                    DropdownMenuItem(value: 'reception',  child: Text('Recepción')),
+                    DropdownMenuItem(value: 'receptionist',  child: Text('Recepción')),
                     DropdownMenuItem(value: 'admin',      child: Text('Administrador')),
                   ],
                   onChanged: (v) => setState(() => _role = v!),
