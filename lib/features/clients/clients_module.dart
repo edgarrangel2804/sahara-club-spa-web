@@ -106,11 +106,23 @@ class _ClientsModuleState extends State<ClientsModule> {
   Future<void> _loadClients() async {
     setState(() => _loading = true);
     try {
-      final data = await Supabase.instance.client
-          .from('profiles')
-          .select('id, full_name, email, phone, birth_date, notes, created_at')
-          .eq('role', 'client')
-          .order('full_name') as List;
+      List data;
+      try {
+        data = await Supabase.instance.client
+            .from('profiles')
+            .select('id, full_name, email, phone, birth_date, notes, created_at')
+            .eq('role', 'client')
+            .order('full_name') as List;
+      } on PostgrestException catch (e) {
+        if (e.code != 'PGRST204' || !e.message.contains('birth_date')) {
+          rethrow;
+        }
+        data = await Supabase.instance.client
+            .from('profiles')
+            .select('id, full_name, email, phone, notes, created_at')
+            .eq('role', 'client')
+            .order('full_name') as List;
+      }
       if (!mounted) return;
       setState(() {
         _clients = data
@@ -780,16 +792,41 @@ class _ClientFormDialogState extends State<_ClientFormDialog> {
 
       String savedId;
       if (widget.editClient != null) {
-        await Supabase.instance.client
-            .from('profiles')
-            .update(payload)
-            .eq('id', widget.editClient!.id);
+        try {
+          await Supabase.instance.client
+              .from('profiles')
+              .update(payload)
+              .eq('id', widget.editClient!.id);
+        } on PostgrestException catch (e) {
+          if (e.code != 'PGRST204' || !e.message.contains('birth_date')) {
+            rethrow;
+          }
+          final fallbackPayload = Map<String, dynamic>.from(payload)
+            ..remove('birth_date');
+          await Supabase.instance.client
+              .from('profiles')
+              .update(fallbackPayload)
+              .eq('id', widget.editClient!.id);
+          _birthDate = null;
+        }
         savedId = widget.editClient!.id;
       } else {
         savedId = _genUuid();
-        await Supabase.instance.client
-            .from('profiles')
-            .insert({...payload, 'id': savedId});
+        try {
+          await Supabase.instance.client
+              .from('profiles')
+              .insert({...payload, 'id': savedId});
+        } on PostgrestException catch (e) {
+          if (e.code != 'PGRST204' || !e.message.contains('birth_date')) {
+            rethrow;
+          }
+          final fallbackPayload = Map<String, dynamic>.from(payload)
+            ..remove('birth_date');
+          await Supabase.instance.client
+              .from('profiles')
+              .insert({...fallbackPayload, 'id': savedId});
+          _birthDate = null;
+        }
       }
 
       final saved = _Client(

@@ -4,6 +4,11 @@
 -- ============================================================
 
 -- ── sales ────────────────────────────────────────────────────
+-- profiles client fields
+ALTER TABLE profiles
+  ADD COLUMN IF NOT EXISTS birth_date DATE,
+  ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
+
 CREATE TABLE IF NOT EXISTS sales (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   client_id       UUID REFERENCES profiles(id) ON DELETE SET NULL,
