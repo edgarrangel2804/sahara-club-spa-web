@@ -91,6 +91,22 @@ class ClientsModule extends StatefulWidget {
   State<ClientsModule> createState() => _ClientsModuleState();
 }
 
+Future<Map<String, dynamic>?> showClientFormDialog(BuildContext context) async {
+  final client = await showDialog<_Client>(
+    context: context,
+    builder: (dialogContext) => _ClientFormDialog(
+      onSaved: (client) => Navigator.pop(dialogContext, client),
+    ),
+  );
+  if (client == null) return null;
+  return {
+    'id': client.id,
+    'full_name': client.fullName,
+    'email': client.email,
+    'phone': client.phone,
+  };
+}
+
 class _ClientsModuleState extends State<ClientsModule> {
   List<_Client> _clients  = [];
   _Client?      _selected;
@@ -448,7 +464,7 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
           .from('bookings')
           .select('''
             id, booking_date, booking_time, status,
-            services(name, duration),
+            services(name),
             therapist:profiles!bookings_therapist_id_fkey(full_name)
           ''')
           .eq('client_id', widget.client.id)

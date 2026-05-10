@@ -9,6 +9,12 @@ ALTER TABLE profiles
   ADD COLUMN IF NOT EXISTS birth_date DATE,
   ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
 
+-- services fields used by agenda/admin modules
+ALTER TABLE services
+  ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS duration INTEGER NOT NULL DEFAULT 60,
+  ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT true;
+
 CREATE TABLE IF NOT EXISTS sales (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   client_id       UUID REFERENCES profiles(id) ON DELETE SET NULL,

@@ -794,7 +794,7 @@ class _NewSaleDialogState extends State<_NewSaleDialog> {
     try {
       final data = await Supabase.instance.client
           .from('services')
-          .select('id, name, duration, price')
+          .select('id, name, price')
           .order('name') as List;
       if (mounted) setState(() => _services = data.cast());
     } catch (_) {}

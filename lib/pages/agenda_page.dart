@@ -222,7 +222,7 @@ class _AgendaPageState extends State<AgendaPage> {
         id, client_id, service_id, booking_date, booking_time, status, therapist_id, notes,
         client:profiles!bookings_client_id_fkey(full_name),
         therapist:profiles!bookings_therapist_id_fkey(full_name),
-        services(name, duration)
+        services(name)
       ''')
           .gte('booking_date', _yyyyMMdd(_rangeStart))
           .lte('booking_date', _yyyyMMdd(_rangeEnd));
@@ -394,6 +394,7 @@ class _AgendaPageState extends State<AgendaPage> {
       context: ctx,
       builder: (_) => _NewBookingDialog(
         therapists:  _therapists,
+        initialTherapistId: _therapistId,
         initialDate: date,
         initialTime: time,
         onSaved:     () { Navigator.pop(ctx); _loadBookings(); },
@@ -406,6 +407,7 @@ class _AgendaPageState extends State<AgendaPage> {
       context: ctx,
       builder: (_) => _NewBookingDialog(
         therapists:  _therapists,
+        initialTherapistId: _therapistId,
         editBooking: b,
         onSaved:     () { Navigator.pop(ctx); _loadBookings(); },
       ),
@@ -480,6 +482,14 @@ class _AgendaPageState extends State<AgendaPage> {
       _loadBookings();
     } catch (e) {
       debugPrint('reschedule error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('No se pudo mover la reserva: $e'),
+            backgroundColor: Colors.red.shade100,
+          ),
+        );
+      }
     }
   }
 
@@ -2195,12 +2205,14 @@ class _NewBookingDialog extends StatefulWidget {
   const _NewBookingDialog({
     required this.therapists,
     required this.onSaved,
+    this.initialTherapistId,
     this.initialDate,
     this.initialTime,
     this.editBooking,
   });
   final List<_Therapist> therapists;
   final VoidCallback     onSaved;
+  final String?          initialTherapistId;
   final DateTime?        initialDate;
   final TimeOfDay?       initialTime;
   final _Booking?        editBooking;
@@ -2225,6 +2237,7 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
   bool          _showInfo     = false;
   bool          _serviceOpen  = false;
   String        _serviceSearch = '';
+  String?       _serviceLoadError;
 
   List<Map<String, dynamic>> _services = [];
 
@@ -2272,6 +2285,8 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
       _date   = widget.initialDate ?? DateTime.now();
       _hour   = widget.initialTime?.hour   ?? 10;
       _minute = widget.initialTime?.minute ?? 0;
+      _therapistId = widget.initialTherapistId ??
+          (widget.therapists.length == 1 ? widget.therapists.first.id : null);
     }
     _loadServices();
   }
@@ -2287,9 +2302,18 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
   Future<void> _loadServices() async {
     try {
       final data = await Supabase.instance.client
-          .from('services').select('id, name, duration, price').order('name');
-      if (mounted) setState(() => _services = (data as List).cast());
-    } catch (_) {}
+          .from('services').select('id, name, price').order('name');
+      if (mounted) {
+        setState(() {
+          _services = (data as List).cast<Map<String, dynamic>>();
+          _serviceLoadError = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _serviceLoadError = '$e');
+      }
+    }
   }
 
   void _showRepeatDialog(BuildContext ctx) {
@@ -2379,9 +2403,21 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
   }
 
   Future<bool> _doSave() async {
-    if (_clientCtrl.text.trim().isEmpty || _therapistId == null || _serviceId == null) {
+    if (_clientCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Completa cliente, profesional y servicio.')),
+        const SnackBar(content: Text('Selecciona o crea un cliente.')),
+      );
+      return false;
+    }
+    if (_therapistId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Selecciona un profesional.')),
+      );
+      return false;
+    }
+    if (_serviceId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Selecciona un servicio.')),
       );
       return false;
     }
@@ -2703,7 +2739,15 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
                           ),
                           const SizedBox(width: 8),
                           OutlinedButton.icon(
-                            onPressed: () {},
+                            onPressed: () async {
+                              final client = await showClientFormDialog(context);
+                              if (client == null || !mounted) return;
+                              setState(() {
+                                _clientId = client['id'] as String?;
+                                _clientCtrl.text =
+                                    client['full_name'] as String? ?? '';
+                              });
+                            },
                             style: OutlinedButton.styleFrom(
                               foregroundColor: SaharaTheme.gold,
                               side: BorderSide(color: SaharaTheme.gold.withValues(alpha: 0.5)),
@@ -2832,7 +2876,17 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
                             ),
                           ),
                           // Services list
-                          if (_filteredServices.isNotEmpty) ...[
+                          if (_serviceLoadError != null) ...[
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 10),
+                              child: Text(
+                                'No se pudieron cargar servicios: $_serviceLoadError',
+                                style: GoogleFonts.inter(
+                                    fontSize: 12, color: Colors.red.shade700),
+                              ),
+                            ),
+                          ] else if (_filteredServices.isNotEmpty) ...[
                             Padding(
                               padding: const EdgeInsets.only(
                                   left: 16, top: 4, bottom: 4),
@@ -2892,6 +2946,16 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
                                     ),
                                   );
                                 },
+                              ),
+                            ),
+                          ] else ...[
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 10),
+                              child: Text(
+                                'No hay servicios disponibles.',
+                                style: GoogleFonts.inter(
+                                    fontSize: 12, color: Colors.black45),
                               ),
                             ),
                           ],
