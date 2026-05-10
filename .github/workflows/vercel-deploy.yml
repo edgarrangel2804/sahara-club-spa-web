@@ -22,13 +22,14 @@ jobs:
           flutter pub get
           flutter build web --release
 
+      - name: Prepare Vercel prebuilt output
+        run: |
+          mkdir -p .vercel/output/static
+          cp -R build/web/. .vercel/output/static/
+          printf '{"version":3}' > .vercel/output/config.json
+          printf '{"orgId":"%s","projectId":"%s"}' \
+            "${{ secrets.VERCEL_ORG_ID }}" \
+            "${{ secrets.VERCEL_PROJECT_ID }}" > .vercel/project.json
+
       - name: Deploy to Vercel
-        uses: amondnet/vercel-action@v42
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          github-comment: false
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          vercel-args: '--prod'
-          working-directory: build/web
+        run: npx vercel@latest deploy --prebuilt --prod --yes --token="${{ secrets.VERCEL_TOKEN }}"
