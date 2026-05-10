@@ -107,6 +107,13 @@ Future<Map<String, dynamic>?> showClientFormDialog(BuildContext context) async {
   };
 }
 
+String? _missingColumn(PostgrestException e) {
+  if (e.code != 'PGRST204') return null;
+  return RegExp(r"Could not find the '([^']+)' column")
+      .firstMatch(e.message)
+      ?.group(1);
+}
+
 class _ClientsModuleState extends State<ClientsModule> {
   List<_Client> _clients  = [];
   _Client?      _selected;
@@ -122,22 +129,22 @@ class _ClientsModuleState extends State<ClientsModule> {
   Future<void> _loadClients() async {
     setState(() => _loading = true);
     try {
-      List data;
-      try {
-        data = await Supabase.instance.client
-            .from('profiles')
-            .select('id, full_name, email, phone, birth_date, notes, created_at')
-            .eq('role', 'client')
-            .order('full_name') as List;
-      } on PostgrestException catch (e) {
-        if (e.code != 'PGRST204' || !e.message.contains('birth_date')) {
-          rethrow;
+      final columns = [
+        'id', 'full_name', 'email', 'phone', 'birth_date', 'notes', 'created_at',
+      ];
+      late List data;
+      while (true) {
+        try {
+          data = await Supabase.instance.client
+              .from('profiles')
+              .select(columns.join(', '))
+              .eq('role', 'client')
+              .order('full_name') as List;
+          break;
+        } on PostgrestException catch (e) {
+          final missing = _missingColumn(e);
+          if (missing == null || !columns.remove(missing)) rethrow;
         }
-        data = await Supabase.instance.client
-            .from('profiles')
-            .select('id, full_name, email, phone, notes, created_at')
-            .eq('role', 'client')
-            .order('full_name') as List;
       }
       if (!mounted) return;
       setState(() {
@@ -806,43 +813,36 @@ class _ClientFormDialogState extends State<_ClientFormDialog> {
         if (_birthDate != null) 'birth_date': _birthDate,
       };
 
+      Future<void> writeProfile(Map<String, dynamic> data, {String? id}) async {
+        final current = Map<String, dynamic>.from(data);
+        if (id != null) current['id'] = id;
+        while (true) {
+          try {
+            if (id == null) {
+              await Supabase.instance.client
+                  .from('profiles')
+                  .update(current)
+                  .eq('id', widget.editClient!.id);
+            } else {
+              await Supabase.instance.client.from('profiles').insert(current);
+            }
+            return;
+          } on PostgrestException catch (e) {
+            final missing = _missingColumn(e);
+            if (missing == null || !current.containsKey(missing)) rethrow;
+            current.remove(missing);
+            if (missing == 'birth_date') _birthDate = null;
+          }
+        }
+      }
+
       String savedId;
       if (widget.editClient != null) {
-        try {
-          await Supabase.instance.client
-              .from('profiles')
-              .update(payload)
-              .eq('id', widget.editClient!.id);
-        } on PostgrestException catch (e) {
-          if (e.code != 'PGRST204' || !e.message.contains('birth_date')) {
-            rethrow;
-          }
-          final fallbackPayload = Map<String, dynamic>.from(payload)
-            ..remove('birth_date');
-          await Supabase.instance.client
-              .from('profiles')
-              .update(fallbackPayload)
-              .eq('id', widget.editClient!.id);
-          _birthDate = null;
-        }
+        await writeProfile(payload);
         savedId = widget.editClient!.id;
       } else {
         savedId = _genUuid();
-        try {
-          await Supabase.instance.client
-              .from('profiles')
-              .insert({...payload, 'id': savedId});
-        } on PostgrestException catch (e) {
-          if (e.code != 'PGRST204' || !e.message.contains('birth_date')) {
-            rethrow;
-          }
-          final fallbackPayload = Map<String, dynamic>.from(payload)
-            ..remove('birth_date');
-          await Supabase.instance.client
-              .from('profiles')
-              .insert({...fallbackPayload, 'id': savedId});
-          _birthDate = null;
-        }
+        await writeProfile(payload, id: savedId);
       }
 
       final saved = _Client(

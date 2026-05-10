@@ -6,6 +6,8 @@
 -- ── sales ────────────────────────────────────────────────────
 -- profiles client fields
 ALTER TABLE profiles
+  ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT true,
   ADD COLUMN IF NOT EXISTS birth_date DATE,
   ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
 

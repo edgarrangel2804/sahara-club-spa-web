@@ -2397,6 +2397,22 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
           .order('full_name')
           .limit(8);
       return (data as List).cast<Map<String, dynamic>>();
+    } on PostgrestException catch (e) {
+      if (e.code != 'PGRST204' || !e.message.contains("'email'")) {
+        return const [];
+      }
+      try {
+        final data = await Supabase.instance.client
+            .from('profiles')
+            .select('id, full_name')
+            .eq('role', 'client')
+            .ilike('full_name', '%$q%')
+            .order('full_name')
+            .limit(8);
+        return (data as List).cast<Map<String, dynamic>>();
+      } catch (_) {
+        return const [];
+      }
     } catch (_) {
       return const [];
     }
