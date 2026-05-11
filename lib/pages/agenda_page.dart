@@ -9,6 +9,7 @@ import '../features/mensajes/mensajes_module.dart';
 import '../features/productos/productos_module.dart';
 import '../features/reportes/reportes_module.dart';
 import '../features/admin/admin_module.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 const _kStartHour = 9;
@@ -69,6 +70,7 @@ class _Booking {
   final int durationMinutes;
   final String status;
   final String notes;
+  final String? clientPhone;
 
   const _Booking({
     required this.id,
@@ -83,6 +85,7 @@ class _Booking {
     required this.durationMinutes,
     required this.status,
     required this.notes,
+    this.clientPhone,
   });
 
   factory _Booking.fromMap(Map<String, dynamic> m) {
@@ -105,6 +108,8 @@ class _Booking {
       durationMinutes: (m['duration_min'] as int?) ?? 60,
       status: m['status'] as String? ?? 'scheduled',
       notes: m['client_notes'] as String? ?? '',
+      clientPhone: (m['client_record'] as Map?)?['phone'] as String? ??
+                   (m['client'] as Map?)?['phone'] as String?,
     );
   }
 
@@ -181,9 +186,10 @@ class _AgendaPageState extends State<AgendaPage> {
   late DateTime _weekStart;
   String? _therapistId;
   String _statusFilter = 'active';
+  bool _loading = true;
   List<_Booking> _bookings = [];
   List<_Therapist> _therapists = [];
-  bool _loading = true;
+
   DateTime _now = DateTime.now();
   late Timer _timer;
   String _activeModule = 'agenda';
@@ -281,9 +287,9 @@ class _AgendaPageState extends State<AgendaPage> {
           .select('''
         id, client_id, client_record_id, service_id, booking_date, booking_time, duration_min, status, therapist_id, client_notes,
         client:profiles!bookings_client_id_fkey(full_name),
-        client_record:clients!bookings_client_record_id_fkey(full_name),
+        client_record:clients!bookings_client_record_id_fkey(full_name, phone),
         therapist:staff(full_name),
-        services(name)
+        services(name, price)
       ''')
           .gte('booking_date', _yyyyMMdd(_rangeStart))
           .lte('booking_date', _yyyyMMdd(_rangeEnd));
@@ -496,6 +502,7 @@ class _AgendaPageState extends State<AgendaPage> {
           Navigator.pop(ctx);
           _loadBookings();
         },
+        onAutoWhatsApp: (type, b) => _triggerAutoWhatsApp(type, b),
       ),
     );
   }
@@ -630,8 +637,49 @@ class _AgendaPageState extends State<AgendaPage> {
         booking: b,
         onRefresh: _loadBookings,
         onEdit: () => _showEditDialog(context, b),
+        onAutoWhatsApp: (type) => _triggerAutoWhatsApp(type, b),
       ),
     );
+  }
+
+  Future<void> _triggerAutoWhatsApp(String type, _Booking b) async {
+    try {
+      final res = await Supabase.instance.client
+          .from('whatsapp_templates')
+          .select()
+          .eq('type', type)
+          .eq('active', true)
+          .limit(1)
+          .maybeSingle();
+
+      if (res != null) {
+        final t = WhatsAppTemplate.fromMap(res);
+        _sendWhatsApp(t, b);
+      }
+    } catch (e) {
+      debugPrint('AutoWhatsApp error: $e');
+    }
+  }
+
+  void _sendWhatsApp(WhatsAppTemplate t, _Booking b) async {
+    String msg = t.message;
+    final dateStr = '${b.date.day} de ${_kMonths[b.date.month - 1]}';
+    msg = msg.replaceAll('[CLIENTE]', b.clientName);
+    msg = msg.replaceAll('[SERVICIO]', b.serviceName);
+    msg = msg.replaceAll('[FECHA]', dateStr);
+    msg = msg.replaceAll('[HORA]', b.timeLabel);
+    msg = msg.replaceAll('[PRECIO]', '');
+
+    final phone = b.clientPhone ?? '';
+    if (phone.isEmpty) return;
+
+    String cleanPhone = phone.replaceAll(RegExp(r'\D'), '');
+    if (cleanPhone.length == 10) cleanPhone = '52$cleanPhone';
+
+    final url = Uri.parse('https://wa.me/$cleanPhone?text=${Uri.encodeComponent(msg)}');
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    }
   }
 }
 
@@ -2443,10 +2491,12 @@ class _BookingDetailDialog extends StatelessWidget {
     required this.booking,
     required this.onRefresh,
     required this.onEdit,
+    required this.onAutoWhatsApp,
   });
   final _Booking booking;
   final VoidCallback onRefresh;
   final VoidCallback onEdit;
+  final Function(String) onAutoWhatsApp;
 
   @override
   Widget build(BuildContext context) {
@@ -2543,6 +2593,8 @@ class _BookingDetailDialog extends StatelessWidget {
                     ),
                   ],
                   const Spacer(),
+                  _WhatsAppBtn(booking: b),
+                  const SizedBox(width: 8),
                   _DialogBtn(
                     label: 'Editar',
                     color: SaharaTheme.gold,
@@ -2590,6 +2642,9 @@ class _BookingDetailDialog extends StatelessWidget {
       if (ctx.mounted) {
         Navigator.pop(ctx);
         onRefresh();
+        if (newStatus == 'confirmed') {
+          onAutoWhatsApp('confirmation');
+        }
       }
     } catch (e) {
       if (ctx.mounted) {
@@ -2669,6 +2724,7 @@ class _NewBookingDialog extends StatefulWidget {
     this.initialDate,
     this.initialTime,
     this.editBooking,
+    this.onAutoWhatsApp,
   });
   final List<_Therapist> therapists;
   final VoidCallback onSaved;
@@ -2676,6 +2732,7 @@ class _NewBookingDialog extends StatefulWidget {
   final DateTime? initialDate;
   final TimeOfDay? initialTime;
   final _Booking? editBooking;
+  final Function(String, _Booking)? onAutoWhatsApp;
 
   @override
   State<_NewBookingDialog> createState() => _NewBookingDialogState();
@@ -2928,24 +2985,24 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
     }
   }
 
-  Future<bool> _doSave() async {
+  Future<Map<String, dynamic>?> _doSave() async {
     if (_clientCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Selecciona o crea un cliente.')),
       );
-      return false;
+      return null;
     }
     if (_therapistId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Selecciona un profesional.')),
       );
-      return false;
+      return null;
     }
     if (_serviceId == null) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Selecciona un servicio.')));
-      return false;
+      return null;
     }
     setState(() => _saving = true);
     try {
@@ -2976,15 +3033,24 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
         'service_name': _selectedServiceName,
       };
 
+      Map<String, dynamic>? res;
       if (widget.editBooking != null) {
-        await Supabase.instance.client
+        final data = await Supabase.instance.client
             .from('bookings')
             .update(payload)
-            .eq('id', widget.editBooking!.id);
+            .eq('id', widget.editBooking!.id)
+            .select('*, client_record:client_record_id(full_name, phone)')
+            .maybeSingle();
+        res = data;
       } else {
-        await Supabase.instance.client.from('bookings').insert(payload);
+        final data = await Supabase.instance.client
+            .from('bookings')
+            .insert(payload)
+            .select('*, client_record:client_record_id(full_name, phone)')
+            .maybeSingle();
+        res = data;
       }
-      return true;
+      return res;
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2994,19 +3060,41 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
           ),
         );
       }
-      return false;
+      return null;
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
   Future<void> _save() async {
-    if (await _doSave()) widget.onSaved();
+    final bData = await _doSave();
+    if (bData != null) {
+      widget.onSaved();
+      if (_status == 'confirmed' && widget.onAutoWhatsApp != null) {
+        // Build a temporary _Booking object to pass to the trigger
+        final b = _Booking.fromMap({
+          ...bData,
+          // client_record and phone are now in bData thanks to the join
+          'services': {'name': _selectedServiceName},
+        });
+        widget.onAutoWhatsApp!('confirmation', b);
+      }
+    }
   }
 
   Future<void> _saveAndAddAnother() async {
     final messenger = ScaffoldMessenger.of(context);
-    if (!await _doSave()) return;
+    final bData = await _doSave();
+    if (bData == null) return;
+    
+    if (_status == 'confirmed' && widget.onAutoWhatsApp != null) {
+        final b = _Booking.fromMap({
+          ...bData,
+          'services': {'name': _selectedServiceName},
+        });
+        widget.onAutoWhatsApp!('confirmation', b);
+    }
+
     setState(() {
       _clientCtrl.clear();
       _notesCtrl.clear();
@@ -4306,6 +4394,115 @@ class _PlaceholderModule extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// WhatsApp Integration
+// ─────────────────────────────────────────────────────────────────────────────
+class _WhatsAppBtn extends StatefulWidget {
+  const _WhatsAppBtn({required this.booking});
+  final _Booking booking;
+
+  @override
+  State<_WhatsAppBtn> createState() => _WhatsAppBtnState();
+}
+
+class _WhatsAppBtnState extends State<_WhatsAppBtn> {
+  List<WhatsAppTemplate> _templates = [];
+  bool _loading = false;
+
+  Future<void> _loadTemplates() async {
+    setState(() => _loading = true);
+    try {
+      final data = await Supabase.instance.client
+          .from('whatsapp_templates')
+          .select()
+          .eq('active', true)
+          .order('title');
+      if (mounted) {
+        setState(() {
+          _templates = (data as List)
+              .map((m) => WhatsAppTemplate.fromMap(m as Map<String, dynamic>))
+              .toList();
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _sendTemplate(WhatsAppTemplate t) async {
+    final b = widget.booking;
+    String msg = t.message;
+
+    // Format date
+    final dateStr = '${b.date.day} de ${_kMonths[b.date.month - 1]}';
+    
+    // Replace tags
+    msg = msg.replaceAll('[CLIENTE]', b.clientName);
+    msg = msg.replaceAll('[SERVICIO]', b.serviceName);
+    msg = msg.replaceAll('[FECHA]', dateStr);
+    msg = msg.replaceAll('[HORA]', b.timeLabel);
+    
+    // Attempt to get price if available (we added price to query)
+    msg = msg.replaceAll('[PRECIO]', ''); 
+
+    final phone = b.clientPhone ?? '';
+    if (phone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('El cliente no tiene teléfono registrado')));
+      return;
+    }
+
+    // Clean phone number (remove non-digits, add country code if missing)
+    String cleanPhone = phone.replaceAll(RegExp(r'\D'), '');
+    if (cleanPhone.length == 10) cleanPhone = '52$cleanPhone'; // Default to MX
+
+    final url = Uri.parse('https://wa.me/$cleanPhone?text=${Uri.encodeComponent(msg)}');
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _DialogBtn(
+      label: 'WhatsApp',
+      color: const Color(0xFF25D366),
+      onTap: () async {
+        await _loadTemplates();
+        if (!mounted) return;
+        if (_templates.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No hay plantillas de WhatsApp activas')));
+          return;
+        }
+
+        final RenderBox button = context.findRenderObject() as RenderBox;
+        final RenderBox overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+        final RelativeRect position = RelativeRect.fromRect(
+          Rect.fromPoints(
+            button.localToGlobal(Offset.zero, ancestor: overlay),
+            button.localToGlobal(button.size.bottomRight(Offset.zero), ancestor: overlay),
+          ),
+          Offset.zero & overlay.size,
+        );
+
+        final selected = await showMenu<WhatsAppTemplate>(
+          context: context,
+          position: position,
+          items: _templates.map((t) => PopupMenuItem(
+            value: t,
+            child: Text(t.title, style: GoogleFonts.inter(fontSize: 13)),
+          )).toList(),
+        );
+
+        if (selected != null) {
+          _sendTemplate(selected);
+        }
+      },
     );
   }
 }
