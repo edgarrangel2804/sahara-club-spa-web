@@ -1,9 +1,8 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../pages/reception_login_page.dart';
-import '../pages/wellness_platform_page.dart';
 import '../features/memberships/vip_memberships_page.dart';
-import '../features/cart/cart_page.dart';
+import '../features/store/store_page.dart';
 
 class Navbar extends StatelessWidget {
   final bool isScrolled;
@@ -61,11 +60,9 @@ class Navbar extends StatelessWidget {
                     const SizedBox(width: 20),
                     _vipButton(context),
                     const SizedBox(width: 20),
-                    _wellnessButton(context),
+                    _storeButton(context),
                     const SizedBox(width: 20),
                     _receptionButton(context),
-                    const SizedBox(width: 10),
-                    _cartButton(context),
                   ],
                 ),
               ],
@@ -98,7 +95,7 @@ class Navbar extends StatelessWidget {
     );
   }
 
-  Widget _wellnessButton(BuildContext context) {
+  Widget _storeButton(BuildContext context) {
     return OutlinedButton(
       style: OutlinedButton.styleFrom(
         side: const BorderSide(color: Color(0xFFC6A76A), width: 1),
@@ -109,10 +106,10 @@ class Navbar extends StatelessWidget {
       onPressed: () {
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const WellnessPlatformPage()),
+          MaterialPageRoute(builder: (_) => const StorePage()),
         );
       },
-      child: const Text("WELLNESS", style: TextStyle(fontSize: 11, letterSpacing: 2, fontWeight: FontWeight.bold)),
+      child: const Text("TIENDA", style: TextStyle(fontSize: 11, letterSpacing: 2, fontWeight: FontWeight.bold)),
     );
   }
 
@@ -134,17 +131,6 @@ class Navbar extends StatelessWidget {
     );
   }
 
-  Widget _cartButton(BuildContext context) {
-    return IconButton(
-      icon: const Icon(Icons.shopping_bag_outlined, color: Colors.white70),
-      onPressed: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const CartPage()),
-        );
-      },
-    );
-  }
 }
 
 class _NavbarItem extends StatefulWidget {
