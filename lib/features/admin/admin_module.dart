@@ -1,13 +1,14 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../config/app_mode.dart';
 import '../../theme/sahara_theme.dart';
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Models
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _Staff {
   final String id;
   String fullName;
@@ -64,6 +65,13 @@ class _ServiceItem {
 
 class WhatsAppTemplate {
   final String id;
+  String? branchId;
+  String templateKey;
+  String triggerEvent;
+  String languageCode;
+  String category;
+  bool emojiEnabled;
+  bool markdownEnabled;
   String title;
   String message;
   String type;
@@ -71,19 +79,126 @@ class WhatsAppTemplate {
 
   WhatsAppTemplate({
     required this.id,
+    this.branchId,
+    required this.templateKey,
+    required this.triggerEvent,
+    required this.languageCode,
+    required this.category,
+    required this.emojiEnabled,
+    required this.markdownEnabled,
     required this.title,
     required this.message,
     required this.type,
     required this.active,
   });
 
+  static String _normalizeEvent(String? raw) {
+    switch (raw) {
+      case 'confirmation':
+        return 'reservation_confirmed';
+      case 'welcome':
+        return 'first_visit';
+      default:
+        return raw ?? 'custom';
+    }
+  }
+
   factory WhatsAppTemplate.fromMap(Map<String, dynamic> m) => WhatsAppTemplate(
     id: m['id'] as String,
-    title: m['title'] as String? ?? '',
-    message: m['message'] as String? ?? '',
-    type: m['type'] as String? ?? 'custom',
-    active: m['active'] as bool? ?? true,
+    branchId: m['branch_id'] as String?,
+    templateKey: _normalizeEvent(
+      m['template_key'] as String? ?? m['type'] as String? ?? 'custom',
+    ),
+    triggerEvent: _normalizeEvent(
+      m['trigger_event'] as String? ?? m['type'] as String? ?? 'custom',
+    ),
+    languageCode: m['language_code'] as String? ?? 'es_MX',
+    category: m['category'] as String? ?? 'general',
+    emojiEnabled: m['emoji_enabled'] as bool? ?? true,
+    markdownEnabled: m['markdown_enabled'] as bool? ?? true,
+    title: m['template_name'] as String? ?? m['title'] as String? ?? '',
+    message: m['message_body'] as String? ?? m['message'] as String? ?? '',
+    type: _normalizeEvent(
+      m['template_key'] as String? ?? m['type'] as String? ?? 'custom',
+    ),
+    active: m['is_active'] as bool? ?? m['active'] as bool? ?? true,
   );
+}
+
+class _BusinessWhatsAppSettings {
+  final String? id;
+  final String branchId;
+  final String businessName;
+  final String metaBusinessId;
+  final String whatsappBusinessAccountId;
+  final String phoneNumberId;
+  final String whatsappPhoneNumber;
+  final String accessTokenMasked;
+  final String appId;
+  final String appSecretMasked;
+  final String webhookVerifyToken;
+  final String connectionStatus;
+  final DateTime? lastValidatedAt;
+  final bool hasAccessToken;
+  final bool hasAppSecret;
+
+  const _BusinessWhatsAppSettings({
+    required this.id,
+    required this.branchId,
+    required this.businessName,
+    required this.metaBusinessId,
+    required this.whatsappBusinessAccountId,
+    required this.phoneNumberId,
+    required this.whatsappPhoneNumber,
+    required this.accessTokenMasked,
+    required this.appId,
+    required this.appSecretMasked,
+    required this.webhookVerifyToken,
+    required this.connectionStatus,
+    required this.lastValidatedAt,
+    required this.hasAccessToken,
+    required this.hasAppSecret,
+  });
+
+  factory _BusinessWhatsAppSettings.empty() => const _BusinessWhatsAppSettings(
+    id: null,
+    branchId: kDefaultBranchId,
+    businessName: '',
+    metaBusinessId: '',
+    whatsappBusinessAccountId: '',
+    phoneNumberId: '',
+    whatsappPhoneNumber: '',
+    accessTokenMasked: '',
+    appId: '',
+    appSecretMasked: '',
+    webhookVerifyToken: '',
+    connectionStatus: 'not_configured',
+    lastValidatedAt: null,
+    hasAccessToken: false,
+    hasAppSecret: false,
+  );
+
+  factory _BusinessWhatsAppSettings.fromMap(Map<String, dynamic> m) =>
+      _BusinessWhatsAppSettings(
+        id: m['id'] as String?,
+        branchId: m['branch_id'] as String? ?? kDefaultBranchId,
+        businessName: m['business_name'] as String? ?? '',
+        metaBusinessId: m['meta_business_id'] as String? ?? '',
+        whatsappBusinessAccountId:
+            m['whatsapp_business_account_id'] as String? ?? '',
+        phoneNumberId: m['phone_number_id'] as String? ?? '',
+        whatsappPhoneNumber: m['whatsapp_phone_number'] as String? ?? '',
+        accessTokenMasked: m['access_token_masked'] as String? ?? '',
+        appId: m['app_id'] as String? ?? '',
+        appSecretMasked: m['app_secret_masked'] as String? ?? '',
+        webhookVerifyToken: m['webhook_verify_token'] as String? ?? '',
+        connectionStatus: m['connection_status'] as String? ?? 'not_configured',
+        lastValidatedAt: m['last_validated_at'] == null
+            ? null
+            : DateTime.tryParse(m['last_validated_at'] as String),
+        hasAccessToken: m['has_access_token'] as bool? ?? false,
+        hasAppSecret: m['has_app_secret'] as bool? ?? false,
+      );
 }
 
 class _Branch {
@@ -116,9 +231,9 @@ class _Branch {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Main widget
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class AdminModule extends StatefulWidget {
   const AdminModule({super.key});
 
@@ -165,6 +280,11 @@ class _AdminModuleState extends State<AdminModule>
       if (_isAdmin) {
         final resB = await Supabase.instance.client.from('sucursales').select();
         _branches = (resB as List).map((m) => _Branch.fromMap(m)).toList();
+        if (!kEnableMultiBranch && _branches.isEmpty) {
+          _branches = [
+            _Branch.fromMap(defaultBranchMap()),
+          ];
+        }
       }
 
       if (!mounted) return;
@@ -252,7 +372,7 @@ class _AdminModuleState extends State<AdminModule>
     final ok = await _confirmDelete(
       context,
       'Eliminar miembro',
-      '¿Seguro que deseas eliminar a ${s.fullName}?',
+      'Â¿Seguro que deseas eliminar a ${s.fullName}?',
     );
     if (ok == true) {
       await Supabase.instance.client.from('staff').delete().eq('id', s.id);
@@ -264,7 +384,7 @@ class _AdminModuleState extends State<AdminModule>
     final ok = await _confirmDelete(
       context,
       'Eliminar servicio',
-      '¿Seguro que deseas eliminar el servicio ${s.name}?',
+      'Â¿Seguro que deseas eliminar el servicio ${s.name}?',
     );
     if (ok == true) {
       await Supabase.instance.client.from('services').delete().eq('id', s.id);
@@ -276,7 +396,7 @@ class _AdminModuleState extends State<AdminModule>
     final ok = await _confirmDelete(
       context,
       'Eliminar plantilla',
-      '¿Seguro que deseas eliminar esta plantilla?',
+      'Â¿Seguro que deseas eliminar esta plantilla?',
     );
     if (ok == true) {
       await Supabase.instance.client
@@ -300,7 +420,7 @@ class _AdminModuleState extends State<AdminModule>
             child: Row(
               children: [
                 Text(
-                  'Administración',
+                  'AdministraciÃ³n',
                   style: GoogleFonts.playfairDisplay(
                     fontSize: 22,
                     fontWeight: FontWeight.w700,
@@ -326,7 +446,7 @@ class _AdminModuleState extends State<AdminModule>
                     Tab(text: 'Personal'),
                     Tab(text: 'Servicios'),
                     Tab(text: 'Plantillas'),
-                    Tab(text: 'Configuración'),
+                    Tab(text: 'ConfiguraciÃ³n'),
                   ],
                 ),
                 const Spacer(),
@@ -412,9 +532,9 @@ class _AdminModuleState extends State<AdminModule>
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Tabs
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _StaffTab extends StatelessWidget {
   const _StaffTab({
     required this.staff,
@@ -495,7 +615,7 @@ class _ServicesTab extends StatelessWidget {
               style: GoogleFonts.inter(fontWeight: FontWeight.w600),
             ),
             subtitle: Text(
-              '${s.category} · ${s.duration} min · \$${s.price}',
+              '${s.category} Â· ${s.duration} min Â· \$${s.price}',
               style: GoogleFonts.inter(fontSize: 12),
             ),
             trailing: Row(
@@ -572,12 +692,12 @@ class _WhatsAppTabState extends State<_WhatsAppTab> {
                     children: [
                       TextSpan(
                         text:
-                            '¡Ahora podrás enviar mensajes personalizados por WhatsApp! ',
+                            'Â¡Ahora podrÃ¡s enviar mensajes personalizados por WhatsApp! ',
                         style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                       const TextSpan(
                         text:
-                            'Configúralos y envíalos de manera personalizada desde la Agenda.',
+                            'ConfigÃºralos y envÃ­alos de manera personalizada desde la Agenda.',
                       ),
                     ],
                   ),
@@ -764,7 +884,7 @@ class _WhatsAppLanding extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  '¡Potencia tus mensajes de WhatsApp con nuestras plantillas prediseñadas!',
+                  'Â¡Potencia tus mensajes de WhatsApp con nuestras plantillas prediseÃ±adas!',
                   style: GoogleFonts.playfairDisplay(
                     fontSize: 28,
                     fontWeight: FontWeight.w700,
@@ -773,7 +893,7 @@ class _WhatsAppLanding extends StatelessWidget {
                 ),
                 const SizedBox(height: 20),
                 Text(
-                  'Crea mensajes personalizados de manera rápida y efectiva con nuestras plantillas listas para usar.',
+                  'Crea mensajes personalizados de manera rÃ¡pida y efectiva con nuestras plantillas listas para usar.',
                   style: GoogleFonts.inter(fontSize: 15, color: Colors.black54),
                 ),
                 const SizedBox(height: 32),
@@ -1043,9 +1163,9 @@ class _RemindersListState extends State<_RemindersList> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Dialogs
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _WhatsAppSelectionDialog extends StatefulWidget {
   const _WhatsAppSelectionDialog({required this.onSelected});
   final void Function(WhatsAppTemplate) onSelected;
@@ -1058,34 +1178,34 @@ class _WhatsAppSelectionDialogState extends State<_WhatsAppSelectionDialog> {
   int _selectedIdx = 0;
   final List<Map<String, String>> _presets = [
     {
-      'title': 'Mensaje de confirmación',
+      'title': 'Confirmacion de cita',
       'message':
-          'Hola [Nombre cliente]!\nTe queremos recordar tu cita de [Nombre servicio] en Sahara Club Spa.\n\n📅 ¿Cuándo?: [Fecha y hora reserva]\n📍 ¿Dónde?: Ubicación del local\n💆 ¿Con quién?: [Profesional]\n\n¡Te esperamos!',
-      'type': 'confirmation',
+          '[[emoji_confirmacion]] Hola [[nombre_cliente]], tu cita de [[nombre_servicio]] quedo confirmada para el [[fecha_reserva]] a las [[hora_reserva]] con [[nombre_terapeuta]]. Te esperamos en [[nombre_local]].',
+      'type': 'reservation_confirmed',
     },
     {
-      'title': 'Mensaje para redes sociales',
+      'title': 'Post servicio',
       'message':
-          '¡Hola! Nos encantó tenerte hoy. Si te gustó tu servicio de [Nombre servicio], ¡compártenos en tus historias y etiquétanos!',
-      'type': 'custom',
+          '[[emoji_confirmacion]] Gracias por visitarnos, [[nombre_cliente]]. Si disfrutaste tu experiencia en [[nombre_local]], compartenos en Instagram: [[instagram]]',
+      'type': 'post_service',
     },
     {
-      'title': 'Descuento por cumpleaños',
+      'title': 'Cumpleanos',
       'message':
-          '¡Feliz cumpleaños [Nombre cliente]! 🎂 Queremos consentirte con un 15% de descuento en tu próximo servicio.',
-      'type': 'custom',
+          'Feliz cumpleanos, [[nombre_cliente]]. Queremos consentirte con una experiencia especial en [[nombre_local]].',
+      'type': 'birthday_customer',
     },
     {
-      'title': 'Mensaje de bienvenida',
+      'title': 'Bienvenida',
       'message':
-          '¡Bienvenida a Sahara Club Spa, [Nombre cliente]! ✨ Estamos emocionados de acompañarte en tu camino de bienestar.',
-      'type': 'welcome',
+          '[[emoji_confirmacion]] Bienvenida a [[nombre_local]], [[nombre_cliente]]. Estamos emocionados de acompanarte en tu camino de bienestar.',
+      'type': 'first_visit',
     },
     {
-      'title': 'Pago en línea',
+      'title': 'Pago pendiente',
       'message':
-          'Hola [Nombre cliente], para confirmar tu cita de [Nombre servicio], puedes realizar tu pago en el siguiente link: [Link de pago]',
-      'type': 'custom',
+          '[[emoji_pago]] Hola [[nombre_cliente]], tu reserva [[codigo_reserva]] tiene un pago pendiente. Puedes completarlo aqui: [[link_pago]]',
+      'type': 'payment_pending',
     },
   ];
 
@@ -1104,7 +1224,7 @@ class _WhatsAppSelectionDialogState extends State<_WhatsAppSelectionDialog> {
               child: Row(
                 children: [
                   Text(
-                    'Plantillas prediseñadas',
+                    'Plantillas prediseÃ±adas',
                     style: GoogleFonts.inter(
                       fontSize: 18,
                       fontWeight: FontWeight.w600,
@@ -1131,7 +1251,7 @@ class _WhatsAppSelectionDialogState extends State<_WhatsAppSelectionDialog> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Elige entre plantillas prediseñadas para utilizarlas como base para tu mensaje ideal.',
+                            'Elige entre plantillas prediseÃ±adas para utilizarlas como base para tu mensaje ideal.',
                             style: GoogleFonts.inter(
                               fontSize: 13,
                               color: Colors.black54,
@@ -1220,6 +1340,13 @@ class _WhatsAppSelectionDialogState extends State<_WhatsAppSelectionDialog> {
                     onPressed: () => widget.onSelected(
                       WhatsAppTemplate(
                         id: '',
+                        branchId: kDefaultBranchId,
+                        templateKey: _presets[_selectedIdx]['type']!,
+                        triggerEvent: _presets[_selectedIdx]['type']!,
+                        languageCode: 'es_MX',
+                        category: 'general',
+                        emojiEnabled: true,
+                        markdownEnabled: true,
                         title: _presets[_selectedIdx]['title']!,
                         message: _presets[_selectedIdx]['message']!,
                         type: _presets[_selectedIdx]['type']!,
@@ -1262,6 +1389,36 @@ class _WhatsAppFormDialogState extends State<_WhatsAppFormDialog> {
   late final _msg = TextEditingController(text: widget.template.message);
   late String _type = widget.template.type;
   bool _saving = false;
+
+  static const Map<String, String> _previewVars = {
+    'nombre_cliente': 'Sofia',
+    'apellido_cliente': 'Martinez',
+    'telefono': '+52 664 123 4567',
+    'nombre_servicio': 'Facial Premium',
+    'duracion': '60',
+    'fecha_reserva': '12/05/2026',
+    'hora_reserva': '16:30',
+    'nombre_terapeuta': 'Pamela',
+    'nombre_local': 'Sahara Club Spa',
+    'direccion_local': 'Zona Rio, Tijuana',
+    'telefono_local': '+52 664 555 0000',
+    'instagram': 'https://instagram.com/saharaclubspa',
+    'facebook': 'https://facebook.com/saharaclubspa',
+    'pagina_web': 'https://saharaclubspa.com',
+    'link_pago': 'https://pay.saharaclubspa.com/abc123',
+    'codigo_reserva': 'AB12CD34',
+    'emoji_confirmacion': '✨',
+    'emoji_recordatorio': '⏰',
+    'emoji_pago': '💳',
+  };
+
+  String get _previewMessage {
+    var preview = _msg.text;
+    _previewVars.forEach((key, value) {
+      preview = preview.replaceAll('[[$key]]', value);
+    });
+    return preview;
+  }
 
   void _addTag(String tag) {
     final text = _msg.text;
@@ -1322,7 +1479,7 @@ class _WhatsAppFormDialogState extends State<_WhatsAppFormDialog> {
                           TextField(
                             controller: _title,
                             style: const TextStyle(color: Colors.black87),
-                            decoration: _deco('Ej: Confirmación'),
+                            decoration: _deco('Ej: ConfirmaciÃ³n'),
                           ),
                           const SizedBox(height: 32),
                           _Label('Personaliza el mensaje *'),
@@ -1330,13 +1487,15 @@ class _WhatsAppFormDialogState extends State<_WhatsAppFormDialog> {
                           _TagSection(
                             title: 'Datos de reserva',
                             tags: [
-                              '[Nombre cliente]',
-                              '[Apellido cliente]',
-                              '[Profesional]',
-                              '[Nombre servicio]',
-                              '[Precio reserva]',
-                              '[Duración]',
-                              '[Fecha y hora reserva]',
+                              '[[nombre_cliente]]',
+                              '[[apellido_cliente]]',
+                              '[[telefono]]',
+                              '[[nombre_servicio]]',
+                              '[[duracion]]',
+                              '[[fecha_reserva]]',
+                              '[[hora_reserva]]',
+                              '[[nombre_terapeuta]]',
+                              '[[codigo_reserva]]',
                             ],
                             onTag: _addTag,
                           ),
@@ -1344,9 +1503,13 @@ class _WhatsAppFormDialogState extends State<_WhatsAppFormDialog> {
                           _TagSection(
                             title: 'Datos del local',
                             tags: [
-                              '[Nombre local]',
-                              '[Ubicación local]',
-                              '[Teléfono local]',
+                              '[[nombre_local]]',
+                              '[[direccion_local]]',
+                              '[[telefono_local]]',
+                              '[[instagram]]',
+                              '[[facebook]]',
+                              '[[pagina_web]]',
+                              '[[link_pago]]',
                             ],
                             onTag: _addTag,
                           ),
@@ -1358,12 +1521,20 @@ class _WhatsAppFormDialogState extends State<_WhatsAppFormDialog> {
                             onChanged: (_) => setState(() {}),
                             decoration: _deco('Escribe tu mensaje...'),
                           ),
+                          const SizedBox(height: 12),
+                          Text(
+                            '${_msg.text.characters.length} caracteres',
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              color: Colors.black45,
+                            ),
+                          ),
                           const SizedBox(height: 24),
                           Row(
                             children: [
                               _Label('Tipo: '),
                               const SizedBox(width: 12),
-                              _DropdownType(
+                              _AutomationEventDropdown(
                                 value: _type,
                                 onChanged: (v) => setState(() => _type = v!),
                               ),
@@ -1378,11 +1549,11 @@ class _WhatsAppFormDialogState extends State<_WhatsAppFormDialog> {
                       child: Column(
                         children: [
                           const Text(
-                            'Previsualización del mensaje',
+                            'PrevisualizaciÃ³n del mensaje',
                             style: TextStyle(color: Colors.black87),
                           ),
                           const SizedBox(height: 24),
-                          _PhoneMockup(child: _MsgBubble(text: _msg.text)),
+                          _PhoneMockup(child: _MsgBubble(text: _previewMessage)),
                         ],
                       ),
                     ),
@@ -1408,6 +1579,16 @@ class _WhatsAppFormDialogState extends State<_WhatsAppFormDialog> {
                       setState(() => _saving = true);
                       try {
                         final data = {
+                          'branch_id': widget.template.branchId ?? kDefaultBranchId,
+                          'template_key': _type,
+                          'template_name': _title.text,
+                          'message_body': _msg.text,
+                          'is_active': true,
+                          'trigger_event': _type,
+                          'language_code': widget.template.languageCode,
+                          'category': widget.template.category,
+                          'emoji_enabled': widget.template.emojiEnabled,
+                          'markdown_enabled': widget.template.markdownEnabled,
                           'title': _title.text,
                           'message': _msg.text,
                           'type': _type,
@@ -1591,7 +1772,7 @@ class _DropdownType extends StatelessWidget {
       items: const [
         DropdownMenuItem(
           value: 'confirmation',
-          child: Text('Confirmación', style: TextStyle(color: Colors.black87)),
+          child: Text('ConfirmaciÃ³n', style: TextStyle(color: Colors.black87)),
         ),
         DropdownMenuItem(
           value: 'reminder_24h',
@@ -1616,6 +1797,55 @@ class _DropdownType extends StatelessWidget {
           child: Text('Personalizado', style: TextStyle(color: Colors.black87)),
         ),
       ],
+      onChanged: onChanged,
+    );
+  }
+}
+
+class _AutomationEventDropdown extends StatelessWidget {
+  const _AutomationEventDropdown({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String value;
+  final ValueChanged<String?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    const options = [
+      ('reservation_confirmed', 'ConfirmaciÃ³n'),
+      ('reminder_24h', 'Recordatorio 24h'),
+      ('reminder_3h', 'Recordatorio 3h'),
+      ('reminder_1h', 'Recordatorio 1h'),
+      ('reservation_rescheduled', 'Reagendado'),
+      ('reservation_cancelled', 'CancelaciÃ³n'),
+      ('payment_pending', 'Pago pendiente'),
+      ('payment_confirmed', 'Pago confirmado'),
+      ('birthday_customer', 'CumpleaÃ±os'),
+      ('first_visit', 'Bienvenida'),
+      ('membership_created', 'MembresÃ­a'),
+      ('giftcard_created', 'Gift card'),
+      ('post_service', 'Post-servicio'),
+      ('promotion', 'PromociÃ³n'),
+      ('custom', 'Personalizado'),
+    ];
+
+    final normalized = options.any((opt) => opt.$1 == value) ? value : 'custom';
+
+    return DropdownButton<String>(
+      value: normalized,
+      items: options
+          .map(
+            (opt) => DropdownMenuItem(
+              value: opt.$1,
+              child: Text(
+                opt.$2,
+                style: const TextStyle(color: Colors.black87),
+              ),
+            ),
+          )
+          .toList(),
       onChanged: onChanged,
     );
   }
@@ -1700,7 +1930,7 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
                       children: [
                         _FieldLabel('Nombre completo *'),
                         const SizedBox(height: 6),
-                        _Field(ctrl: _name, hint: 'Ej: Juan Pérez'),
+                        _Field(ctrl: _name, hint: 'Ej: Juan PÃ©rez'),
                       ],
                     ),
                     const SizedBox(height: 12),
@@ -1747,7 +1977,7 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
                             ),
                             DropdownMenuItem(
                               value: 'reception',
-                              child: Text('Recepción'),
+                              child: Text('RecepciÃ³n'),
                             ),
                           ],
                           onChanged: (v) => setState(() => _role = v!),
@@ -1887,8 +2117,8 @@ class _ServiceFormDialogState extends State<_ServiceFormDialog> {
     'Corporales',
     'Fusionadas',
     'Rituales',
-    'Tecnología Facial',
-    'Tecnología Corporal',
+    'TecnologÃ­a Facial',
+    'TecnologÃ­a Corporal',
     'Moldeo',
     'Paquetes',
     'Otros',
@@ -2013,7 +2243,7 @@ class _ServiceFormDialogState extends State<_ServiceFormDialog> {
                     const SizedBox(height: 12),
                     _FormCard(
                       children: [
-                        _FieldLabel('Categoría'),
+                        _FieldLabel('CategorÃ­a'),
                         const SizedBox(height: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -2052,7 +2282,7 @@ class _ServiceFormDialogState extends State<_ServiceFormDialog> {
                         Expanded(
                           child: _FormCard(
                             children: [
-                              _FieldLabel('Duración (min) *'),
+                              _FieldLabel('DuraciÃ³n (min) *'),
                               const SizedBox(height: 6),
                               _Field(
                                 ctrl: _durationCtrl,
@@ -2213,7 +2443,7 @@ Future<bool?> _confirmDelete(BuildContext context, String title, String msg) =>
               foregroundColor: Colors.black,
             ),
             child: Text(
-              'Sí',
+              'SÃ­',
               style: GoogleFonts.inter(fontWeight: FontWeight.bold),
             ),
           ),
@@ -2241,9 +2471,9 @@ InputDecoration _deco(String? hint) => InputDecoration(
   ),
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Settings Tab (WhatsApp Config + Branches CRUD)
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _SettingsTab extends StatefulWidget {
   final List<_Branch> branches;
   final VoidCallback onRefresh;
@@ -2314,7 +2544,7 @@ class _SettingsTabState extends State<_SettingsTab> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Configuración guardada correctamente'),
+            content: const Text('ConfiguraciÃ³n guardada correctamente'),
             backgroundColor: SaharaTheme.gold,
           ),
         );
@@ -2346,7 +2576,7 @@ class _SettingsTabState extends State<_SettingsTab> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Eliminar sucursal'),
-        content: Text('¿Seguro que deseas eliminar ${b.name}?'),
+        content: Text('Â¿Seguro que deseas eliminar ${b.name}?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -2380,39 +2610,11 @@ class _SettingsTabState extends State<_SettingsTab> {
             children: [
               _buildHeader(),
               const SizedBox(height: 24),
-              // Warning banner if not configured
-              if (!_isConfigured)
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  margin: const EdgeInsets.only(bottom: 24),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFF3E0),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFFFFCC80)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.warning_amber_rounded,
-                        color: Color(0xFFF57C00),
-                        size: 22,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'WhatsApp no configurado. Ingresa tu Token y Phone Number ID para habilitar el envío automático de mensajes.',
-                          style: GoogleFonts.inter(
-                            fontSize: 13,
-                            color: const Color(0xFF5D4037),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              _buildWhatsAppCard(),
+              _WhatsAppMetaSetup(onRefresh: widget.onRefresh),
               const SizedBox(height: 32),
-              _buildBranchesSection(),
+              kEnableMultiBranch
+                  ? _buildBranchesSection()
+                  : _buildSingleBranchSection(),
             ],
           ),
         ),
@@ -2425,7 +2627,7 @@ class _SettingsTabState extends State<_SettingsTab> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Configuración del Sistema',
+          'Configuracion del Sistema',
           style: GoogleFonts.playfairDisplay(
             fontSize: 28,
             fontWeight: FontWeight.bold,
@@ -2434,7 +2636,7 @@ class _SettingsTabState extends State<_SettingsTab> {
         ),
         const SizedBox(height: 8),
         Text(
-          'Administra las integraciones técnicas y las sucursales del spa.',
+          'Administra la conexion de WhatsApp Business y la operacion del spa.',
           style: GoogleFonts.inter(color: Colors.black54, fontSize: 14),
         ),
       ],
@@ -2592,6 +2794,37 @@ class _SettingsTabState extends State<_SettingsTab> {
     );
   }
 
+  Widget _buildSingleBranchSection() {
+    final branch = widget.branches.isNotEmpty
+        ? widget.branches.first
+        : _Branch.fromMap(defaultBranchMap());
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Sucursal Principal',
+          style: GoogleFonts.inter(
+            fontWeight: FontWeight.w600,
+            fontSize: 18,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'El modo multi-sucursal estÃƒÂ¡ desactivado temporalmente.',
+          style: GoogleFonts.inter(color: Colors.black54, fontSize: 13),
+        ),
+        const SizedBox(height: 16),
+        _BranchCard(
+          branch: branch,
+          onEdit: () => _openBranchForm(branch),
+          onDelete: () {},
+          allowDelete: false,
+        ),
+      ],
+    );
+  }
+
   Widget _buildBranchesSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2599,7 +2832,7 @@ class _SettingsTabState extends State<_SettingsTab> {
         Row(
           children: [
             Text(
-              'Gestión de Sucursales',
+              'GestiÃ³n de Sucursales',
               style: GoogleFonts.inter(
                 fontWeight: FontWeight.w600,
                 fontSize: 18,
@@ -2609,7 +2842,7 @@ class _SettingsTabState extends State<_SettingsTab> {
             TextButton.icon(
               onPressed: () => _openBranchForm(),
               icon: const Icon(Icons.add, size: 18),
-              label: const Text('Añadir Sucursal'),
+              label: const Text('AÃ±adir Sucursal'),
               style: TextButton.styleFrom(
                 foregroundColor: const Color(0xFFC6A76A),
               ),
@@ -2646,14 +2879,726 @@ class _SettingsTabState extends State<_SettingsTab> {
   }
 }
 
+class _WhatsAppMetaSetup extends StatefulWidget {
+  const _WhatsAppMetaSetup({required this.onRefresh});
+
+  final VoidCallback onRefresh;
+
+  @override
+  State<_WhatsAppMetaSetup> createState() => _WhatsAppMetaSetupState();
+}
+
+class _WhatsAppMetaSetupState extends State<_WhatsAppMetaSetup> {
+  final _businessNameCtrl = TextEditingController();
+  final _metaBusinessIdCtrl = TextEditingController();
+  final _wabaIdCtrl = TextEditingController();
+  final _phoneNumberIdCtrl = TextEditingController();
+  final _whatsAppNumberCtrl = TextEditingController();
+  final _accessTokenCtrl = TextEditingController();
+  final _appIdCtrl = TextEditingController();
+  final _appSecretCtrl = TextEditingController();
+  final _verifyTokenCtrl = TextEditingController();
+  final _testPhoneCtrl = TextEditingController();
+
+  bool _loading = true;
+  bool _saving = false;
+  bool _testing = false;
+  bool _sendingTest = false;
+  bool _showAccessToken = false;
+  bool _showAppSecret = false;
+  String? _accessTokenMask;
+  String? _appSecretMask;
+  _BusinessWhatsAppSettings _settings = _BusinessWhatsAppSettings.empty();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _businessNameCtrl.dispose();
+    _metaBusinessIdCtrl.dispose();
+    _wabaIdCtrl.dispose();
+    _phoneNumberIdCtrl.dispose();
+    _whatsAppNumberCtrl.dispose();
+    _accessTokenCtrl.dispose();
+    _appIdCtrl.dispose();
+    _appSecretCtrl.dispose();
+    _verifyTokenCtrl.dispose();
+    _testPhoneCtrl.dispose();
+    super.dispose();
+  }
+
+  bool get _hasRequiredConnectionFields =>
+      _phoneNumberIdCtrl.text.trim().isNotEmpty &&
+      _wabaIdCtrl.text.trim().isNotEmpty &&
+      _whatsAppNumberCtrl.text.trim().isNotEmpty &&
+      (_accessTokenCtrl.text.trim().isNotEmpty || (_settings.hasAccessToken));
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final response = await Supabase.instance.client.functions.invoke(
+        'save_whatsapp_settings',
+        body: {'action': 'load'},
+      );
+      final payload = Map<String, dynamic>.from(response.data as Map);
+      final rawSettings = Map<String, dynamic>.from(
+        (payload['settings'] as Map?) ?? const {},
+      );
+      final settings = _BusinessWhatsAppSettings.fromMap(rawSettings);
+      _applySettings(settings);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo cargar la configuracion: $e'),
+          backgroundColor: SaharaTheme.rojoCoral,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _applySettings(_BusinessWhatsAppSettings settings) {
+    _settings = settings;
+    _businessNameCtrl.text = settings.businessName;
+    _metaBusinessIdCtrl.text = settings.metaBusinessId;
+    _wabaIdCtrl.text = settings.whatsappBusinessAccountId;
+    _phoneNumberIdCtrl.text = settings.phoneNumberId;
+    _whatsAppNumberCtrl.text = settings.whatsappPhoneNumber;
+    _appIdCtrl.text = settings.appId;
+    _verifyTokenCtrl.text = settings.webhookVerifyToken;
+    _accessTokenCtrl.clear();
+    _appSecretCtrl.clear();
+    _accessTokenMask = settings.accessTokenMasked.isEmpty
+        ? null
+        : settings.accessTokenMasked;
+    _appSecretMask = settings.appSecretMasked.isEmpty
+        ? null
+        : settings.appSecretMasked;
+    if (mounted) setState(() {});
+  }
+
+  Future<bool> _save() async {
+    setState(() => _saving = true);
+    try {
+      final response = await Supabase.instance.client.functions.invoke(
+        'save_whatsapp_settings',
+        body: {
+          'business_name': _businessNameCtrl.text.trim(),
+          'meta_business_id': _metaBusinessIdCtrl.text.trim(),
+          'whatsapp_business_account_id': _wabaIdCtrl.text.trim(),
+          'phone_number_id': _phoneNumberIdCtrl.text.trim(),
+          'whatsapp_phone_number': _whatsAppNumberCtrl.text.trim(),
+          'access_token': _accessTokenCtrl.text.trim(),
+          'app_id': _appIdCtrl.text.trim(),
+          'app_secret': _appSecretCtrl.text.trim(),
+          'webhook_verify_token': _verifyTokenCtrl.text.trim(),
+        },
+      );
+      final payload = Map<String, dynamic>.from(response.data as Map);
+      final rawSettings = Map<String, dynamic>.from(payload['settings'] as Map);
+      _applySettings(_BusinessWhatsAppSettings.fromMap(rawSettings));
+      widget.onRefresh();
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Configuracion de WhatsApp guardada'),
+          backgroundColor: SaharaTheme.gold,
+        ),
+      );
+      return true;
+    } catch (e) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo guardar la configuracion: $e'),
+          backgroundColor: SaharaTheme.rojoCoral,
+        ),
+      );
+      return false;
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+    return false;
+  }
+
+  Future<void> _testConnection() async {
+    if (!_hasRequiredConnectionFields) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Completa Phone Number ID, WABA ID, numero de WhatsApp y Access Token.',
+          ),
+          backgroundColor: SaharaTheme.rojoCoral,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _testing = true);
+    try {
+      final saved = await _save();
+      if (!saved) return;
+      final response = await Supabase.instance.client.functions.invoke(
+        'test_whatsapp_connection',
+        body: const {},
+      );
+      final payload = Map<String, dynamic>.from(response.data as Map);
+      final rawSettings = Map<String, dynamic>.from(payload['settings'] as Map);
+      _applySettings(_BusinessWhatsAppSettings.fromMap(rawSettings));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            payload['message'] as String? ?? 'Conexion validada correctamente.',
+          ),
+          backgroundColor: const Color(0xFF1A9E65),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      await _load();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No pudimos validar la conexion con Meta. Revisa el token y los IDs configurados.',
+          ),
+          backgroundColor: SaharaTheme.rojoCoral,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _testing = false);
+    }
+  }
+
+  Future<void> _sendTestMessage() async {
+    if (_testPhoneCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Ingresa un numero para el mensaje de prueba.'),
+          backgroundColor: SaharaTheme.rojoCoral,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _sendingTest = true);
+    try {
+      final response = await Supabase.instance.client.functions.invoke(
+        'send_whatsapp_test_message',
+        body: {'phone': _testPhoneCtrl.text.trim()},
+      );
+      final payload = Map<String, dynamic>.from(response.data as Map);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            payload['message'] as String? ?? 'Mensaje de prueba enviado.',
+          ),
+          backgroundColor: const Color(0xFF1A9E65),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No se pudo enviar el mensaje de prueba. Verifica el numero y la conexion.',
+          ),
+          backgroundColor: SaharaTheme.rojoCoral,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _sendingTest = false);
+    }
+  }
+
+  String _statusLabel(String status) {
+    switch (status) {
+      case 'connected':
+        return 'Conectado';
+      case 'pending':
+        return 'Pendiente';
+      case 'error':
+        return 'Error';
+      default:
+        return 'No configurado';
+    }
+  }
+
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'connected':
+        return const Color(0xFF1A9E65);
+      case 'pending':
+        return const Color(0xFFC68A17);
+      case 'error':
+        return const Color(0xFFB32D2D);
+      default:
+        return Colors.black45;
+    }
+  }
+
+  String _stepGuide(int step) {
+    switch (step) {
+      case 1:
+        return 'Business Manager ID y WABA ID se obtienen en Meta Business Settings.';
+      case 2:
+        return 'Usa el numero y Phone Number ID registrados dentro de WhatsApp Cloud API.';
+      case 3:
+        return 'El Access Token y App Secret se guardan enmascarados y nunca regresan completos al frontend.';
+      case 4:
+        return 'La prueba valida token, Phone Number ID y la cuenta de WhatsApp Business.';
+      default:
+        return 'Envia un texto de verificacion a cualquier celular para confirmar la integracion.';
+    }
+  }
+
+  Widget _wizardStep({
+    required int step,
+    required String title,
+    required Widget child,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFECE9E4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: SaharaTheme.gold.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  '$step',
+                  style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w700,
+                    color: SaharaTheme.gold,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: SaharaTheme.grisCarbon,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _stepGuide(step),
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _textField(
+    String label,
+    TextEditingController controller, {
+    String? hint,
+    bool obscure = false,
+    VoidCallback? onToggle,
+    String? helper,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.inter(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: SaharaTheme.grisCarbon,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: controller,
+          obscureText: obscure,
+          style: GoogleFonts.inter(fontSize: 14),
+          decoration: InputDecoration(
+            hintText: hint,
+            filled: true,
+            fillColor: const Color(0xFFF9F9F9),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 12,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: Color(0xFFECE9E4)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: Color(0xFFC6A76A)),
+            ),
+            suffixIcon: onToggle == null
+                ? null
+                : IconButton(
+                    onPressed: onToggle,
+                    icon: Icon(
+                      obscure ? Icons.visibility_off : Icons.visibility,
+                      size: 18,
+                    ),
+                  ),
+          ),
+        ),
+        if (helper != null && helper.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            helper,
+            style: GoogleFonts.inter(fontSize: 11, color: Colors.black45),
+          ),
+        ],
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFFF7F1E7), Color(0xFFFFFFFF)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFECE9E4)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF25D366).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.chat_bubble_outline,
+                  color: Color(0xFF25D366),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'WhatsApp / Meta Business',
+                      style: GoogleFonts.inter(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: SaharaTheme.grisCarbon,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Configura la conexion de WhatsApp Cloud API sin exponer secretos ni tocar Supabase manualmente.',
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: _statusColor(_settings.connectionStatus).withValues(
+                    alpha: 0.12,
+                  ),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  _statusLabel(_settings.connectionStatus),
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: _statusColor(_settings.connectionStatus),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (_settings.lastValidatedAt != null) ...[
+          const SizedBox(height: 12),
+          Text(
+            'Ultima validacion: ${_settings.lastValidatedAt}',
+            style: GoogleFonts.inter(fontSize: 12, color: Colors.black45),
+          ),
+        ],
+        const SizedBox(height: 20),
+        _wizardStep(
+          step: 1,
+          title: 'Datos de Meta Business',
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: _textField(
+                      'Nombre de la empresa',
+                      _businessNameCtrl,
+                      hint: 'Sahara Club Spa',
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _textField(
+                      'Business Manager ID',
+                      _metaBusinessIdCtrl,
+                      hint: 'Meta Business Manager ID',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _textField(
+                'WhatsApp Business Account ID',
+                _wabaIdCtrl,
+                hint: 'Cuenta de WhatsApp Business en Meta',
+              ),
+            ],
+          ),
+        ),
+        _wizardStep(
+          step: 2,
+          title: 'Numero de WhatsApp Business',
+          child: Row(
+            children: [
+              Expanded(
+                child: _textField(
+                  'Phone Number ID',
+                  _phoneNumberIdCtrl,
+                  hint: 'ID tecnico del numero en Cloud API',
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _textField(
+                  'Numero de WhatsApp Business',
+                  _whatsAppNumberCtrl,
+                  hint: '+52...',
+                ),
+              ),
+            ],
+          ),
+        ),
+        _wizardStep(
+          step: 3,
+          title: 'Token y seguridad',
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: _textField(
+                      'Access Token',
+                      _accessTokenCtrl,
+                      hint: _accessTokenMask == null
+                          ? 'Pega aqui el token de Meta'
+                          : 'Token guardado: $_accessTokenMask',
+                      obscure: !_showAccessToken,
+                      onToggle: () => setState(
+                        () => _showAccessToken = !_showAccessToken,
+                      ),
+                      helper: _settings.hasAccessToken
+                          ? 'Deja este campo vacio si no deseas reemplazar el token guardado.'
+                          : '',
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _textField(
+                      'App ID',
+                      _appIdCtrl,
+                      hint: 'App ID de Meta',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: _textField(
+                      'App Secret',
+                      _appSecretCtrl,
+                      hint: _appSecretMask == null
+                          ? 'Pega aqui el App Secret'
+                          : 'Secret guardado: $_appSecretMask',
+                      obscure: !_showAppSecret,
+                      onToggle: () => setState(
+                        () => _showAppSecret = !_showAppSecret,
+                      ),
+                      helper: _settings.hasAppSecret
+                          ? 'Deja este campo vacio si no deseas reemplazar el App Secret guardado.'
+                          : '',
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _textField(
+                      'Webhook Verify Token',
+                      _verifyTokenCtrl,
+                      hint: 'Token de verificacion para webhook',
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        _wizardStep(
+          step: 4,
+          title: 'Guardar y probar conexion',
+          child: Row(
+            children: [
+              ElevatedButton.icon(
+                onPressed: _saving ? null : () => _save(),
+                icon: _saving
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save_outlined, size: 18),
+                label: const Text('Guardar configuracion'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: SaharaTheme.gold,
+                  foregroundColor: Colors.black,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 14,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: _testing ? null : _testConnection,
+                icon: _testing
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.verified_outlined, size: 18),
+                label: const Text('Probar conexion'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: SaharaTheme.grisCarbon,
+                  side: const BorderSide(color: Color(0xFFE0D8CA)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 14,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        _wizardStep(
+          step: 5,
+          title: 'Enviar mensaje de prueba',
+          child: Row(
+            children: [
+              Expanded(
+                child: _textField(
+                  'Numero destino',
+                  _testPhoneCtrl,
+                  hint: '+52...',
+                  helper:
+                      'Se enviara: Hola, este es un mensaje de prueba de Sahara Club Spa...',
+                ),
+              ),
+              const SizedBox(width: 16),
+              ElevatedButton.icon(
+                onPressed: _sendingTest ? null : _sendTestMessage,
+                icon: _sendingTest
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.send_outlined, size: 18),
+                label: const Text('Enviar prueba'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1A9E65),
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 14,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _BranchCard extends StatelessWidget {
   final _Branch branch;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+  final bool allowDelete;
   const _BranchCard({
     required this.branch,
     required this.onEdit,
     required this.onDelete,
+    this.allowDelete = true,
   });
 
   @override
@@ -2690,14 +3635,15 @@ class _BranchCard extends StatelessWidget {
                       icon: const Icon(Icons.edit_note, color: dorado),
                       onPressed: onEdit,
                     ),
-                    IconButton(
-                      icon: const Icon(
-                        Icons.delete_outline,
-                        color: Colors.redAccent,
-                        size: 20,
+                    if (allowDelete)
+                      IconButton(
+                        icon: const Icon(
+                          Icons.delete_outline,
+                          color: Colors.redAccent,
+                          size: 20,
+                        ),
+                        onPressed: onDelete,
                       ),
-                      onPressed: onDelete,
-                    ),
                   ],
                 ),
               ],
@@ -2745,7 +3691,7 @@ class _BranchCard extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              text.isEmpty ? '—' : text,
+              text.isEmpty ? 'â€”' : text,
               style: GoogleFonts.inter(
                 color: const Color(0xFF4A4A4A),
                 fontSize: 13,
@@ -2866,7 +3812,9 @@ class _BranchFormDialogState extends State<_BranchFormDialog> {
               child: Row(
                 children: [
                   Text(
-                    isEdit ? 'Editar sucursal' : 'Nueva sucursal',
+                    isEdit
+                        ? 'Editar sucursal'
+                        : (kEnableMultiBranch ? 'Nueva sucursal' : 'Sucursal principal'),
                     style: GoogleFonts.inter(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
@@ -2897,18 +3845,18 @@ class _BranchFormDialogState extends State<_BranchFormDialog> {
                         const SizedBox(height: 6),
                         _Field(
                           ctrl: _nameCtrl,
-                          hint: 'Ej: Sahara Club Spa - Local 1',
+                          hint: kDefaultBranchName,
                         ),
                       ],
                     ),
                     const SizedBox(height: 12),
                     _FormCard(
                       children: [
-                        _FieldLabel('Dirección Completa'),
+                        _FieldLabel('DirecciÃ³n Completa'),
                         const SizedBox(height: 6),
                         _Field(
                           ctrl: _addrCtrl,
-                          hint: 'Calle, Número, Ciudad...',
+                          hint: 'Calle, NÃºmero, Ciudad...',
                         ),
                       ],
                     ),
@@ -2918,7 +3866,7 @@ class _BranchFormDialogState extends State<_BranchFormDialog> {
                         Expanded(
                           child: _FormCard(
                             children: [
-                              _FieldLabel('Teléfono'),
+                              _FieldLabel('TelÃ©fono'),
                               const SizedBox(height: 6),
                               _Field(
                                 ctrl: _phoneCtrl,
@@ -3034,9 +3982,9 @@ class _BranchFormDialogState extends State<_BranchFormDialog> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Form Helpers (Styled like Client Dialog)
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _FormCard extends StatelessWidget {
   const _FormCard({required this.children});
   final List<Widget> children;

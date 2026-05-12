@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:ui_web' as ui;
 import 'dart:html' as html;
+import '../config/web_media_paths.dart';
 import '../pages/wellness_platform_page.dart';
 
 class HeroSection extends StatefulWidget {
@@ -11,22 +12,26 @@ class HeroSection extends StatefulWidget {
 }
 
 class _HeroSectionState extends State<HeroSection> {
+  static bool _videoViewRegistered = false;
   bool _isHoverPrimary = false;
   bool _isHoverSecondary = false;
 
   @override
   void initState() {
     super.initState();
-    // Register the video element for the background
+    if (_videoViewRegistered) return;
+    _videoViewRegistered = true;
+
     ui.platformViewRegistry.registerViewFactory(
       'hero-video-bg',
       (int viewId) => html.VideoElement()
-        ..src = 'assets/videos/portada.mp4'
+        ..src = kHeroVideoWebUrl
         ..autoplay = true
         ..muted = true
         ..loop = true
+        ..preload = 'metadata'
         ..setAttribute('playsinline', 'true')
-        ..poster = 'assets/images/portada.png'
+        ..poster = kHeroPosterWebUrl
         ..style.width = '100%'
         ..style.height = '100%'
         ..style.objectFit = 'cover'

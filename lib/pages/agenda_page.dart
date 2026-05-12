@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../config/app_mode.dart';
 import '../theme/sahara_theme.dart';
 import '../features/clients/clients_module.dart';
 import '../features/sales/sales_module.dart';
@@ -119,14 +121,19 @@ class _Booking {
         date: DateTime.tryParse(dateStr) ?? DateTime.now(),
         startMinute: t.length >= 2 ? (int.tryParse(t[0]) ?? 9) * 60 + (int.tryParse(t[1]) ?? 0) : 540,
         durationMinutes: (m['duration_min'] as int?) ?? 60,
-        status: m['status'] as String? ?? 'scheduled',
+        status: m['status'] as String? ?? 'pending',
         notes: m['client_notes'] as String? ?? '',
         clientPhone: (m['client_record'] as Map?)?['phone'] as String? ??
                      (m['client'] as Map?)?['phone'] as String?,
-        sucursalId: m['sucursal_id'] as String?,
-        branchName: (m['sucursales'] as Map?)?['nombre'] as String?,
-        branchAddress: (m['sucursales'] as Map?)?['direccion_completa'] as String?,
-        branchMaps: (m['sucursales'] as Map?)?['link_maps'] as String?,
+        sucursalId: (m['sucursal_id'] as String?) ??
+            (kEnableMultiBranch ? null : kDefaultBranchId),
+        branchName: (m['sucursales'] as Map?)?['nombre'] as String? ??
+            (kEnableMultiBranch ? null : kDefaultBranchName),
+        branchAddress:
+            (m['sucursales'] as Map?)?['direccion_completa'] as String? ??
+            (kEnableMultiBranch ? null : kDefaultBranchAddress),
+        branchMaps: (m['sucursales'] as Map?)?['link_maps'] as String? ??
+            (kEnableMultiBranch ? null : kDefaultBranchMaps),
       );
     } catch (e) {
       debugPrint('Error parsing booking ${m['id']}: $e');
@@ -179,6 +186,14 @@ class _Booking {
     final m = startMinute % 60;
     return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
   }
+
+  int get endMinute => startMinute + durationMinutes;
+
+  String get endTimeLabel {
+    final h = endMinute ~/ 60;
+    final m = endMinute % 60;
+    return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
+  }
 }
 
 // ── Helper ────────────────────────────────────────────────────────────────────
@@ -217,6 +232,9 @@ class _AgendaPageState extends State<AgendaPage> {
   String _viewMode = 'week';
   late DateTime _selectedDay;
   late DateTime _monthStart;
+  bool _hasLoadedOnce = false;
+  RealtimeChannel? _bookingsChannel;
+  Timer? _bookingsReloadDebounce;
 
   @override
   void initState() {
@@ -226,6 +244,7 @@ class _AgendaPageState extends State<AgendaPage> {
     _monthStart = DateTime(DateTime.now().year, DateTime.now().month);
     _loadTherapists();
     _loadBranches().then((_) => _loadBookings());
+    _subscribeToBookingsRealtime();
     _timer = Timer.periodic(
       const Duration(minutes: 1),
       (_) => setState(() => _now = DateTime.now()),
@@ -235,6 +254,10 @@ class _AgendaPageState extends State<AgendaPage> {
   @override
   void dispose() {
     _timer.cancel();
+    _bookingsReloadDebounce?.cancel();
+    if (_bookingsChannel != null) {
+      Supabase.instance.client.removeChannel(_bookingsChannel!);
+    }
     super.dispose();
   }
 
@@ -277,6 +300,133 @@ class _AgendaPageState extends State<AgendaPage> {
   }
 
   // ── Data ────────────────────────────────────────────────────────────────────
+  void _subscribeToBookingsRealtime() {
+    _bookingsChannel = Supabase.instance.client
+        .channel('agenda-bookings-realtime')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'bookings',
+          callback: (_) {
+            _bookingsReloadDebounce?.cancel();
+            _bookingsReloadDebounce = Timer(
+              const Duration(milliseconds: 350),
+              () {
+                if (mounted) _loadBookings();
+              },
+            );
+          },
+        )
+        .subscribe();
+  }
+
+  String get _sourcePlatform => kIsWeb ? 'web' : 'mobile';
+
+  List<_Booking> _bookingsForDay(DateTime day) {
+    final list = _bookings.where((b) => _sameDay(b.date, day)).toList();
+    list.sort((a, b) => a.startMinute.compareTo(b.startMinute));
+    return list;
+  }
+
+  List<_Booking> get _upcomingBookings {
+    final nowMinute = _now.hour * 60 + _now.minute;
+    final list = _bookings
+        .where(
+          (b) =>
+              b.status != 'cancelled' &&
+              b.status != 'completed' &&
+              (b.date.isAfter(DateTime(_now.year, _now.month, _now.day)) ||
+                  (_sameDay(b.date, _now) && b.endMinute >= nowMinute)),
+        )
+        .toList();
+    list.sort((a, b) {
+      final byDate = a.date.compareTo(b.date);
+      if (byDate != 0) return byDate;
+      return a.startMinute.compareTo(b.startMinute);
+    });
+    return list.take(5).toList();
+  }
+
+  String _statusLabel(String s) {
+    switch (s) {
+      case 'pending':
+      case 'scheduled':
+        return 'Pendiente';
+      case 'confirmed':
+        return 'Confirmada';
+      case 'checked_in':
+        return 'Check-in';
+      case 'in_progress':
+        return 'En proceso';
+      case 'completed':
+        return 'Completada';
+      case 'cancelled':
+        return 'Cancelada';
+      case 'no_show':
+        return 'No asistio';
+      case 'rescheduled':
+        return 'Reagendada';
+      default:
+        return 'Reservada';
+    }
+  }
+
+  Color _statusColor(String s) {
+    switch (s) {
+      case 'pending':
+      case 'scheduled':
+        return const Color(0xFFC68A17);
+      case 'confirmed':
+        return const Color(0xFF1A9E65);
+      case 'checked_in':
+        return const Color(0xFF2088D8);
+      case 'in_progress':
+        return const Color(0xFF6A54E0);
+      case 'completed':
+        return const Color(0xFF666666);
+      case 'cancelled':
+        return const Color(0xFFB32D2D);
+      case 'no_show':
+        return const Color(0xFF8B4D4D);
+      case 'rescheduled':
+        return const Color(0xFF0A9AA4);
+      default:
+        return SaharaTheme.gold;
+    }
+  }
+
+  Future<bool> _updateBookingStatus(_Booking booking, String newStatus) async {
+    try {
+      await Supabase.instance.client
+          .from('bookings')
+          .update({
+            'status': newStatus,
+            'updated_by': Supabase.instance.client.auth.currentUser?.id,
+            'source_platform': _sourcePlatform,
+          })
+          .eq('id', booking.id);
+
+      await _loadBookings();
+      if (!mounted) return true;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Cita actualizada a ${_statusLabel(newStatus)}'),
+          backgroundColor: _statusColor(newStatus),
+        ),
+      );
+      return true;
+    } catch (e) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo actualizar la cita: $e'),
+          backgroundColor: SaharaTheme.rojoCoral,
+        ),
+      );
+      return false;
+    }
+  }
+
   Future<void> _loadTherapists() async {
     try {
       final data = await Supabase.instance.client
@@ -307,15 +457,29 @@ class _AgendaPageState extends State<AgendaPage> {
           .select('id, nombre')
           .order('nombre');
       if (mounted) {
+        var branches = (res as List).cast<Map<String, dynamic>>();
+        if (!kEnableMultiBranch) {
+          branches = branches.isEmpty ? [defaultBranchMap()] : branches;
+        }
+        final hasSelectedBranch = _selectedBranchId != null &&
+            branches.any((b) => b['id'] == _selectedBranchId);
         setState(() {
-          _branches = (res as List).cast<Map<String, dynamic>>();
-          // Si hay sucursales y no hay ninguna seleccionada, podríamos seleccionar la primera 
-          // (que probablemente sea Local 1), pero lo dejaremos en null para mostrar TODO por ahora
-          // tal como solicitas para no "echar a perder" lo que funciona.
+          _branches = branches;
+          if (!kEnableMultiBranch) {
+            _selectedBranchId = branches.first['id'] as String?;
+          } else if (branches.isEmpty || !hasSelectedBranch) {
+            _selectedBranchId = null;
+          }
         });
       }
     } catch (e) {
       debugPrint('loadBranches: $e');
+      if (mounted && !kEnableMultiBranch) {
+        setState(() {
+          _branches = [defaultBranchMap()];
+          _selectedBranchId = kDefaultBranchId;
+        });
+      }
     }
   }
 
@@ -335,22 +499,38 @@ class _AgendaPageState extends State<AgendaPage> {
           .gte('booking_date', _yyyyMMdd(_rangeStart))
           .lte('booking_date', _yyyyMMdd(_rangeEnd));
 
-      if (_selectedBranchId != null) q = q.eq('sucursal_id', _selectedBranchId!);
+      if (kEnableMultiBranch && _selectedBranchId != null) {
+        q = q.eq('sucursal_id', _selectedBranchId!);
+      }
       if (_therapistId != null) q = q.eq('therapist_id', _therapistId!);
 
       if (_statusFilter == 'active') {
-        q = q.or('status.eq.scheduled,status.eq.confirmed');
+        q = q.or(
+          'status.eq.scheduled,status.eq.pending,status.eq.confirmed,'
+          'status.eq.checked_in,status.eq.in_progress,status.eq.rescheduled',
+        );
       } else if (_statusFilter != 'all') {
         q = q.eq('status', _statusFilter);
       }
 
       final data = await q.order('booking_date').order('booking_time') as List;
+      final parsed = <_Booking>[];
+      for (final row in data) {
+        if (row is! Map) {
+          debugPrint('Skipping booking row with invalid type: ${row.runtimeType}');
+          continue;
+        }
+        try {
+          parsed.add(_Booking.fromMap(Map<String, dynamic>.from(row)));
+        } catch (e) {
+          debugPrint('Skipping malformed booking row: $e');
+        }
+      }
       if (!mounted) return;
       setState(() {
-        _bookings = data
-            .map((m) => _Booking.fromMap(m as Map<String, dynamic>))
-            .toList();
+        _bookings = parsed;
         _loading = false;
+        _hasLoadedOnce = true;
       });
     } catch (e) {
       debugPrint('loadBookings: $e');
@@ -454,92 +634,140 @@ class _AgendaPageState extends State<AgendaPage> {
                 ? const AdminModule()
                 : _activeModule != 'agenda'
                 ? _PlaceholderModule(module: _activeModule)
-                : Row(
-                    children: [
-                      _Sidebar(
-                        therapists: _therapists,
-                        therapistId: _therapistId,
-                        branches: _branches,
-                        selectedBranchId: _selectedBranchId,
-                        statusFilter: _statusFilter,
-                        weekStart: _weekStart,
-                        onBranch: (v) {
-                          setState(() => _selectedBranchId = v);
-                          _loadBookings();
-                        },
-                        onTherapist: (v) {
-                          setState(() => _therapistId = v);
-                          _loadBookings();
-                        },
-                        onStatus: (v) {
-                          setState(() => _statusFilter = v!);
-                          _loadBookings();
-                        },
-                        onDateTap: _goToDate,
-                      ),
-                      Expanded(
-                        child: Column(
-                          children: [
-                            _TopBar(
-                              title: _topBarTitle,
-                              viewMode: _viewMode,
-                              onPrev: _viewMode == 'day'
-                                  ? _prevDay
-                                  : _viewMode == 'month'
-                                  ? _prevMonth
-                                  : _prevWeek,
-                              onNext: _viewMode == 'day'
-                                  ? _nextDay
-                                  : _viewMode == 'month'
-                                  ? _nextMonth
-                                  : _nextWeek,
-                              onToday: _goToToday,
-                              onNew: () => _showNewDialog(
-                                context,
-                                date: _viewMode == 'day'
-                                    ? _selectedDay
-                                    : _weekStart,
-                              ),
-                              onViewMode: (v) {
-                                setState(() => _viewMode = v);
-                                _loadBookings();
-                              },
+                : LayoutBuilder(
+                    builder: (context, constraints) {
+                      final isCompact = constraints.maxWidth < 960;
+                      if (isCompact) {
+                        return _MobileAgendaView(
+                          title: _topBarTitle,
+                          selectedDay: _selectedDay,
+                          therapists: _therapists,
+                          therapistId: _therapistId,
+                          statusFilter: _statusFilter,
+                          dayBookings: _bookingsForDay(_selectedDay),
+                          upcomingBookings: _upcomingBookings,
+                          onPrevDay: _prevDay,
+                          onNextDay: _nextDay,
+                          onPickDate: () async {
+                            final picked = await showDatePicker(
+                              context: context,
+                              initialDate: _selectedDay,
+                              firstDate: DateTime(2024),
+                              lastDate: DateTime(2035),
+                            );
+                            if (picked != null) _goToDate(picked);
+                          },
+                          onToday: _goToToday,
+                          onTherapist: (v) {
+                            setState(() => _therapistId = v);
+                            _loadBookings();
+                          },
+                          onStatus: (v) {
+                            setState(() => _statusFilter = v);
+                            _loadBookings();
+                          },
+                          onNew: () => _showNewDialog(context, date: _selectedDay),
+                          onBookingTap: (booking) =>
+                              _showBookingDetail(context, booking),
+                          onConfirm: (booking) =>
+                              _updateBookingStatus(booking, 'confirmed'),
+                          onCancel: (booking) =>
+                              _updateBookingStatus(booking, 'cancelled'),
+                          onReschedule: (booking) =>
+                              _showEditDialog(context, booking),
+                          statusLabel: _statusLabel,
+                          statusColor: _statusColor,
+                        );
+                      }
+
+                      return Row(
+                        children: [
+                          _Sidebar(
+                            therapists: _therapists,
+                            therapistId: _therapistId,
+                            branches: _branches,
+                            selectedBranchId: _selectedBranchId,
+                            statusFilter: _statusFilter,
+                            weekStart: _weekStart,
+                            onBranch: (v) {
+                              setState(() => _selectedBranchId = v);
+                              _loadBookings();
+                            },
+                            onTherapist: (v) {
+                              setState(() => _therapistId = v);
+                              _loadBookings();
+                            },
+                            onStatus: (v) {
+                              setState(() => _statusFilter = v!);
+                              _loadBookings();
+                            },
+                            onDateTap: _goToDate,
+                          ),
+                          Expanded(
+                            child: Column(
+                              children: [
+                                _TopBar(
+                                  title: _topBarTitle,
+                                  viewMode: _viewMode,
+                                  onPrev: _viewMode == 'day'
+                                      ? _prevDay
+                                      : _viewMode == 'month'
+                                      ? _prevMonth
+                                      : _prevWeek,
+                                  onNext: _viewMode == 'day'
+                                      ? _nextDay
+                                      : _viewMode == 'month'
+                                      ? _nextMonth
+                                      : _nextWeek,
+                                  onToday: _goToToday,
+                                  onNew: () => _showNewDialog(
+                                    context,
+                                    date: _viewMode == 'day'
+                                        ? _selectedDay
+                                        : _weekStart,
+                                  ),
+                                  onViewMode: (v) {
+                                    setState(() => _viewMode = v);
+                                    _loadBookings();
+                                  },
+                                ),
+                                Expanded(
+                                  child: _loading && !_hasLoadedOnce
+                                      ? const Center(
+                                          child: CircularProgressIndicator(
+                                            color: SaharaTheme.gold,
+                                          ),
+                                        )
+                                      : _viewMode == 'week'
+                                      ? _WeekGrid(
+                                          weekStart: _weekStart,
+                                          bookings: _bookings,
+                                          now: _now,
+                                          onBookingTap: _showBookingDetail,
+                                          onReschedule: _rescheduleBooking,
+                                          onSlotTap: _onSlotTap,
+                                        )
+                                      : _viewMode == 'day'
+                                      ? _DayGrid(
+                                          day: _selectedDay,
+                                          bookings: _bookings,
+                                          now: _now,
+                                          onBookingTap: _showBookingDetail,
+                                          onReschedule: _rescheduleBooking,
+                                          onSlotTap: _onSlotTap,
+                                        )
+                                      : _MonthGrid(
+                                          monthStart: _monthStart,
+                                          bookings: _bookings,
+                                          onDayTap: _onMonthDayTap,
+                                        ),
+                                ),
+                              ],
                             ),
-                            Expanded(
-                              child: _loading
-                                  ? const Center(
-                                      child: CircularProgressIndicator(
-                                        color: SaharaTheme.gold,
-                                      ),
-                                    )
-                                  : _viewMode == 'week'
-                                  ? _WeekGrid(
-                                      weekStart: _weekStart,
-                                      bookings: _bookings,
-                                      now: _now,
-                                      onBookingTap: _showBookingDetail,
-                                      onReschedule: _rescheduleBooking,
-                                      onSlotTap: _onSlotTap,
-                                    )
-                                  : _viewMode == 'day'
-                                  ? _DayGrid(
-                                      day: _selectedDay,
-                                      bookings: _bookings,
-                                      now: _now,
-                                      onBookingTap: _showBookingDetail,
-                                      onReschedule: _rescheduleBooking,
-                                      onSlotTap: _onSlotTap,
-                                    )
-                                  : _MonthGrid(
-                                      monthStart: _monthStart,
-                                      bookings: _bookings,
-                                      onDayTap: _onMonthDayTap,
-                                    ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                          ),
+                        ],
+                      );
+                    },
                   ),
           ),
         ],
@@ -561,7 +789,6 @@ class _AgendaPageState extends State<AgendaPage> {
           Navigator.pop(ctx);
           _loadBookings();
         },
-        onAutoWhatsApp: (type, b) => _triggerAutoWhatsApp(type, b),
       ),
     );
   }
@@ -579,7 +806,6 @@ class _AgendaPageState extends State<AgendaPage> {
           Navigator.pop(ctx);
           _loadBookings();
         },
-        onAutoWhatsApp: (type, b2) => _triggerAutoWhatsApp(type, b2),
       ),
     );
   }
@@ -662,23 +888,60 @@ class _AgendaPageState extends State<AgendaPage> {
     });
   }
 
-  Future<void> _rescheduleBooking(
+  String _isoDateOnly(DateTime value) => value.toIso8601String().split('T').first;
+
+  String _isoTimeOnly(int minute) {
+    final h = minute ~/ 60;
+    final m = minute % 60;
+    return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:00';
+  }
+
+  Future<bool> _rescheduleBooking(
     _Booking b,
     DateTime newDate,
     int newMinute,
   ) async {
-    final h = newMinute ~/ 60;
-    final m = newMinute % 60;
+    final bookingDate = _isoDateOnly(newDate);
+    final bookingTime = _isoTimeOnly(newMinute);
     try {
-      await Supabase.instance.client
+      debugPrint(
+        'reschedule start id=${b.id} branch=${b.sucursalId} '
+        'from=${_yyyyMMdd(b.date)} ${_isoTimeOnly(b.startMinute)} '
+        'to=$bookingDate $bookingTime '
+        'range=${_yyyyMMdd(_rangeStart)}..${_yyyyMMdd(_rangeEnd)}',
+      );
+
+      final updatedRow = await Supabase.instance.client
           .from('bookings')
           .update({
-            'booking_date': _yyyyMMdd(newDate),
-            'booking_time':
-                '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:00',
+            'booking_date': bookingDate,
+            'booking_time': bookingTime,
+            'status': (b.status == 'completed' || b.status == 'cancelled')
+                ? b.status
+                : 'rescheduled',
+            'updated_by': Supabase.instance.client.auth.currentUser?.id,
+            'source_platform': _sourcePlatform,
           })
-          .eq('id', b.id);
-      
+          .eq('id', b.id)
+          .select('id, booking_date, booking_time, sucursal_id')
+          .maybeSingle();
+
+      if (updatedRow == null) {
+        throw PostgrestException(
+          message:
+              'La actualización no devolvió filas. Posible rechazo por RLS o ID inexistente.',
+          code: 'RLS_NO_ROW',
+        );
+      }
+
+      debugPrint(
+        'reschedule success id=${updatedRow['id']} '
+        'date=${updatedRow['booking_date']} time=${updatedRow['booking_time']} '
+        'branch=${updatedRow['sucursal_id']}',
+      );
+
+      await _loadBookings();
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -688,14 +951,17 @@ class _AgendaPageState extends State<AgendaPage> {
           ),
         );
       }
-      _loadBookings();
-    } catch (e) {
-      debugPrint('reschedule error: $e');
+      return true;
+    } on PostgrestException catch (e) {
+      debugPrint('reschedule postgres error: code=${e.code} message=${e.message}');
       if (mounted) {
-        String errorMsg = e.toString();
-        if (errorMsg.contains('42501')) {
-          errorMsg = 'No tienes permisos para mover esta cita (RLS)';
+        var errorMsg = e.message.isNotEmpty ? e.message : e.toString();
+        if (e.code == '42501' || e.code == 'RLS_NO_ROW') {
+          errorMsg =
+              'No tienes permisos para mover esta cita o la política RLS la rechazó';
         }
+        await _loadBookings();
+        if (!mounted) return false;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error al mover cita: $errorMsg'),
@@ -703,9 +969,23 @@ class _AgendaPageState extends State<AgendaPage> {
             duration: const Duration(seconds: 5),
           ),
         );
-        // Reload to restore original state in UI
-        _loadBookings();
       }
+      return false;
+    } catch (e) {
+      debugPrint('reschedule error: $e');
+      if (mounted) {
+        final errorMsg = e.toString();
+        await _loadBookings();
+        if (!mounted) return false;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al mover cita: $errorMsg'),
+            backgroundColor: Colors.red.shade700,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+      return false;
     }
   }
 
@@ -716,52 +996,10 @@ class _AgendaPageState extends State<AgendaPage> {
         booking: b,
         onRefresh: _loadBookings,
         onEdit: () => _showEditDialog(context, b),
-        onAutoWhatsApp: (type) => _triggerAutoWhatsApp(type, b),
+        onUpdateStatus: (status) => _updateBookingStatus(b, status),
+        statusLabel: _statusLabel,
       ),
     );
-  }
-
-  Future<void> _triggerAutoWhatsApp(String type, _Booking b) async {
-    try {
-      final res = await Supabase.instance.client
-          .from('whatsapp_templates')
-          .select()
-          .eq('type', type)
-          .eq('active', true)
-          .limit(1)
-          .maybeSingle();
-
-      if (res != null) {
-        final t = WhatsAppTemplate.fromMap(res);
-        _sendWhatsApp(t, b);
-      }
-    } catch (e) {
-      debugPrint('AutoWhatsApp error: $e');
-    }
-  }
-
-  void _sendWhatsApp(WhatsAppTemplate t, _Booking b) async {
-    String msg = t.message;
-    final dateStr = '${b.date.day} de ${_kMonths[b.date.month - 1]}';
-    msg = msg.replaceAll('[CLIENTE]', b.clientName);
-    msg = msg.replaceAll('[SERVICIO]', b.serviceName);
-    msg = msg.replaceAll('[FECHA]', dateStr);
-    msg = msg.replaceAll('[HORA]', b.timeLabel);
-    msg = msg.replaceAll('[PRECIO]', '');
-    msg = msg.replaceAll('[LOCAL]', b.branchName ?? 'Sahara Club Spa');
-    msg = msg.replaceAll('[DIRECCION]', b.branchAddress ?? '');
-    msg = msg.replaceAll('[MAPS]', b.branchMaps ?? '');
-
-    final phone = b.clientPhone ?? '';
-    if (phone.isEmpty) return;
-
-    String cleanPhone = phone.replaceAll(RegExp(r'\D'), '');
-    if (cleanPhone.length == 10) cleanPhone = '52$cleanPhone';
-
-    final url = Uri.parse('https://wa.me/$cleanPhone?text=${Uri.encodeComponent(msg)}');
-    if (await canLaunchUrl(url)) {
-      await launchUrl(url, mode: LaunchMode.externalApplication);
-    }
   }
 }
 
@@ -907,6 +1145,391 @@ class _IconBtn extends StatelessWidget {
   );
 }
 
+class _MobileAgendaView extends StatelessWidget {
+  const _MobileAgendaView({
+    required this.title,
+    required this.selectedDay,
+    required this.therapists,
+    required this.therapistId,
+    required this.statusFilter,
+    required this.dayBookings,
+    required this.upcomingBookings,
+    required this.onPrevDay,
+    required this.onNextDay,
+    required this.onPickDate,
+    required this.onToday,
+    required this.onTherapist,
+    required this.onStatus,
+    required this.onNew,
+    required this.onBookingTap,
+    required this.onConfirm,
+    required this.onCancel,
+    required this.onReschedule,
+    required this.statusLabel,
+    required this.statusColor,
+  });
+
+  final String title;
+  final DateTime selectedDay;
+  final List<_Therapist> therapists;
+  final String? therapistId;
+  final String statusFilter;
+  final List<_Booking> dayBookings;
+  final List<_Booking> upcomingBookings;
+  final VoidCallback onPrevDay;
+  final VoidCallback onNextDay;
+  final VoidCallback onPickDate;
+  final VoidCallback onToday;
+  final ValueChanged<String?> onTherapist;
+  final ValueChanged<String> onStatus;
+  final VoidCallback onNew;
+  final ValueChanged<_Booking> onBookingTap;
+  final Future<bool> Function(_Booking) onConfirm;
+  final Future<bool> Function(_Booking) onCancel;
+  final ValueChanged<_Booking> onReschedule;
+  final String Function(String) statusLabel;
+  final Color Function(String) statusColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 960;
+    return Container(
+      color: SaharaTheme.blancoAlmendra,
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              border: Border(bottom: BorderSide(color: Color(0xFFE0DDD8))),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: GoogleFonts.playfairDisplay(
+                          color: Colors.black87,
+                          fontSize: 20,
+                        ),
+                      ),
+                    ),
+                    FilledButton(
+                      onPressed: onNew,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: SaharaTheme.gold,
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      ),
+                      child: const Icon(Icons.add, size: 18),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    _IconBtn(icon: Icons.chevron_left, onTap: onPrevDay),
+                    _IconBtn(icon: Icons.chevron_right, onTap: onNextDay),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: onPickDate,
+                        icon: const Icon(Icons.calendar_today_outlined, size: 16),
+                        label: Text(
+                          '${selectedDay.day}/${selectedDay.month}/${selectedDay.year}',
+                          style: GoogleFonts.inter(fontSize: 12),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton(onPressed: onToday, child: const Text('Hoy')),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _SideDropdown<String?>(
+                        value: therapistId,
+                        items: [
+                          const DropdownMenuItem(value: null, child: Text('Todos los terapeutas')),
+                          ...therapists.map(
+                            (t) => DropdownMenuItem(value: t.id, child: Text(t.name)),
+                          ),
+                        ],
+                        onChanged: onTherapist,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _SideDropdown<String>(
+                        value: statusFilter,
+                        items: const [
+                          DropdownMenuItem(value: 'active', child: Text('Activas')),
+                          DropdownMenuItem(value: 'pending', child: Text('Pendientes')),
+                          DropdownMenuItem(value: 'confirmed', child: Text('Confirmadas')),
+                          DropdownMenuItem(value: 'completed', child: Text('Completadas')),
+                          DropdownMenuItem(value: 'cancelled', child: Text('Canceladas')),
+                          DropdownMenuItem(value: 'all', child: Text('Todas')),
+                        ],
+                        onChanged: (value) {
+                          if (value != null) onStatus(value);
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                _MobileSectionTitle(
+                  title: 'Agenda del dia',
+                  subtitle: '${dayBookings.length} citas',
+                ),
+                const SizedBox(height: 10),
+                if (dayBookings.isEmpty)
+                  _MobileEmptyState(
+                    message: 'No hay citas para este dia con los filtros actuales.',
+                  )
+                else
+                  ...dayBookings.map(
+                    (booking) => _MobileBookingCard(
+                      booking: booking,
+                      statusLabel: statusLabel,
+                      statusColor: statusColor,
+                      onTap: () => onBookingTap(booking),
+                      onConfirm: booking.status == 'pending' || booking.status == 'scheduled'
+                          ? () => onConfirm(booking)
+                          : null,
+                      onCancel: booking.status != 'completed' && booking.status != 'cancelled'
+                          ? () => onCancel(booking)
+                          : null,
+                      onReschedule: () => onReschedule(booking),
+                    ),
+                  ),
+                const SizedBox(height: 18),
+                _MobileSectionTitle(
+                  title: 'Proximas citas',
+                  subtitle: '${upcomingBookings.length} proximas',
+                ),
+                const SizedBox(height: 10),
+                if (upcomingBookings.isEmpty)
+                  _MobileEmptyState(
+                    message: 'No hay proximas citas activas en el rango cargado.',
+                  )
+                else
+                  ...upcomingBookings.map(
+                    (booking) => _MobileBookingCard(
+                      booking: booking,
+                      compact: true,
+                      statusLabel: statusLabel,
+                      statusColor: statusColor,
+                      onTap: () => onBookingTap(booking),
+                      onConfirm: booking.status == 'pending' || booking.status == 'scheduled'
+                          ? () => onConfirm(booking)
+                          : null,
+                      onCancel: booking.status != 'completed' && booking.status != 'cancelled'
+                          ? () => onCancel(booking)
+                          : null,
+                      onReschedule: () => onReschedule(booking),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MobileSectionTitle extends StatelessWidget {
+  const _MobileSectionTitle({required this.title, required this.subtitle});
+
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Text(
+          title,
+          style: GoogleFonts.inter(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            color: Colors.black87,
+          ),
+        ),
+        const Spacer(),
+        Text(
+          subtitle,
+          style: GoogleFonts.inter(fontSize: 12, color: Colors.black45),
+        ),
+      ],
+    );
+  }
+}
+
+class _MobileEmptyState extends StatelessWidget {
+  const _MobileEmptyState({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 960;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFECE9E4)),
+      ),
+      child: Text(
+        message,
+        style: GoogleFonts.inter(fontSize: 13, color: Colors.black54),
+      ),
+    );
+  }
+}
+
+class _MobileBookingCard extends StatelessWidget {
+  const _MobileBookingCard({
+    required this.booking,
+    required this.statusLabel,
+    required this.statusColor,
+    required this.onTap,
+    required this.onReschedule,
+    this.onConfirm,
+    this.onCancel,
+    this.compact = false,
+  });
+
+  final _Booking booking;
+  final String Function(String) statusLabel;
+  final Color Function(String) statusColor;
+  final VoidCallback onTap;
+  final VoidCallback onReschedule;
+  final VoidCallback? onConfirm;
+  final VoidCallback? onCancel;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final badgeColor = statusColor(booking.status);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECE9E4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${booking.timeLabel} - ${booking.endTimeLabel}',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black87,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: badgeColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  statusLabel(booking.status),
+                  style: GoogleFonts.inter(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: badgeColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            booking.clientName,
+            style: GoogleFonts.inter(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${booking.serviceName} • ${booking.therapistName}',
+            style: GoogleFonts.inter(fontSize: 13, color: Colors.black54),
+          ),
+          if (!compact && (booking.clientPhone ?? '').isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              booking.clientPhone!,
+              style: GoogleFonts.inter(fontSize: 13, color: Colors.black54),
+            ),
+          ],
+          if (!compact && booking.notes.trim().isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              booking.notes,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.inter(fontSize: 12, color: Colors.black45),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (onConfirm != null)
+                _DialogBtn(
+                  label: 'Confirmar',
+                  color: const Color(0xFF1A9E65),
+                  onTap: onConfirm!,
+                ),
+              if (onCancel != null)
+                _DialogBtn(
+                  label: 'Cancelar',
+                  color: const Color(0xFFB32D2D),
+                  onTap: onCancel!,
+                ),
+              _DialogBtn(
+                label: 'Reagendar',
+                color: const Color(0xFF0A9AA4),
+                onTap: onReschedule,
+              ),
+              _DialogBtn(
+                label: 'Detalle',
+                color: SaharaTheme.gold,
+                onTap: onTap,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // Sidebar
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1003,19 +1626,24 @@ class _SidebarState extends State<_Sidebar> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _SideLabel('SUCURSAL'),
-                  const SizedBox(height: 6),
-                  _SideDropdown<String?>(
-                    value: widget.selectedBranchId,
-                    items: [
-                      const DropdownMenuItem(value: null, child: Text('Todas')),
-                      ...widget.branches.map(
-                        (b) => DropdownMenuItem(value: b['id'], child: Text(b['nombre'])),
-                      ),
-                    ],
-                    onChanged: (v) => widget.onBranch(v),
-                  ),
-                  const SizedBox(height: 16),
+                  if (kEnableMultiBranch) ...[
+                    _SideLabel('SUCURSAL'),
+                    const SizedBox(height: 6),
+                    _SideDropdown<String?>(
+                      value: widget.selectedBranchId,
+                      items: [
+                        const DropdownMenuItem(value: null, child: Text('Todas')),
+                        ...widget.branches.map(
+                          (b) => DropdownMenuItem(
+                            value: b['id'],
+                            child: Text(b['nombre']),
+                          ),
+                        ),
+                      ],
+                      onChanged: (v) => widget.onBranch(v),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
                   _SideLabel('PROFESIONAL'),
                   const SizedBox(height: 6),
                   _SideDropdown<String?>(
@@ -1040,6 +1668,14 @@ class _SidebarState extends State<_Sidebar> {
                         child: Text('Reservas activas'),
                       ),
                       DropdownMenuItem(
+                        value: 'pending',
+                        child: Text('Pendientes'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'confirmed',
+                        child: Text('Confirmadas'),
+                      ),
+                      DropdownMenuItem(
                         value: 'completed',
                         child: Text('Completadas'),
                       ),
@@ -1047,6 +1683,7 @@ class _SidebarState extends State<_Sidebar> {
                         value: 'cancelled',
                         child: Text('Canceladas'),
                       ),
+                      DropdownMenuItem(value: 'no_show', child: Text('No show')),
                       DropdownMenuItem(value: 'all', child: Text('Todas')),
                     ],
                     onChanged: widget.onStatus,
@@ -1378,7 +2015,7 @@ class _WeekGrid extends StatefulWidget {
   final List<_Booking> bookings;
   final DateTime now;
   final void Function(BuildContext, _Booking) onBookingTap;
-  final void Function(_Booking, DateTime, int) onReschedule;
+  final Future<bool> Function(_Booking, DateTime, int) onReschedule;
   final void Function(DateTime, TimeOfDay, Offset) onSlotTap;
 
   @override
@@ -1595,23 +2232,38 @@ class _WeekGridState extends State<_WeekGrid> {
               if (local != null) setState(() => _dragLocal = local);
             },
             onLeave: (_) => setState(() => _dragLocal = null),
-            onAcceptWithDetails: (details) {
+            onAcceptWithDetails: (details) async {
               final local = _localFromGrid(details.offset);
               if (local == null) return;
               final slot = _slotFromLocal(local);
               if (slot == null) return;
               final (dayIdx, minute) = slot;
               final newDate = widget.weekStart.add(Duration(days: dayIdx));
+              final confirmed = await _confirmReschedule(
+                context,
+                details.data,
+                newDate,
+                minute,
+              );
+              if (confirmed != true) {
+                if (!mounted) return;
+                setState(() {
+                  _dragging = null;
+                  _dragLocal = null;
+                });
+                return;
+              }
+              final persisted = await widget.onReschedule(
+                details.data,
+                newDate,
+                minute,
+              );
+              if (!mounted) return;
               setState(() {
                 _dragging = null;
                 _dragLocal = null;
               });
-              _confirmReschedule(context, details.data, newDate, minute).then((
-                ok,
-              ) {
-                if (ok == true)
-                  widget.onReschedule(details.data, newDate, minute);
-              });
+              if (!persisted) return;
             },
             builder: (context, candidateData, rejectedData) =>
                 const SizedBox.expand(),
@@ -1813,7 +2465,7 @@ class _DayGrid extends StatefulWidget {
   final List<_Booking> bookings;
   final DateTime now;
   final void Function(BuildContext, _Booking) onBookingTap;
-  final void Function(_Booking, DateTime, int) onReschedule;
+  final Future<bool> Function(_Booking, DateTime, int) onReschedule;
   final void Function(DateTime, TimeOfDay, Offset) onSlotTap;
 
   @override
@@ -1994,20 +2646,36 @@ class _DayGridState extends State<_DayGrid> {
                                 if (l != null) setState(() => _dragLocal = l);
                               },
                               onLeave: (_) => setState(() => _dragLocal = null),
-                              onAcceptWithDetails: (d) {
+                              onAcceptWithDetails: (d) async {
                                 final l = _localFromGrid(d.offset);
                                 if (l == null) return;
                                 final m = _slotMinute(l);
                                 if (m == null) return;
+                                final confirmed = await _confirmReschedule(
+                                  context,
+                                  d.data,
+                                  widget.day,
+                                  m,
+                                );
+                                if (confirmed != true) {
+                                  if (!mounted) return;
+                                  setState(() {
+                                    _dragging = null;
+                                    _dragLocal = null;
+                                  });
+                                  return;
+                                }
+                                final persisted = await widget.onReschedule(
+                                  d.data,
+                                  widget.day,
+                                  m,
+                                );
+                                if (!mounted) return;
                                 setState(() {
                                   _dragging = null;
                                   _dragLocal = null;
                                 });
-                                _confirmReschedule(context, d.data, widget.day, m).then((ok) {
-                                  if (ok == true) {
-                                    widget.onReschedule(d.data, widget.day, m);
-                                  }
-                                });
+                                if (!persisted) return;
                               },
                               builder: (ctx2, cd, rd) =>
                                   const SizedBox.expand(),
@@ -2582,12 +3250,14 @@ class _BookingDetailDialog extends StatelessWidget {
     required this.booking,
     required this.onRefresh,
     required this.onEdit,
-    required this.onAutoWhatsApp,
+    required this.onUpdateStatus,
+    required this.statusLabel,
   });
   final _Booking booking;
   final VoidCallback onRefresh;
   final VoidCallback onEdit;
-  final Function(String) onAutoWhatsApp;
+  final Future<bool> Function(String) onUpdateStatus;
+  final String Function(String) statusLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -2649,12 +3319,16 @@ class _BookingDetailDialog extends StatelessWidget {
               const Divider(color: Color(0xFFECECEC)),
               const SizedBox(height: 16),
               // Details
-              _DetailRow(icon: Icons.schedule, text: b.timeLabel),
+              _DetailRow(icon: Icons.schedule, text: '${b.timeLabel} - ${b.endTimeLabel}'),
               _DetailRow(icon: Icons.timer, text: '${b.durationMinutes} min'),
               _DetailRow(icon: Icons.person, text: b.therapistName),
+              if ((b.clientPhone ?? '').isNotEmpty)
+                _DetailRow(icon: Icons.phone_outlined, text: b.clientPhone!),
+              if (b.notes.trim().isNotEmpty)
+                _DetailRow(icon: Icons.sticky_note_2_outlined, text: b.notes),
               _DetailRow(
                 icon: Icons.circle,
-                text: _statusLabel(b.status),
+                text: statusLabel(b.status),
                 color: b.cardAccent,
               ),
               const SizedBox(height: 20),
@@ -2663,7 +3337,7 @@ class _BookingDetailDialog extends StatelessWidget {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  if (b.status == 'scheduled')
+                  if (b.status == 'scheduled' || b.status == 'pending')
                     _DialogBtn(
                       label: 'Confirmar',
                       color: const Color(0xFF1A9E65),
@@ -2681,6 +3355,11 @@ class _BookingDetailDialog extends StatelessWidget {
                       color: const Color(0xFF666666),
                       onTap: () => _updateStatus(context, 'completed'),
                     ),
+                  _DialogBtn(
+                    label: 'Historial',
+                    color: const Color(0xFF4A4A4A),
+                    onTap: () => _showClientHistory(context, b),
+                  ),
                   _WhatsAppBtn(booking: b),
                   _DialogBtn(
                     label: 'Editar',
@@ -2722,16 +3401,10 @@ class _BookingDetailDialog extends StatelessWidget {
 
   Future<void> _updateStatus(BuildContext ctx, String newStatus) async {
     try {
-      await Supabase.instance.client
-          .from('bookings')
-          .update({'status': newStatus})
-          .eq('id', booking.id);
-      if (ctx.mounted) {
+      final updated = await onUpdateStatus(newStatus);
+      if (updated && ctx.mounted) {
         Navigator.pop(ctx);
         onRefresh();
-        if (newStatus == 'confirmed') {
-          onAutoWhatsApp('confirmation');
-        }
       }
     } catch (e) {
       if (ctx.mounted) {
@@ -2743,6 +3416,143 @@ class _BookingDetailDialog extends StatelessWidget {
         );
       }
     }
+  }
+
+  void _showClientHistory(BuildContext context, _Booking booking) {
+    showDialog(
+      context: context,
+      builder: (_) => _ClientHistoryDialog(
+        booking: booking,
+        statusLabel: statusLabel,
+      ),
+    );
+  }
+}
+
+class _ClientHistoryDialog extends StatefulWidget {
+  const _ClientHistoryDialog({
+    required this.booking,
+    required this.statusLabel,
+  });
+
+  final _Booking booking;
+  final String Function(String) statusLabel;
+
+  @override
+  State<_ClientHistoryDialog> createState() => _ClientHistoryDialogState();
+}
+
+class _ClientHistoryDialogState extends State<_ClientHistoryDialog> {
+  bool _loading = true;
+  List<Map<String, dynamic>> _history = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final data = await Supabase.instance.client
+          .from('bookings')
+          .select('''
+            id, booking_date, booking_time, duration_min, status, client_notes,
+            services(name),
+            therapist:staff(full_name)
+          ''')
+          .eq('client_record_id', widget.booking.clientId)
+          .order('booking_date', ascending: false)
+          .order('booking_time', ascending: false)
+          .limit(12);
+
+      if (!mounted) return;
+      setState(() {
+        _history = List<Map<String, dynamic>>.from(data as List);
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.white,
+      child: SizedBox(
+        width: 480,
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Historial de ${widget.booking.clientName}',
+                      style: GoogleFonts.playfairDisplay(
+                        fontSize: 20,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (_loading)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (_history.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  child: Text(
+                    'No hay historial registrado para este cliente.',
+                    style: GoogleFonts.inter(color: Colors.black54),
+                  ),
+                )
+              else
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 420),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _history.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (_, index) {
+                      final item = _history[index];
+                      final time = (item['booking_time'] as String? ?? '').substring(0, 5);
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                          (item['services'] as Map?)?['name'] as String? ?? 'Servicio',
+                          style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                        ),
+                        subtitle: Text(
+                          '${item['booking_date']} • $time • ${(item['therapist'] as Map?)?['full_name'] as String? ?? 'Terapeuta'}',
+                          style: GoogleFonts.inter(fontSize: 12),
+                        ),
+                        trailing: Text(
+                          widget.statusLabel(item['status'] as String? ?? 'scheduled'),
+                          style: GoogleFonts.inter(fontSize: 12, color: Colors.black54),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -2813,7 +3623,6 @@ class _NewBookingDialog extends StatefulWidget {
     this.initialDate,
     this.initialTime,
     this.editBooking,
-    this.onAutoWhatsApp,
   });
   final List<_Therapist> therapists;
   final List<Map<String, dynamic>> branches;
@@ -2823,7 +3632,6 @@ class _NewBookingDialog extends StatefulWidget {
   final DateTime? initialDate;
   final TimeOfDay? initialTime;
   final _Booking? editBooking;
-  final Function(String, _Booking)? onAutoWhatsApp;
 
   @override
   State<_NewBookingDialog> createState() => _NewBookingDialogState();
@@ -2841,7 +3649,7 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
   String? _therapistId;
   String? _sucursalId;
   String? _serviceId;
-  String _status = 'scheduled';
+  String _status = 'pending';
   bool _saving = false;
   bool _showInfo = false;
   bool _serviceOpen = false;
@@ -2884,12 +3692,15 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
 
   static const _statusMeta = {
     'scheduled': ('Reservado', Color(0xFF5B8FF9)),
+    'checked_in': ('Check-in', Color(0xFF2088D8)),
+    'in_progress': ('En proceso', Color(0xFF6A54E0)),
     'confirmed': ('Confirmado', Color(0xFFFFB347)),
     'attended': ('Asiste', Color(0xFFFF9899)),
     'no_show': ('No asistió', Color(0xFFFFB3B3)),
     'pending': ('Pendiente', Color(0xFFFF4444)),
     'waiting': ('En espera', Color(0xFF52C41A)),
     'cancelled': ('Cancelado', Color(0xFFB32D2D)),
+    'rescheduled': ('Reagendado', Color(0xFF0A9AA4)),
     'completed': ('Completado', Color(0xFF888888)),
   };
 
@@ -2900,9 +3711,11 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
     _hour = widget.editBooking?.startMinute != null ? (widget.editBooking!.startMinute ~/ 60) : (widget.initialTime?.hour ?? 10);
     _minute = widget.editBooking?.startMinute != null ? (widget.editBooking!.startMinute % 60) : (widget.initialTime?.minute ?? 0);
     _therapistId = widget.editBooking?.therapistId ?? widget.initialTherapistId;
-    _sucursalId = widget.editBooking?.sucursalId ?? widget.initialBranchId;
+    _sucursalId = kEnableMultiBranch
+        ? (widget.editBooking?.sucursalId ?? widget.initialBranchId)
+        : kDefaultBranchId;
     _serviceId = widget.editBooking?.serviceId;
-    _status = widget.editBooking?.status ?? 'scheduled';
+    _status = widget.editBooking?.status ?? 'pending';
     
     if (widget.editBooking != null) {
       _clientCtrl.text = widget.editBooking!.clientName;
@@ -3118,6 +3931,8 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
         'status': _status,
         'client_notes': _notesCtrl.text.trim(),
         'service_name': _selectedServiceName,
+        'source_platform': kIsWeb ? 'web' : 'mobile',
+        'updated_by': Supabase.instance.client.auth.currentUser?.id,
       };
 
       Map<String, dynamic>? res;
@@ -3132,7 +3947,10 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
       } else {
         final data = await Supabase.instance.client
             .from('bookings')
-            .insert(payload)
+            .insert({
+              ...payload,
+              'created_by': Supabase.instance.client.auth.currentUser?.id,
+            })
             .select('*, client_record:client_record_id(full_name, phone)')
             .maybeSingle();
         res = data;
@@ -3157,15 +3975,6 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
     final bData = await _doSave();
     if (bData != null) {
       widget.onSaved();
-      if (_status == 'confirmed' && widget.onAutoWhatsApp != null) {
-        // Build a temporary _Booking object to pass to the trigger
-        final b = _Booking.fromMap({
-          ...bData,
-          // client_record and phone are now in bData thanks to the join
-          'services': {'name': _selectedServiceName},
-        });
-        widget.onAutoWhatsApp!('confirmation', b);
-      }
     }
   }
 
@@ -3173,14 +3982,6 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
     final messenger = ScaffoldMessenger.of(context);
     final bData = await _doSave();
     if (bData == null) return;
-    
-    if (_status == 'confirmed' && widget.onAutoWhatsApp != null) {
-        final b = _Booking.fromMap({
-          ...bData,
-          'services': {'name': _selectedServiceName},
-        });
-        widget.onAutoWhatsApp!('confirmation', b);
-    }
 
     setState(() {
       _clientCtrl.clear();
@@ -3188,7 +3989,7 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
       _clientId = null;
       _therapistId = null;
       _serviceId = null;
-      _status = 'scheduled';
+      _status = 'pending';
     });
     messenger.showSnackBar(
       const SnackBar(
@@ -4263,6 +5064,7 @@ class _ModuleNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 960;
     return Container(
       height: 52,
       decoration: BoxDecoration(
@@ -4285,17 +5087,17 @@ class _ModuleNav extends StatelessWidget {
         children: [
           // Brand mark
           SizedBox(
-            width: _kSidebarWidth,
+            width: compact ? 128 : _kSidebarWidth,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: EdgeInsets.symmetric(horizontal: compact ? 12 : 16),
               child: Row(
                 children: [
                   Text(
                     'SAHARA',
                     style: GoogleFonts.playfairDisplay(
                       color: SaharaTheme.gold,
-                      fontSize: 15,
-                      letterSpacing: 4,
+                      fontSize: compact ? 13 : 15,
+                      letterSpacing: compact ? 2.8 : 4,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -4331,27 +5133,30 @@ class _ModuleNav extends StatelessWidget {
           ),
           // Module tabs
           Expanded(
-            child: Row(
-              children: _mods
-                  .map(
-                    (m) => _ModuleTab(
-                      id: m.$1,
-                      label: m.$2,
-                      icon: m.$3,
-                      active: activeModule == m.$1,
-                      onTap: () => onModuleTap(m.$1),
-                    ),
-                  )
-                  .toList(),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: _mods
+                    .map(
+                      (m) => _ModuleTab(
+                        id: m.$1,
+                        label: m.$2,
+                        icon: m.$3,
+                        active: activeModule == m.$1,
+                        onTap: () => onModuleTap(m.$1),
+                      ),
+                    )
+                    .toList(),
+              ),
             ),
           ),
-          const Spacer(),
           IconButton(
             icon: const Icon(Icons.logout_outlined, size: 20, color: Colors.black45),
             onPressed: () => Supabase.instance.client.auth.signOut(),
             tooltip: 'Cerrar sesión',
           ),
-          const SizedBox(width: 16),
+          SizedBox(width: compact ? 8 : 16),
         ],
       ),
     );
@@ -4540,9 +5345,9 @@ class _WhatsAppBtnState extends State<_WhatsAppBtn> {
     msg = msg.replaceAll('[FECHA]', dateStr);
     msg = msg.replaceAll('[HORA]', b.timeLabel);
     msg = msg.replaceAll('[PRECIO]', ''); 
-    msg = msg.replaceAll('[LOCAL]', b.branchName ?? 'Sahara Club Spa');
-    msg = msg.replaceAll('[DIRECCION]', b.branchAddress ?? '');
-    msg = msg.replaceAll('[MAPS]', b.branchMaps ?? '');
+    msg = msg.replaceAll('[LOCAL]', b.branchName ?? kDefaultBranchName);
+    msg = msg.replaceAll('[DIRECCION]', b.branchAddress ?? kDefaultBranchAddress);
+    msg = msg.replaceAll('[MAPS]', b.branchMaps ?? kDefaultBranchMaps);
 
     final phone = b.clientPhone ?? '';
     if (phone.isEmpty) {

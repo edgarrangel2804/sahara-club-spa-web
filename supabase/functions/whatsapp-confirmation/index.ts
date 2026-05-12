@@ -1,6 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
+const DEFAULT_BRANCH_ID = "11111111-1111-1111-1111-111111111111"
+const DEFAULT_BRANCH_NAME = "Sahara Club Spa"
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -58,9 +61,22 @@ serve(async (req) => {
 
     if (bError || !booking) throw new Error('Error fetching booking data')
 
+    let branchName = booking.sucursales?.nombre || ''
+    let branchAddress = booking.sucursales?.direccion_completa || ''
+
+    if (!branchName || !branchAddress) {
+      const { data: defaultBranch } = await supabase
+        .from('sucursales')
+        .select('nombre, direccion_completa')
+        .eq('id', DEFAULT_BRANCH_ID)
+        .maybeSingle()
+
+      branchName = branchName || defaultBranch?.nombre || DEFAULT_BRANCH_NAME
+      branchAddress = branchAddress || defaultBranch?.direccion_completa || ''
+    }
+
     const clientName = booking.client_record?.full_name || 'Cliente'
     const clientPhone = (booking.client_record?.phone || '').replace(/\D/g, '')
-    const branchAddress = booking.sucursales?.direccion_completa || ''
     
     // 4. Formatear Fecha y Hora
     const dateObj = new Date(booking.booking_date + 'T' + booking.booking_time)
@@ -98,7 +114,7 @@ serve(async (req) => {
                   { type: "text", text: clientName },
                   { type: "text", text: formattedDate },
                   { type: "text", text: formattedTime },
-                  { type: "text", text: branchAddress },
+                  { type: "text", text: branchAddress || branchName },
                 ]
               }
             ]

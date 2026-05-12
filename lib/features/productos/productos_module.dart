@@ -31,7 +31,7 @@ class _Product {
     description: m['description'] as String? ?? '',
     price:       (m['price']      as num?)?.toDouble() ?? 0,
     stock:       (m['stock']      as num?)?.toInt()    ?? 0,
-    category:    m['category']    as String? ?? 'general',
+    category:    _normalizeProductCategory(m['category'] as String?),
     active:      m['active']      as bool?   ?? true,
   );
 }
@@ -559,7 +559,8 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       text: widget.product != null ? widget.product!.price.toStringAsFixed(0) : '');
   late final _stock = TextEditingController(
       text: widget.product != null ? '${widget.product!.stock}' : '0');
-  late String _category = widget.product?.category ?? 'general';
+  late String _category =
+      _normalizeProductCategory(widget.product?.category);
   late bool   _active   = widget.product?.active   ?? true;
   bool _saving = false;
 
@@ -579,7 +580,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
         'description': _desc.text.trim(),
         'price':       double.tryParse(_price.text) ?? 0,
         'stock':       int.tryParse(_stock.text)    ?? 0,
-        'category':    _category,
+        'category':    _normalizeProductCategory(_category),
         'active':      _active,
       };
       if (widget.product == null) {
@@ -866,6 +867,38 @@ InputDecoration _deco(String? hint) => InputDecoration(
     borderSide: const BorderSide(color: Color(0xFFC6A76A)),
   ),
 );
+
+String _normalizeProductCategory(String? raw) {
+  final value = (raw ?? '').trim().toLowerCase();
+  switch (value) {
+    case 'general':
+    case 'aceite':
+    case 'vela':
+    case 'crema':
+    case 'suplemento':
+    case 'accesorio':
+      return value;
+    case 'aceites':
+      return 'aceite';
+    case 'velas':
+      return 'vela';
+    case 'cremas':
+      return 'crema';
+    case 'suplementos':
+      return 'suplemento';
+    case 'accesorios':
+      return 'accesorio';
+    case 'corporales':
+    case 'fusionadas':
+    case 'tecnologia_corporal':
+    case 'tecnologia_facial':
+    case 'moldeo':
+    case 'faciales_combo':
+      return 'general';
+    default:
+      return 'general';
+  }
+}
 
 String _catLabel(String cat) {
   const map = {
