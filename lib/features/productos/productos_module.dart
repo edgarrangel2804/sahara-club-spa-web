@@ -233,40 +233,46 @@ class _ProductosModuleState extends State<ProductosModule> {
                               borderRadius: BorderRadius.circular(10),
                               border: Border.all(color: const Color(0xFFEEEEEE)),
                             ),
-                            child: Column(
-                              children: [
-                                // Table header
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                  decoration: const BoxDecoration(
-                                    border: Border(bottom: BorderSide(color: Color(0xFFF0F0F0))),
-                                  ),
-                                  child: Row(children: [
-                                    _Th('PRODUCTO',   flex: 3),
-                                    _Th('CATEGORÍA',  flex: 2),
-                                    _Th('PRECIO',     flex: 1),
-                                    _Th('STOCK',      flex: 1),
-                                    _Th('ESTADO',     flex: 1),
-                                    const SizedBox(width: 72),
-                                  ]),
-                                ),
-                                // Rows
-                                Expanded(
-                                  child: ListView.separated(
-                                    padding: EdgeInsets.zero,
-                                    itemCount: filtered.length,
-                                    separatorBuilder: (_, __) =>
-                                      const Divider(height: 1, color: Color(0xFFF5F5F5)),
-                                    itemBuilder: (_, i) => _ProductRow(
-                                      product:    filtered[i],
-                                      selected:   _selected?.id == filtered[i].id,
-                                      onTap:      () => setState(() => _selected = filtered[i]),
-                                      onEdit:     () => _openForm(filtered[i]),
-                                      onDelete:   () => _delete(filtered[i]),
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: SizedBox(
+                                width: 1000, // Anchura mínima garantizada para evitar overflow
+                                child: Column(
+                                  children: [
+                                    // Table header
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                      decoration: const BoxDecoration(
+                                        border: Border(bottom: BorderSide(color: Color(0xFFF0F0F0))),
+                                      ),
+                                      child: Row(children: [
+                                        _Th('PRODUCTO',   flex: 3),
+                                        _Th('CATEGORÍA',  flex: 2),
+                                        _Th('PRECIO',     flex: 1),
+                                        _Th('STOCK',      flex: 1),
+                                        _Th('ESTADO',     flex: 1),
+                                        const SizedBox(width: 72),
+                                      ]),
                                     ),
-                                  ),
+                                    // Rows
+                                    Expanded(
+                                      child: ListView.separated(
+                                        padding: EdgeInsets.zero,
+                                        itemCount: filtered.length,
+                                        separatorBuilder: (_, __) =>
+                                          const Divider(height: 1, color: Color(0xFFF5F5F5)),
+                                        itemBuilder: (_, i) => _ProductRow(
+                                          product:    filtered[i],
+                                          selected:   _selected?.id == filtered[i].id,
+                                          onTap:      () => setState(() => _selected = filtered[i]),
+                                          onEdit:     () => _openForm(filtered[i]),
+                                          onDelete:   () => _delete(filtered[i]),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                              ],
+                              ),
                             ),
                           ),
                         ),
@@ -583,6 +589,12 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       if (mounted) {
         Navigator.pop(context);
         widget.onSaved();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Producto guardado correctamente'),
+            backgroundColor: Color(0xFFC6A76A),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -597,7 +609,8 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   Widget build(BuildContext context) {
     final isEdit = widget.product != null;
     return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      backgroundColor: const Color(0xFFF5F3EF),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: SizedBox(
         width: 460,
         child: Padding(
@@ -683,6 +696,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                       onPressed: _saving ? null : _save,
                       style: FilledButton.styleFrom(
                         backgroundColor: const Color(0xFFC6A76A),
+                        foregroundColor: Colors.black,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                       ),

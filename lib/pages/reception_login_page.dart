@@ -71,6 +71,7 @@ class _ReceptionLoginPageState extends State<ReceptionLoginPage> {
                 controller: _emailController,
                 style: const TextStyle(color: Colors.white),
                 decoration: const InputDecoration(
+                  filled: false, // Forzamos a que no use el fondo blanco del tema
                   labelText: "EMAIL",
                   labelStyle: TextStyle(color: Colors.white38, fontSize: 12, letterSpacing: 2),
                   enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
@@ -83,6 +84,7 @@ class _ReceptionLoginPageState extends State<ReceptionLoginPage> {
                 obscureText: true,
                 style: const TextStyle(color: Colors.white),
                 decoration: const InputDecoration(
+                  filled: false, // Forzamos a que no use el fondo blanco del tema
                   labelText: "PASSWORD",
                   labelStyle: TextStyle(color: Colors.white38, fontSize: 12, letterSpacing: 2),
                   enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
@@ -102,7 +104,7 @@ class _ReceptionLoginPageState extends State<ReceptionLoginPage> {
                   ),
                   child: _isLoading
                       ? const CircularProgressIndicator(color: Colors.black)
-                      : const Text("ENTER COMMAND CENTER", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 2)),
+                      : const Text("ENTRAR", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 2)),
                 ),
               )
             ],

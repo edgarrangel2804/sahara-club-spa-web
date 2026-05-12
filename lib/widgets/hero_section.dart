@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'dart:ui_web' as ui;
+import 'dart:html' as html;
 import '../pages/wellness_platform_page.dart';
 
 class HeroSection extends StatefulWidget {
@@ -13,21 +15,43 @@ class _HeroSectionState extends State<HeroSection> {
   bool _isHoverSecondary = false;
 
   @override
+  void initState() {
+    super.initState();
+    // Register the video element for the background
+    ui.platformViewRegistry.registerViewFactory(
+      'hero-video-bg',
+      (int viewId) => html.VideoElement()
+        ..src = 'assets/videos/portada.mp4'
+        ..autoplay = true
+        ..muted = true
+        ..loop = true
+        ..setAttribute('playsinline', 'true')
+        ..poster = 'assets/images/portada.png'
+        ..style.width = '100%'
+        ..style.height = '100%'
+        ..style.objectFit = 'cover'
+        ..style.border = 'none',
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     return SizedBox(
       width: double.infinity,
-      height: 850, // Manteniendo la altura premium
+      height: 850,
       child: Stack(
         children: [
-          // 🌅 Imagen
+          // 🌅 Background Video (with fallback poster image)
           Positioned.fill(
-            child: Image.asset(
-              "assets/images/portada.png",
-              fit: BoxFit.cover,
-            ),
+            child: HtmlElementView(viewType: 'hero-video-bg'),
           ),
 
-          // 🌑 Premium Overlay
+          // Fallback static image in case video fails or to prevent white flash
+          // (Wait, HtmlElementView already has poster attribute)
+
+
+          // 🌑 Premium Overlay (Comentado a petición del usuario para ver el video original)
+          /*
           Positioned.fill(
             child: Container(
               decoration: BoxDecoration(
@@ -42,6 +66,7 @@ class _HeroSectionState extends State<HeroSection> {
               ),
             ),
           ),
+          */
 
           // 🧠 Contenido
           Padding(

@@ -86,7 +86,17 @@ class _Booking {
     required this.status,
     required this.notes,
     this.clientPhone,
+    this.sucursalId,
+    this.branchName,
+    this.branchAddress,
+    this.branchMaps,
   });
+
+  final String? sucursalId;
+  final String? branchName;
+  final String? branchAddress;
+  final String? branchMaps;
+
 
   factory _Booking.fromMap(Map<String, dynamic> m) {
     final t = (m['booking_time'] as String? ?? '09:00:00').split(':');
@@ -110,46 +120,40 @@ class _Booking {
       notes: m['client_notes'] as String? ?? '',
       clientPhone: (m['client_record'] as Map?)?['phone'] as String? ??
                    (m['client'] as Map?)?['phone'] as String?,
+      sucursalId: m['sucursal_id'] as String?,
+      branchName: (m['sucursales'] as Map?)?['nombre'] as String?,
+      branchAddress: (m['sucursales'] as Map?)?['direccion_completa'] as String?,
+      branchMaps: (m['sucursales'] as Map?)?['link_maps'] as String?,
     );
   }
 
   Color get cardBg {
     switch (status) {
       case 'confirmed':
-        return const Color(0xFFFFF5E6);
-      case 'attended':
-        return const Color(0xFFFFF0F4);
-      case 'no_show':
-        return const Color(0xFFFCECEC);
-      case 'pending':
-        return const Color(0xFFFFF0F0);
-      case 'waiting':
-        return const Color(0xFFEBF9E6);
+        return Colors.green.withValues(alpha: 0.4);
       case 'cancelled':
-        return const Color(0xFFFCECEC);
-      case 'completed':
-        return const Color(0xFFF0F0F0);
+        return Colors.red.withValues(alpha: 0.4);
+      case 'pending':
+      case 'scheduled':
+        return Colors.amber.withValues(alpha: 0.4);
+      case 'rescheduled':
+        return Colors.lightBlue.withValues(alpha: 0.4);
       default:
-        return const Color(0xFFEDF4FD);
+        return const Color(0xFFEDF4FD); // Default blueish for other states
     }
   }
 
   Color get cardAccent {
     switch (status) {
       case 'confirmed':
-        return const Color(0xFFFFB347);
-      case 'attended':
-        return const Color(0xFFFF9899);
-      case 'no_show':
-        return const Color(0xFFFFB3B3);
-      case 'pending':
-        return const Color(0xFFFF4444);
-      case 'waiting':
-        return const Color(0xFF52C41A);
+        return Colors.green;
       case 'cancelled':
-        return const Color(0xFFB32D2D);
-      case 'completed':
-        return const Color(0xFF888888);
+        return Colors.red;
+      case 'pending':
+      case 'scheduled':
+        return Colors.amber;
+      case 'rescheduled':
+        return Colors.lightBlue;
       default:
         return SaharaTheme.gold;
     }
@@ -189,6 +193,8 @@ class _AgendaPageState extends State<AgendaPage> {
   bool _loading = true;
   List<_Booking> _bookings = [];
   List<_Therapist> _therapists = [];
+  List<Map<String, dynamic>> _branches = [];
+  String? _selectedBranchId;
 
   DateTime _now = DateTime.now();
   late Timer _timer;
@@ -204,7 +210,7 @@ class _AgendaPageState extends State<AgendaPage> {
     _selectedDay = DateTime.now();
     _monthStart = DateTime(DateTime.now().year, DateTime.now().month);
     _loadTherapists();
-    _loadBookings();
+    _loadBranches().then((_) => _loadBookings());
     _timer = Timer.periodic(
       const Duration(minutes: 1),
       (_) => setState(() => _now = DateTime.now()),
@@ -279,13 +285,32 @@ class _AgendaPageState extends State<AgendaPage> {
     }
   }
 
+  Future<void> _loadBranches() async {
+    try {
+      final res = await Supabase.instance.client
+          .from('sucursales')
+          .select('id, nombre')
+          .order('nombre');
+      if (mounted) {
+        setState(() {
+          _branches = (res as List).cast<Map<String, dynamic>>();
+          // Si hay sucursales y no hay ninguna seleccionada, podríamos seleccionar la primera 
+          // (que probablemente sea Local 1), pero lo dejaremos en null para mostrar TODO por ahora
+          // tal como solicitas para no "echar a perder" lo que funciona.
+        });
+      }
+    } catch (e) {
+      debugPrint('loadBranches: $e');
+    }
+  }
+
   Future<void> _loadBookings() async {
     setState(() => _loading = true);
     try {
       dynamic q = Supabase.instance.client
           .from('bookings')
           .select('''
-        id, client_id, client_record_id, service_id, booking_date, booking_time, duration_min, status, therapist_id, client_notes,
+        id, client_id, client_record_id, service_id, sucursal_id, booking_date, booking_time, duration_min, status, therapist_id, client_notes,
         client:profiles!bookings_client_id_fkey(full_name),
         client_record:clients!bookings_client_record_id_fkey(full_name, phone),
         therapist:staff(full_name),
@@ -294,6 +319,7 @@ class _AgendaPageState extends State<AgendaPage> {
           .gte('booking_date', _yyyyMMdd(_rangeStart))
           .lte('booking_date', _yyyyMMdd(_rangeEnd));
 
+      if (_selectedBranchId != null) q = q.eq('sucursal_id', _selectedBranchId!);
       if (_therapistId != null) q = q.eq('therapist_id', _therapistId!);
 
       if (_statusFilter == 'active') {
@@ -381,7 +407,7 @@ class _AgendaPageState extends State<AgendaPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F3EF),
+      backgroundColor: SaharaTheme.blancoAlmendra,
       body: Column(
         children: [
           _ModuleNav(
@@ -408,8 +434,14 @@ class _AgendaPageState extends State<AgendaPage> {
                       _Sidebar(
                         therapists: _therapists,
                         therapistId: _therapistId,
+                        branches: _branches,
+                        selectedBranchId: _selectedBranchId,
                         statusFilter: _statusFilter,
                         weekStart: _weekStart,
+                        onBranch: (v) {
+                          setState(() => _selectedBranchId = v);
+                          _loadBookings();
+                        },
                         onTherapist: (v) {
                           setState(() => _therapistId = v);
                           _loadBookings();
@@ -495,7 +527,9 @@ class _AgendaPageState extends State<AgendaPage> {
       context: ctx,
       builder: (_) => _NewBookingDialog(
         therapists: _therapists,
+        branches: _branches,
         initialTherapistId: _therapistId,
+        initialBranchId: _selectedBranchId,
         initialDate: date,
         initialTime: time,
         onSaved: () {
@@ -512,12 +546,15 @@ class _AgendaPageState extends State<AgendaPage> {
       context: ctx,
       builder: (_) => _NewBookingDialog(
         therapists: _therapists,
+        branches: _branches,
         initialTherapistId: _therapistId,
+        initialBranchId: b.sucursalId,
         editBooking: b,
         onSaved: () {
           Navigator.pop(ctx);
           _loadBookings();
         },
+        onAutoWhatsApp: (type, b2) => _triggerAutoWhatsApp(type, b2),
       ),
     );
   }
@@ -669,6 +706,9 @@ class _AgendaPageState extends State<AgendaPage> {
     msg = msg.replaceAll('[FECHA]', dateStr);
     msg = msg.replaceAll('[HORA]', b.timeLabel);
     msg = msg.replaceAll('[PRECIO]', '');
+    msg = msg.replaceAll('[LOCAL]', b.branchName ?? 'Sahara Club Spa');
+    msg = msg.replaceAll('[DIRECCION]', b.branchAddress ?? '');
+    msg = msg.replaceAll('[MAPS]', b.branchMaps ?? '');
 
     final phone = b.clientPhone ?? '';
     if (phone.isEmpty) return;
@@ -832,8 +872,11 @@ class _Sidebar extends StatefulWidget {
   const _Sidebar({
     required this.therapists,
     required this.therapistId,
+    required this.branches,
+    required this.selectedBranchId,
     required this.statusFilter,
     required this.weekStart,
+    required this.onBranch,
     required this.onTherapist,
     required this.onStatus,
     required this.onDateTap,
@@ -841,8 +884,11 @@ class _Sidebar extends StatefulWidget {
 
   final List<_Therapist> therapists;
   final String? therapistId;
+  final List<Map<String, dynamic>> branches;
+  final String? selectedBranchId;
   final String statusFilter;
   final DateTime weekStart;
+  final ValueChanged<String?> onBranch;
   final ValueChanged<String?> onTherapist;
   final ValueChanged<String?> onStatus;
   final ValueChanged<DateTime> onDateTap;
@@ -917,12 +963,15 @@ class _SidebarState extends State<_Sidebar> {
                 children: [
                   _SideLabel('SUCURSAL'),
                   const SizedBox(height: 6),
-                  _SideDropdown<String>(
-                    value: 'local1',
-                    items: const [
-                      DropdownMenuItem(value: 'local1', child: Text('Local 1')),
+                  _SideDropdown<String?>(
+                    value: widget.selectedBranchId,
+                    items: [
+                      const DropdownMenuItem(value: null, child: Text('Todas')),
+                      ...widget.branches.map(
+                        (b) => DropdownMenuItem(value: b['id'], child: Text(b['nombre'])),
+                      ),
                     ],
-                    onChanged: (_) {},
+                    onChanged: (v) => widget.onBranch(v),
                   ),
                   const SizedBox(height: 16),
                   _SideLabel('PROFESIONAL'),
@@ -2459,9 +2508,9 @@ class _BookingCardState extends State<_BookingCard> {
               Text(
                 b.clientName,
                 style: GoogleFonts.inter(
-                  color: Colors.black87,
+                  color: Colors.black,
                   fontSize: 11,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w700, // Slightly bolder for premium look
                 ),
                 overflow: TextOverflow.ellipsis,
                 maxLines: 1,
@@ -2470,7 +2519,7 @@ class _BookingCardState extends State<_BookingCard> {
                 const SizedBox(height: 1),
                 Text(
                   b.serviceName,
-                  style: GoogleFonts.inter(color: Colors.black54, fontSize: 10),
+                  style: GoogleFonts.inter(color: Colors.black, fontSize: 10, fontWeight: FontWeight.w500),
                   overflow: TextOverflow.ellipsis,
                   maxLines: 1,
                 ),
@@ -2568,33 +2617,29 @@ class _BookingDetailDialog extends StatelessWidget {
               ),
               const SizedBox(height: 20),
               // Actions
-              Row(
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
                 children: [
-                  if (b.status == 'scheduled') ...[
+                  if (b.status == 'scheduled')
                     _DialogBtn(
                       label: 'Confirmar',
                       color: const Color(0xFF1A9E65),
                       onTap: () => _updateStatus(context, 'confirmed'),
                     ),
-                    const SizedBox(width: 8),
-                  ],
                   if (b.status != 'completed' && b.status != 'cancelled')
                     _DialogBtn(
                       label: 'Cancelar',
                       color: const Color(0xFFB32D2D),
                       onTap: () => _updateStatus(context, 'cancelled'),
                     ),
-                  if (b.status == 'confirmed') ...[
-                    const SizedBox(width: 8),
+                  if (b.status == 'confirmed')
                     _DialogBtn(
                       label: 'Completada',
                       color: const Color(0xFF666666),
                       onTap: () => _updateStatus(context, 'completed'),
                     ),
-                  ],
-                  const Spacer(),
                   _WhatsAppBtn(booking: b),
-                  const SizedBox(width: 8),
                   _DialogBtn(
                     label: 'Editar',
                     color: SaharaTheme.gold,
@@ -2714,21 +2759,25 @@ class _DialogBtn extends StatelessWidget {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// New Booking Dialog  (esqueleto — siguiente paso)
+// New Booking Dialog
 // ═════════════════════════════════════════════════════════════════════════════
 class _NewBookingDialog extends StatefulWidget {
   const _NewBookingDialog({
     required this.therapists,
+    required this.branches,
     required this.onSaved,
     this.initialTherapistId,
+    this.initialBranchId,
     this.initialDate,
     this.initialTime,
     this.editBooking,
     this.onAutoWhatsApp,
   });
   final List<_Therapist> therapists;
+  final List<Map<String, dynamic>> branches;
   final VoidCallback onSaved;
   final String? initialTherapistId;
+  final String? initialBranchId;
   final DateTime? initialDate;
   final TimeOfDay? initialTime;
   final _Booking? editBooking;
@@ -2748,6 +2797,7 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
   late int _minute;
   String? _clientId;
   String? _therapistId;
+  String? _sucursalId;
   String? _serviceId;
   String _status = 'scheduled';
   bool _saving = false;
@@ -2804,24 +2854,18 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
   @override
   void initState() {
     super.initState();
-    final edit = widget.editBooking;
-    if (edit != null) {
-      _date = edit.date;
-      _hour = edit.startMinute ~/ 60;
-      _minute = edit.startMinute % 60;
-      _therapistId = edit.therapistId.isNotEmpty ? edit.therapistId : null;
-      _serviceId = edit.serviceId.isNotEmpty ? edit.serviceId : null;
-      _status = edit.status;
-      _clientId = edit.clientId.isNotEmpty ? edit.clientId : null;
-      _clientCtrl.text = edit.clientName;
-      _notesCtrl.text = edit.notes;
-    } else {
-      _date = widget.initialDate ?? DateTime.now();
-      _hour = widget.initialTime?.hour ?? 10;
-      _minute = widget.initialTime?.minute ?? 0;
-      _therapistId =
-          widget.initialTherapistId ??
-          (widget.therapists.length == 1 ? widget.therapists.first.id : null);
+    _date = widget.editBooking?.date ?? widget.initialDate ?? DateTime.now();
+    _hour = widget.editBooking?.startMinute != null ? (widget.editBooking!.startMinute ~/ 60) : (widget.initialTime?.hour ?? 10);
+    _minute = widget.editBooking?.startMinute != null ? (widget.editBooking!.startMinute % 60) : (widget.initialTime?.minute ?? 0);
+    _therapistId = widget.editBooking?.therapistId ?? widget.initialTherapistId;
+    _sucursalId = widget.editBooking?.sucursalId ?? widget.initialBranchId;
+    _serviceId = widget.editBooking?.serviceId;
+    _status = widget.editBooking?.status ?? 'scheduled';
+    
+    if (widget.editBooking != null) {
+      _clientCtrl.text = widget.editBooking!.clientName;
+      _clientId        = widget.editBooking!.clientId;
+      _notesCtrl.text  = widget.editBooking!.notes;
     }
     _loadServices();
   }
@@ -2838,7 +2882,7 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
     try {
       final data = await Supabase.instance.client
           .from('services')
-          .select('id, name, price')
+          .select('id, name, price, duration')
           .order('name');
       if (mounted) {
         setState(() {
@@ -3024,6 +3068,7 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
       final payload = {
         'client_record_id': finalClientId,
         'therapist_id': _therapistId,
+        'sucursal_id': _sucursalId,
         'service_id': _serviceId,
         'booking_date': _yyyyMMdd(_date),
         'booking_time': timeStr,
@@ -3132,7 +3177,7 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
     final sColor = meta.$2;
 
     return Dialog(
-      backgroundColor: const Color(0xFFF5F3EF),
+      backgroundColor: SaharaTheme.blancoAlmendra,
       insetPadding: const EdgeInsets.symmetric(horizontal: 80, vertical: 48),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ConstrainedBox(
@@ -4258,6 +4303,13 @@ class _ModuleNav extends StatelessWidget {
                   .toList(),
             ),
           ),
+          const Spacer(),
+          IconButton(
+            icon: const Icon(Icons.logout_outlined, size: 20, color: Colors.black45),
+            onPressed: () => Supabase.instance.client.auth.signOut(),
+            tooltip: 'Cerrar sesión',
+          ),
+          const SizedBox(width: 16),
         ],
       ),
     );
@@ -4445,9 +4497,10 @@ class _WhatsAppBtnState extends State<_WhatsAppBtn> {
     msg = msg.replaceAll('[SERVICIO]', b.serviceName);
     msg = msg.replaceAll('[FECHA]', dateStr);
     msg = msg.replaceAll('[HORA]', b.timeLabel);
-    
-    // Attempt to get price if available (we added price to query)
     msg = msg.replaceAll('[PRECIO]', ''); 
+    msg = msg.replaceAll('[LOCAL]', b.branchName ?? 'Sahara Club Spa');
+    msg = msg.replaceAll('[DIRECCION]', b.branchAddress ?? '');
+    msg = msg.replaceAll('[MAPS]', b.branchMaps ?? '');
 
     final phone = b.clientPhone ?? '';
     if (phone.isEmpty) {

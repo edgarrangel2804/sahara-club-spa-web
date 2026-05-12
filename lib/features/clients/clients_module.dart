@@ -512,7 +512,7 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
   Widget build(BuildContext context) {
     final c = widget.client;
     return Container(
-      color: const Color(0xFFF5F3EF),
+      color: SaharaTheme.blancoAlmendra,
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(28),
         child: Column(
@@ -708,26 +708,29 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
     final ok = await showDialog<bool>(
       context: ctx,
       builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        backgroundColor: const Color(0xFFF5F3EF),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text('Eliminar cliente',
-            style: GoogleFonts.inter(
-                fontSize: 16, fontWeight: FontWeight.w600, color: Colors.black87)),
+            style: GoogleFonts.playfairDisplay(
+                fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black)),
         content: Text(
             '¿Eliminar a ${widget.client.fullName}? Esta acción no se puede deshacer.',
-            style: GoogleFonts.inter(fontSize: 13, color: Colors.black54)),
+            style: GoogleFonts.inter(fontSize: 14, color: Colors.black87)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
             child: Text('Cancelar',
-                style: GoogleFonts.inter(color: Colors.black45)),
+                style: GoogleFonts.inter(color: Colors.black54)),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFC6A76A),
+              foregroundColor: Colors.black,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
             child: Text('Eliminar',
-                style: GoogleFonts.inter(
-                    color: Colors.white, fontWeight: FontWeight.w600)),
+                style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
           ),
         ],
       ),
@@ -852,7 +855,15 @@ class _ClientFormDialogState extends State<_ClientFormDialog> {
         notes:     _notesCtrl.text.trim(),
         createdAt: widget.editClient?.createdAt ?? DateTime.now(),
       );
-      widget.onSaved(saved);
+      if (mounted) {
+        widget.onSaved(saved);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Cliente guardado correctamente'),
+            backgroundColor: Color(0xFFC6A76A),
+          ),
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1035,7 +1046,7 @@ class _ClientFormDialogState extends State<_ClientFormDialog> {
                 FilledButton.icon(
                   onPressed: _saving ? null : _save,
                   style: FilledButton.styleFrom(
-                    backgroundColor: SaharaTheme.gold,
+                    backgroundColor: const Color(0xFFC6A76A),
                     foregroundColor: Colors.black,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(6)),
