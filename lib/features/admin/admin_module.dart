@@ -1243,8 +1243,78 @@ class _ServiceFormDialog extends StatefulWidget {
 }
 
 class _ServiceFormDialogState extends State<_ServiceFormDialog> {
-  late final _name = TextEditingController(text: widget.service?.name ?? '');
+  late final _nameCtrl = TextEditingController(text: widget.service?.name ?? '');
+  late final _descCtrl = TextEditingController(text: '');
+  late final _priceCtrl = TextEditingController(text: widget.service != null ? widget.service!.price.toStringAsFixed(0) : '');
+  late final _durationCtrl = TextEditingController(text: widget.service != null ? widget.service!.duration.toString() : '60');
+  late String _category = widget.service?.category ?? 'Masajes';
+  late bool _active = widget.service?.active ?? true;
   bool _saving = false;
+
+  static const _categories = [
+    'Masajes',
+    'Faciales',
+    'Corporales',
+    'Fusionadas',
+    'Rituales',
+    'Tecnología Facial',
+    'Tecnología Corporal',
+    'Moldeo',
+    'Paquetes',
+    'Otros',
+  ];
+
+  Future<void> _save() async {
+    final name = _nameCtrl.text.trim();
+    final price = double.tryParse(_priceCtrl.text.trim()) ?? 0;
+    final duration = int.tryParse(_durationCtrl.text.trim()) ?? 60;
+
+    if (name.isEmpty || price <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nombre y precio son obligatorios'),
+          backgroundColor: SaharaTheme.rojoCoral,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _saving = true);
+    try {
+      final data = {
+        'name': name,
+        'category': _category,
+        'duration': duration,
+        'duration_min': duration,
+        'price': price,
+        'active': _active,
+        'is_active': _active,
+      };
+      if (widget.service == null) {
+        await Supabase.instance.client.from('services').insert(data);
+      } else {
+        await Supabase.instance.client.from('services').update(data).eq('id', widget.service!.id);
+      }
+      widget.onSaved();
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Servicio guardado correctamente'),
+            backgroundColor: SaharaTheme.gold,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: SaharaTheme.rojoCoral),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1253,7 +1323,7 @@ class _ServiceFormDialogState extends State<_ServiceFormDialog> {
       backgroundColor: SaharaTheme.blancoAlmendra,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 500),
+        constraints: const BoxConstraints(maxWidth: 520),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1287,7 +1357,57 @@ class _ServiceFormDialogState extends State<_ServiceFormDialog> {
                   _FormCard(children: [
                     _FieldLabel('Nombre del servicio *'),
                     const SizedBox(height: 6),
-                    _Field(ctrl: _name, hint: 'Ej: Masaje Descontracturante'),
+                    _Field(ctrl: _nameCtrl, hint: 'Ej: Masaje Descontracturante'),
+                  ]),
+                  const SizedBox(height: 12),
+                  _FormCard(children: [
+                    _FieldLabel('Categoría'),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF9F9F9),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFEEEEEE)),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _categories.contains(_category) ? _category : _categories.last,
+                          isExpanded: true,
+                          style: GoogleFonts.inter(fontSize: 13, color: Colors.black87),
+                          items: _categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                          onChanged: (v) => setState(() => _category = v!),
+                        ),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    Expanded(child: _FormCard(children: [
+                      _FieldLabel('Duración (min) *'),
+                      const SizedBox(height: 6),
+                      _Field(ctrl: _durationCtrl, hint: '60', type: TextInputType.number),
+                    ])),
+                    const SizedBox(width: 12),
+                    Expanded(child: _FormCard(children: [
+                      _FieldLabel('Precio MXN *'),
+                      const SizedBox(height: 6),
+                      _Field(ctrl: _priceCtrl, hint: '999', type: TextInputType.number),
+                    ])),
+                  ]),
+                  const SizedBox(height: 12),
+                  _FormCard(children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        _FieldLabel('Servicio activo'),
+                        Switch(
+                          value: _active,
+                          activeColor: SaharaTheme.gold,
+                          onChanged: (v) => setState(() => _active = v),
+                        ),
+                      ],
+                    ),
                   ]),
                 ]),
               ),
@@ -1305,39 +1425,16 @@ class _ServiceFormDialogState extends State<_ServiceFormDialog> {
                 children: [
                   TextButton(
                     onPressed: () => Navigator.pop(context),
-                    child: Text('Cancelar', 
+                    child: Text('Cancelar',
                         style: GoogleFonts.inter(color: Colors.black54, fontWeight: FontWeight.w500)),
                   ),
                   const SizedBox(width: 16),
                   ElevatedButton.icon(
-                    onPressed: _saving ? null : () async {
-                      if (_name.text.trim().isEmpty) return;
-                      setState(() => _saving = true);
-                      try {
-                        final data = {'name': _name.text.trim()};
-                        if (widget.service == null) {
-                          await Supabase.instance.client.from('services').insert(data);
-                        } else {
-                          await Supabase.instance.client.from('services').update(data).eq('id', widget.service!.id);
-                        }
-                        widget.onSaved();
-                        if (mounted) {
-                          Navigator.pop(context);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Servicio guardado correctamente'), 
-                              backgroundColor: SaharaTheme.gold,
-                            ),
-                          );
-                        }
-                      } finally {
-                        if (mounted) setState(() => _saving = false);
-                      }
-                    },
-                    icon: _saving 
+                    onPressed: _saving ? null : _save,
+                    icon: _saving
                         ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
                         : const Icon(Icons.check, size: 16),
-                    label: Text(isEdit ? 'Guardar cambios' : 'Crear servicio',
+                    label: Text(isEdit ? 'Editar Servicio' : 'Guardar Servicio',
                         style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: SaharaTheme.gold,
@@ -1356,6 +1453,7 @@ class _ServiceFormDialogState extends State<_ServiceFormDialog> {
     );
   }
 }
+
 
 class _Avatar extends StatelessWidget {
   const _Avatar({required this.name, required this.size});
@@ -1416,6 +1514,7 @@ class _SettingsTabState extends State<_SettingsTab> {
   bool _loading = true;
   bool _saving = false;
   bool _obscureToken = true;
+  String? _configId;
 
   @override
   void initState() {
@@ -1423,14 +1522,19 @@ class _SettingsTabState extends State<_SettingsTab> {
     _loadConfig();
   }
 
+  bool get _isConfigured => _tokenCtrl.text.trim().isNotEmpty && _phoneIdCtrl.text.trim().isNotEmpty;
+
   Future<void> _loadConfig() async {
     try {
       final res = await Supabase.instance.client.from('configuracion_sistema').select().maybeSingle();
       if (res != null) {
-        _tokenCtrl.text = res['whatsapp_access_token'] ?? '';
-        _phoneIdCtrl.text = res['whatsapp_phone_number_id'] ?? '';
-        _businessIdCtrl.text = res['whatsapp_business_id'] ?? '';
+        _configId = res['id'] as String?;
+        _tokenCtrl.text = res['whatsapp_access_token'] as String? ?? '';
+        _phoneIdCtrl.text = res['whatsapp_phone_number_id'] as String? ?? '';
+        _businessIdCtrl.text = res['whatsapp_business_id'] as String? ?? '';
       }
+    } catch (e) {
+      debugPrint('loadConfig: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -1440,20 +1544,29 @@ class _SettingsTabState extends State<_SettingsTab> {
     setState(() => _saving = true);
     try {
       final data = {
-        'whatsapp_access_token': _tokenCtrl.text,
-        'whatsapp_phone_number_id': _phoneIdCtrl.text,
-        'whatsapp_business_id': _businessIdCtrl.text,
+        'whatsapp_access_token': _tokenCtrl.text.trim(),
+        'whatsapp_phone_number_id': _phoneIdCtrl.text.trim(),
+        'whatsapp_business_id': _businessIdCtrl.text.trim(),
+        'whatsapp_enabled': _isConfigured,
         'updated_at': DateTime.now().toIso8601String(),
       };
-      final res = await Supabase.instance.client.from('configuracion_sistema').select('id').maybeSingle();
-      if (res == null) {
+      if (_configId == null) {
         await Supabase.instance.client.from('configuracion_sistema').insert(data);
       } else {
-        await Supabase.instance.client.from('configuracion_sistema').update(data).eq('id', res['id']);
+        await Supabase.instance.client.from('configuracion_sistema').update(data).eq('id', _configId!);
       }
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Configuración guardada')));
+      await _loadConfig();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: const Text('Configuración guardada correctamente'), backgroundColor: SaharaTheme.gold),
+        );
+      }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: SaharaTheme.rojoCoral),
+        );
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -1486,7 +1599,7 @@ class _SettingsTabState extends State<_SettingsTab> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) return const Center(child: CircularProgressIndicator(strokeWidth: 2));
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(32),
@@ -1497,7 +1610,30 @@ class _SettingsTabState extends State<_SettingsTab> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildHeader(),
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
+              // Warning banner if not configured
+              if (!_isConfigured)
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  margin: const EdgeInsets.only(bottom: 24),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF3E0),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFFFCC80)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.warning_amber_rounded, color: Color(0xFFF57C00), size: 22),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'WhatsApp no configurado. Ingresa tu Token y Phone Number ID para habilitar el envío automático de mensajes.',
+                          style: GoogleFonts.inter(fontSize: 13, color: const Color(0xFF5D4037)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               _buildWhatsAppCard(),
               const SizedBox(height: 32),
               _buildBranchesSection(),
@@ -1533,14 +1669,37 @@ class _SettingsTabState extends State<_SettingsTab> {
         children: [
           Row(
             children: [
-              const Icon(Icons.chat_bubble, color: Color(0xFF25D366), size: 24),
+              Container(
+                width: 40, height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF25D366).withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.chat_bubble, color: Color(0xFF25D366), size: 20),
+              ),
               const SizedBox(width: 12),
-              Text('WhatsApp Business API', style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 16)),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('WhatsApp Business API', style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 16, color: SaharaTheme.grisCarbon)),
+                  Text(_isConfigured ? 'Conectado y activo' : 'Sin configurar',
+                    style: GoogleFonts.inter(fontSize: 12, color: _isConfigured ? const Color(0xFF25D366) : Colors.orange)),
+                ],
+              ),
               const Spacer(),
-              FilledButton(
+              ElevatedButton.icon(
                 onPressed: _saving ? null : _saveWhatsApp,
-                style: FilledButton.styleFrom(backgroundColor: const Color(0xFFC6A76A)),
-                child: _saving ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('Guardar'),
+                icon: _saving
+                  ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                  : const Icon(Icons.save_outlined, size: 16),
+                label: Text('Guardar', style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: SaharaTheme.gold,
+                  foregroundColor: Colors.black,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
               ),
             ],
           ),

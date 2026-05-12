@@ -99,32 +99,47 @@ class _Booking {
 
 
   factory _Booking.fromMap(Map<String, dynamic> m) {
-    final t = (m['booking_time'] as String? ?? '09:00:00').split(':');
-    return _Booking(
-      id: m['id'] as String,
-      clientId:
-          m['client_record_id'] as String? ?? m['client_id'] as String? ?? '',
-      clientName:
-          (m['client_record'] as Map?)?['full_name'] as String? ??
-          (m['client'] as Map?)?['full_name'] as String? ??
-          'Cliente',
-      serviceId: m['service_id'] as String? ?? '',
-      serviceName: (m['services'] as Map?)?['name'] as String? ?? 'Servicio',
-      therapistId: m['therapist_id'] as String? ?? '',
-      therapistName:
-          (m['therapist'] as Map?)?['full_name'] as String? ?? 'Terapeuta',
-      date: DateTime.parse(m['booking_date'] as String),
-      startMinute: int.parse(t[0]) * 60 + int.parse(t[1]),
-      durationMinutes: (m['duration_min'] as int?) ?? 60,
-      status: m['status'] as String? ?? 'scheduled',
-      notes: m['client_notes'] as String? ?? '',
-      clientPhone: (m['client_record'] as Map?)?['phone'] as String? ??
-                   (m['client'] as Map?)?['phone'] as String?,
-      sucursalId: m['sucursal_id'] as String?,
-      branchName: (m['sucursales'] as Map?)?['nombre'] as String?,
-      branchAddress: (m['sucursales'] as Map?)?['direccion_completa'] as String?,
-      branchMaps: (m['sucursales'] as Map?)?['link_maps'] as String?,
-    );
+    try {
+      final t = (m['booking_time'] as String? ?? '09:00:00').split(':');
+      final dateStr = m['booking_date'] as String? ?? DateTime.now().toIso8601String().split('T')[0];
+      
+      return _Booking(
+        id: m['id'] as String? ?? '',
+        clientId:
+            m['client_record_id'] as String? ?? m['client_id'] as String? ?? '',
+        clientName:
+            (m['client_record'] as Map?)?['full_name'] as String? ??
+            (m['client'] as Map?)?['full_name'] as String? ??
+            'Cliente',
+        serviceId: m['service_id'] as String? ?? '',
+        serviceName: (m['services'] as Map?)?['name'] as String? ?? 'Servicio',
+        therapistId: m['therapist_id'] as String? ?? '',
+        therapistName:
+            (m['therapist'] as Map?)?['full_name'] as String? ?? 'Terapeuta',
+        date: DateTime.tryParse(dateStr) ?? DateTime.now(),
+        startMinute: t.length >= 2 ? (int.tryParse(t[0]) ?? 9) * 60 + (int.tryParse(t[1]) ?? 0) : 540,
+        durationMinutes: (m['duration_min'] as int?) ?? 60,
+        status: m['status'] as String? ?? 'scheduled',
+        notes: m['client_notes'] as String? ?? '',
+        clientPhone: (m['client_record'] as Map?)?['phone'] as String? ??
+                     (m['client'] as Map?)?['phone'] as String?,
+        sucursalId: m['sucursal_id'] as String?,
+        branchName: (m['sucursales'] as Map?)?['nombre'] as String?,
+        branchAddress: (m['sucursales'] as Map?)?['direccion_completa'] as String?,
+        branchMaps: (m['sucursales'] as Map?)?['link_maps'] as String?,
+      );
+    } catch (e) {
+      debugPrint('Error parsing booking ${m['id']}: $e');
+      // Return a minimal valid booking to avoid crashing the entire list
+      return _Booking(
+        id: m['id'] as String? ?? 'error',
+        clientId: '', clientName: 'Error de datos',
+        serviceId: '', serviceName: 'Error',
+        therapistId: '', therapistName: '',
+        date: DateTime.now(), startMinute: 0, durationMinutes: 30,
+        status: 'error', notes: '',
+      );
+    }
   }
 
   Color get cardBg {
@@ -314,7 +329,8 @@ class _AgendaPageState extends State<AgendaPage> {
         client:profiles!bookings_client_id_fkey(full_name),
         client_record:clients!bookings_client_record_id_fkey(full_name, phone),
         therapist:staff(full_name),
-        services(name, price)
+        services(name, price),
+        sucursales(nombre, direccion_completa, link_maps)
       ''')
           .gte('booking_date', _yyyyMMdd(_rangeStart))
           .lte('booking_date', _yyyyMMdd(_rangeEnd));
@@ -338,7 +354,16 @@ class _AgendaPageState extends State<AgendaPage> {
       });
     } catch (e) {
       debugPrint('loadBookings: $e');
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al cargar citas: $e'),
+            backgroundColor: Colors.red.shade400,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
     }
   }
 
@@ -653,16 +678,33 @@ class _AgendaPageState extends State<AgendaPage> {
                 '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:00',
           })
           .eq('id', b.id);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Cita movida con éxito'),
+            backgroundColor: SaharaTheme.gold,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
       _loadBookings();
     } catch (e) {
       debugPrint('reschedule error: $e');
       if (mounted) {
+        String errorMsg = e.toString();
+        if (errorMsg.contains('42501')) {
+          errorMsg = 'No tienes permisos para mover esta cita (RLS)';
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('No se pudo mover la reserva: $e'),
-            backgroundColor: Colors.red.shade100,
+            content: Text('Error al mover cita: $errorMsg'),
+            backgroundColor: Colors.red.shade700,
+            duration: const Duration(seconds: 5),
           ),
         );
+        // Reload to restore original state in UI
+        _loadBookings();
       }
     }
   }

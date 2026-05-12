@@ -233,49 +233,44 @@ class _ProductosModuleState extends State<ProductosModule> {
                               borderRadius: BorderRadius.circular(10),
                               border: Border.all(color: const Color(0xFFEEEEEE)),
                             ),
-                            child: SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: SizedBox(
-                                width: 1000, // Anchura mínima garantizada para evitar overflow
-                                child: Column(
-                                  children: [
-                                    // Table header
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                      decoration: const BoxDecoration(
-                                        border: Border(bottom: BorderSide(color: Color(0xFFF0F0F0))),
-                                      ),
-                                      child: Row(children: [
-                                        _Th('PRODUCTO',   flex: 3),
-                                        _Th('CATEGORÍA',  flex: 2),
-                                        _Th('PRECIO',     flex: 1),
-                                        _Th('STOCK',      flex: 1),
-                                        _Th('ESTADO',     flex: 1),
-                                        const SizedBox(width: 72),
-                                      ]),
-                                    ),
-                                    // Rows
-                                    Expanded(
-                                      child: ListView.separated(
-                                        padding: EdgeInsets.zero,
-                                        itemCount: filtered.length,
-                                        separatorBuilder: (_, __) =>
-                                          const Divider(height: 1, color: Color(0xFFF5F5F5)),
-                                        itemBuilder: (_, i) => _ProductRow(
-                                          product:    filtered[i],
-                                          selected:   _selected?.id == filtered[i].id,
-                                          onTap:      () => setState(() => _selected = filtered[i]),
-                                          onEdit:     () => _openForm(filtered[i]),
-                                          onDelete:   () => _delete(filtered[i]),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
+                            child: Column(
+                              children: [
+                                // Table header
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                  decoration: const BoxDecoration(
+                                    border: Border(bottom: BorderSide(color: Color(0xFFF0F0F0))),
+                                  ),
+                                  child: Row(children: [
+                                    _Th('PRODUCTO',   flex: 3),
+                                    _Th('CATEGORÍA',  flex: 2),
+                                    _Th('PRECIO',     flex: 1),
+                                    _Th('STOCK',      flex: 1),
+                                    _Th('ESTADO',     flex: 1),
+                                    const SizedBox(width: 72),
+                                  ]),
                                 ),
-                              ),
+                                // Rows
+                                Expanded(
+                                  child: ListView.separated(
+                                    padding: EdgeInsets.zero,
+                                    itemCount: filtered.length,
+                                    separatorBuilder: (_, __) =>
+                                      const Divider(height: 1, color: Color(0xFFF5F5F5)),
+                                    itemBuilder: (_, i) => _ProductRow(
+                                      product:    filtered[i],
+                                      selected:   _selected?.id == filtered[i].id,
+                                      onTap:      () => setState(() => _selected = filtered[i]),
+                                      onEdit:     () => _openForm(filtered[i]),
+                                      onDelete:   () => _delete(filtered[i]),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
+
                 ),
               ),
 
@@ -382,20 +377,27 @@ class _ProductRowState extends State<_ProductRow> {
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.edit_outlined, size: 16),
+                      icon: const Icon(Icons.edit_outlined, size: 18),
                       color: Colors.black38,
                       onPressed: widget.onEdit,
                       tooltip: 'Editar',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      visualDensity: VisualDensity.compact,
                     ),
                     IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 16),
+                      icon: const Icon(Icons.delete_outline, size: 18),
                       color: Colors.red.shade300,
                       onPressed: widget.onDelete,
                       tooltip: 'Eliminar',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      visualDensity: VisualDensity.compact,
                     ),
                   ],
                 ),
               ),
+
             ],
           ),
         ),
