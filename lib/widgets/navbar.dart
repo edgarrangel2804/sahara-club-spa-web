@@ -1,7 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../pages/reception_login_page.dart';
-import '../features/memberships/vip_memberships_page.dart';
 import '../features/store/store_page.dart';
 
 class Navbar extends StatelessWidget {
@@ -58,8 +57,6 @@ class Navbar extends StatelessWidget {
                     _navItem("NOTICIAS", 3),
                     _navItem("CONTACTO", 4),
                     const SizedBox(width: 20),
-                    _vipButton(context),
-                    const SizedBox(width: 20),
                     _storeButton(context),
                     const SizedBox(width: 20),
                     _receptionButton(context),
@@ -110,24 +107,6 @@ class Navbar extends StatelessWidget {
         );
       },
       child: const Text("TIENDA", style: TextStyle(fontSize: 11, letterSpacing: 2, fontWeight: FontWeight.bold)),
-    );
-  }
-
-  Widget _vipButton(BuildContext context) {
-    return InkWell(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const VipMembershipsPage()),
-        );
-      },
-      child: const Row(
-        children: [
-          Icon(Icons.diamond, color: Color(0xFFC6A76A), size: 14),
-          SizedBox(width: 4),
-          Text("VIP CLUB", style: TextStyle(color: Color(0xFFC6A76A), fontSize: 11, letterSpacing: 2, fontWeight: FontWeight.bold)),
-        ],
-      ),
     );
   }
 

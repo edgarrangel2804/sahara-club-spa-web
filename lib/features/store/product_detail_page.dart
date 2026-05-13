@@ -146,8 +146,8 @@ class ProductDetailPage extends StatelessWidget {
                                   _MetaText(
                                     icon: Icons.schedule,
                                     label: product.durationMinutes != null
-                                        ? '${product.durationMinutes} mins'
-                                        : 'Curated piece',
+                                        ? '${product.durationMinutes} min'
+                                        : 'Pieza curada',
                                   ),
                                   _MetaText(
                                     icon: Icons.payments_outlined,
@@ -172,7 +172,7 @@ class ProductDetailPage extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'The Experience',
+                              'La experiencia',
                               style: GoogleFonts.playfairDisplay(
                                 color: _DetailPalette.gold,
                                 fontSize: 34,
@@ -190,7 +190,7 @@ class ProductDetailPage extends StatelessWidget {
                             ),
                             const SizedBox(height: 52),
                             Text(
-                              'Key Benefits',
+                              'Beneficios clave',
                               style: GoogleFonts.inter(
                                 color: _DetailPalette.gold,
                                 fontSize: 12,
@@ -224,7 +224,7 @@ class ProductDetailPage extends StatelessWidget {
                             ),
                             const SizedBox(height: 60),
                             Text(
-                              'Whispers from the Sanctuary',
+                              'Voces del santuario',
                               style: GoogleFonts.playfairDisplay(
                                 color: _DetailPalette.gold,
                                 fontSize: 32,
@@ -256,7 +256,7 @@ class ProductDetailPage extends StatelessWidget {
                                       ),
                                       const SizedBox(height: 18),
                                       Text(
-                                        '"An otherworldly experience. The transition from the city to this sanctuary was immediate. Everything feels slower, warmer and more intentional."',
+                                        '"Una experiencia fuera de lo comun. El cambio de la ciudad a este santuario se siente inmediato. Todo baja el ritmo, se vuelve mas calido y mucho mas intencional."',
                                         style: GoogleFonts.inter(
                                           color: _DetailPalette.textPrimary,
                                           fontSize: 18,
@@ -314,7 +314,7 @@ class ProductDetailPage extends StatelessWidget {
                     child: Column(
                       children: [
                         Text(
-                          'Complementary Rituals',
+                          'Rituales complementarios',
                           style: GoogleFonts.inter(
                             color: _DetailPalette.gold,
                             fontSize: 12,
@@ -362,7 +362,7 @@ class ProductDetailPage extends StatelessWidget {
                                       const SizedBox(height: 16),
                                       Text(
                                         related.durationMinutes != null
-                                            ? '${related.durationMinutes} mins'
+                                            ? '${related.durationMinutes} min'
                                             : related.typeLabel,
                                         style: GoogleFonts.inter(
                                           color: _DetailPalette.gold.withValues(alpha: 0.65),
@@ -454,7 +454,7 @@ class _BookingPanel extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Select Your Moment',
+                    'Elige tu momento',
                     style: GoogleFonts.inter(
                       color: _DetailPalette.gold,
                       fontSize: 12,
@@ -466,7 +466,7 @@ class _BookingPanel extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        'October 2023',
+                        'Octubre 2023',
                         style: GoogleFonts.inter(color: _DetailPalette.textPrimary),
                       ),
                       const Row(
@@ -486,7 +486,7 @@ class _BookingPanel extends StatelessWidget {
                     mainAxisSpacing: 8,
                     crossAxisSpacing: 8,
                     children: [
-                      ...'MTWTFSS'.split('').map(
+                      ...'LMMJVSD'.split('').map(
                             (day) => Center(
                               child: Text(
                                 day,
@@ -531,8 +531,8 @@ class _BookingPanel extends StatelessWidget {
                     ),
                     child: Text(
                       product.type == StoreProductType.service
-                          ? 'Reserve Experience'
-                          : 'Add to Ritual',
+                          ? 'Reservar experiencia'
+                          : 'Agregar al ritual',
                       style: GoogleFonts.inter(
                         fontSize: 12,
                         letterSpacing: 2,
@@ -543,7 +543,7 @@ class _BookingPanel extends StatelessWidget {
                   const SizedBox(height: 16),
                   Center(
                     child: Text(
-                      'cancellation required 24 hours prior',
+                      'cancelacion requerida con 24 horas de anticipacion',
                       style: GoogleFonts.inter(
                         color: _DetailPalette.textMuted.withValues(alpha: 0.45),
                         fontSize: 10,
@@ -578,7 +578,7 @@ class _BookingPanel extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Enhancement',
+                        'Complemento',
                         style: GoogleFonts.inter(
                           color: _DetailPalette.gold,
                           fontSize: 12,
@@ -587,7 +587,7 @@ class _BookingPanel extends StatelessWidget {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        'Facial Glow',
+                        'Facial Luminoso',
                         style: GoogleFonts.playfairDisplay(
                           color: Colors.white,
                           fontSize: 24,

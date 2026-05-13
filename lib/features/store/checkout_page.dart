@@ -67,11 +67,11 @@ class CheckoutPage extends StatelessWidget {
                       scrollDirection: Axis.horizontal,
                       child: Row(
                         children: const [
-                          _CheckoutStep(number: '01', label: 'Guest', active: true),
+                          _CheckoutStep(number: '01', label: 'Datos', active: true),
                           _StepDivider(),
-                          _CheckoutStep(number: '02', label: 'Payment'),
+                          _CheckoutStep(number: '02', label: 'Pago'),
                           _StepDivider(),
-                          _CheckoutStep(number: '03', label: 'Confirm'),
+                          _CheckoutStep(number: '03', label: 'Confirmar'),
                         ],
                       ),
                     ),
@@ -141,7 +141,7 @@ class _CheckoutForm extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Guest Details',
+          'Datos del cliente',
           style: GoogleFonts.playfairDisplay(
             color: _CheckoutPalette.gold,
             fontSize: 34,
@@ -156,7 +156,7 @@ class _CheckoutForm extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Text(
-              'Secure Payment',
+              'Pago seguro',
               style: GoogleFonts.playfairDisplay(
                 color: _CheckoutPalette.gold,
                 fontSize: 34,
@@ -178,7 +178,7 @@ class _CheckoutForm extends StatelessWidget {
             Expanded(
               child: _PaymentMethod(
                 icon: Icons.credit_card,
-                label: 'Card',
+                label: 'Tarjeta',
                 active: true,
               ),
             ),
@@ -193,7 +193,7 @@ class _CheckoutForm extends StatelessWidget {
         ),
         const SizedBox(height: 28),
         const _CheckoutInput(
-          label: 'Card Number',
+          label: 'Numero de tarjeta',
           hint: '0000 0000 0000 0000',
         ),
         const SizedBox(height: 28),
@@ -222,13 +222,13 @@ class _FormGrid extends StatelessWidget {
     if (stacked) {
       return const Column(
         children: [
-          _CheckoutInput(label: 'Full Name', hint: 'Elias Vance'),
+          _CheckoutInput(label: 'Nombre completo', hint: 'Elias Vance'),
           SizedBox(height: 28),
-          _CheckoutInput(label: 'Email Address', hint: 'elias.v@sanctuary.com'),
+          _CheckoutInput(label: 'Correo electronico', hint: 'elias.v@sanctuary.com'),
           SizedBox(height: 28),
           _CheckoutInput(
-            label: 'Ritual Requests (Optional)',
-            hint: 'Specify any preferences or allergies...',
+            label: 'Preferencias del ritual (opcional)',
+            hint: 'Especifica preferencias o alergias...',
           ),
         ],
       );
@@ -238,18 +238,18 @@ class _FormGrid extends StatelessWidget {
         Row(
           children: [
             Expanded(
-              child: _CheckoutInput(label: 'Full Name', hint: 'Elias Vance'),
+              child: _CheckoutInput(label: 'Nombre completo', hint: 'Elias Vance'),
             ),
             SizedBox(width: 24),
             Expanded(
-              child: _CheckoutInput(label: 'Email Address', hint: 'elias.v@sanctuary.com'),
+              child: _CheckoutInput(label: 'Correo electronico', hint: 'elias.v@sanctuary.com'),
             ),
           ],
         ),
         SizedBox(height: 28),
         _CheckoutInput(
-          label: 'Ritual Requests (Optional)',
-          hint: 'Specify any preferences or allergies...',
+          label: 'Preferencias del ritual (opcional)',
+          hint: 'Especifica preferencias o alergias...',
         ),
       ],
     );
@@ -280,14 +280,14 @@ class _CheckoutInput extends StatelessWidget {
         ),
         TextField(
           style: GoogleFonts.inter(
-            color: _CheckoutPalette.textPrimary,
+            color: _CheckoutPalette.inputText,
             fontSize: 18,
             fontWeight: FontWeight.w300,
           ),
           decoration: InputDecoration(
             hintText: hint,
             hintStyle: GoogleFonts.inter(
-              color: _CheckoutPalette.textMuted.withValues(alpha: 0.3),
+              color: _CheckoutPalette.inputHint,
             ),
             enabledBorder: const UnderlineInputBorder(
               borderSide: BorderSide(color: _CheckoutPalette.divider),
@@ -378,7 +378,7 @@ class _CheckoutSummary extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Your Sanctuary',
+                'Tu santuario',
                 style: GoogleFonts.playfairDisplay(
                   color: _CheckoutPalette.gold,
                   fontSize: 34,
@@ -446,9 +446,9 @@ class _CheckoutSummary extends StatelessWidget {
               const SizedBox(height: 18),
               _CheckoutTotalRow(label: 'Subtotal', value: subtotal),
               const SizedBox(height: 10),
-              _CheckoutTotalRow(label: 'Member Credit', value: -memberCredit, highlight: true),
+              _CheckoutTotalRow(label: 'Credito de membresia', value: -memberCredit, highlight: true),
               const SizedBox(height: 10),
-              _CheckoutTotalRow(label: 'Service Charge', value: serviceCharge),
+              _CheckoutTotalRow(label: 'Cargo por servicio', value: serviceCharge),
               const SizedBox(height: 18),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -489,7 +489,7 @@ class _CheckoutSummary extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text(
-                      'Complete Reservation',
+                      'Completar reserva',
                       style: GoogleFonts.inter(
                         fontSize: 12,
                         letterSpacing: 2,
@@ -504,7 +504,7 @@ class _CheckoutSummary extends StatelessWidget {
               const SizedBox(height: 16),
               Center(
                 child: Text(
-                  'Encrypted by Sahara Secure Systems',
+                  'Protegido por Sahara Secure Systems',
                   style: GoogleFonts.inter(
                     color: _CheckoutPalette.textMuted.withValues(alpha: 0.4),
                     fontSize: 10,
@@ -693,6 +693,8 @@ class _CheckoutPalette {
   static const Color surfaceLow = Color(0xFF201F1F);
   static const Color gold = Color(0xFFE9C176);
   static const Color onPrimary = Color(0xFF412D00);
+  static const Color inputText = Color(0xFF1A1612);
+  static const Color inputHint = Color(0xFF8A8178);
   static const Color textPrimary = Color(0xFFE5E2E1);
   static const Color textMuted = Color(0xFFD1C5B4);
   static const Color divider = Color(0x264E4639);

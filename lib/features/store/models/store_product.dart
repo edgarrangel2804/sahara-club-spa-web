@@ -21,7 +21,7 @@ extension StoreProductTypeX on StoreProductType {
       case StoreProductType.membership:
         return 'Membresia';
       case StoreProductType.giftCard:
-        return 'Gift Card';
+        return 'Tarjeta de regalo';
     }
   }
 
@@ -244,7 +244,7 @@ class StoreProduct {
       case 'memberships':
         return 'Membresias';
       case 'gift_cards':
-        return 'Gift cards';
+        return 'Tarjetas de regalo';
       default:
         return 'Servicios';
     }

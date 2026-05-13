@@ -5,6 +5,11 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../theme/sahara_theme.dart';
 import '../cart/cart_page.dart';
+import '../digital/my_ritual_page.dart';
+import '../facials/facials_page.dart';
+import '../gift_cards/gift_card_page.dart';
+import '../massages/massages_page.dart';
+import '../memberships/vip_memberships_page.dart';
 import 'controllers/store_cart_controller.dart';
 import 'data/store_catalog_repository.dart';
 import 'models/store_product.dart';
@@ -26,13 +31,13 @@ class _StorePageState extends State<StorePage> {
   List<StoreProduct> _products = <StoreProduct>[];
 
   static const List<_StoreCategory> _categories = <_StoreCategory>[
-    _StoreCategory(id: 'all', label: 'All'),
-    _StoreCategory(id: 'massages', label: 'Massages'),
-    _StoreCategory(id: 'facials', label: 'Facials'),
-    _StoreCategory(id: 'rituals', label: 'Rituals'),
-    _StoreCategory(id: 'digital', label: 'Digital'),
-    _StoreCategory(id: 'memberships', label: 'Memberships'),
-    _StoreCategory(id: 'gift_cards', label: 'Gift Cards'),
+    _StoreCategory(id: 'all', label: 'Todos'),
+    _StoreCategory(id: 'massages', label: 'Masajes'),
+    _StoreCategory(id: 'facials', label: 'Faciales'),
+    _StoreCategory(id: 'rituals', label: 'Rituales'),
+    _StoreCategory(id: 'digital', label: 'Digitales'),
+    _StoreCategory(id: 'memberships', label: 'Membresias'),
+    _StoreCategory(id: 'gift_cards', label: 'Tarjetas de regalo'),
   ];
 
   @override
@@ -72,6 +77,15 @@ class _StorePageState extends State<StorePage> {
   }
 
   void _openDetails(StoreProduct product) {
+    if (product.type == StoreProductType.giftCard) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => GiftCardPage(product: product),
+        ),
+      );
+      return;
+    }
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -123,7 +137,52 @@ class _StorePageState extends State<StorePage> {
                           return _CategoryChip(
                             label: category.label,
                             selected: selected,
-                            onTap: () => setState(() => _selectedCategory = category.id),
+                            onTap: () {
+                              if (category.id == 'massages') {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(builder: (_) => const MassagesPage()),
+                                );
+                                return;
+                              }
+                              if (category.id == 'facials') {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(builder: (_) => const FacialsPage()),
+                                );
+                                return;
+                              }
+                              if (category.id == 'digital') {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(builder: (_) => const MyRitualPage()),
+                                );
+                                return;
+                              }
+                              if (category.id == 'memberships') {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(builder: (_) => const VipMembershipsPage()),
+                                );
+                                return;
+                              }
+                              if (category.id == 'gift_cards') {
+                                final giftCard = _products.where(
+                                  (product) => product.type == StoreProductType.giftCard,
+                                );
+                                final product = giftCard.isNotEmpty
+                                    ? giftCard.first
+                                    : _fallbackGiftCardProduct();
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => GiftCardPage(product: product),
+                                  ),
+                                );
+                                return;
+                              }
+                              setState(() => _selectedCategory = category.id);
+                            },
                           );
                         },
                       ),
@@ -141,7 +200,7 @@ class _StorePageState extends State<StorePage> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Curated Experiences',
+                              'Experiencias curadas',
                               style: GoogleFonts.inter(
                                 color: _StorePalette.gold,
                                 fontSize: 12,
@@ -151,7 +210,7 @@ class _StorePageState extends State<StorePage> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'Signature Rituals',
+                              'Rituales de autor',
                               style: GoogleFonts.playfairDisplay(
                                 color: _StorePalette.textPrimary,
                                 fontSize: 42,
@@ -228,6 +287,26 @@ class _StorePageState extends State<StorePage> {
           ),
         ],
       ),
+    );
+  }
+
+  StoreProduct _fallbackGiftCardProduct() {
+    return StoreProduct(
+      id: 'fallback-gift-card-sahara',
+      name: 'Tarjeta de Regalo Sahara',
+      slug: 'tarjeta-de-regalo-sahara',
+      description:
+          'Una tarjeta de regalo premium para obsequiar rituales, servicios o experiencias de bienestar con la presentacion de Sahara Club.',
+      shortDescription: 'Regala una experiencia de bienestar con presentacion premium.',
+      price: 2500,
+      currency: 'MXN',
+      type: StoreProductType.giftCard,
+      imageUrl: 'assets/images/08.png',
+      categoryKey: 'gift_cards',
+      categoryLabel: 'Tarjetas de regalo',
+      benefits: const ['Codigo unico', 'Entrega digital', 'Canje futuro'],
+      availability: 'Codigo digital generado al pagar',
+      isFeatured: true,
     );
   }
 }
@@ -329,7 +408,7 @@ class _StoreHero extends StatelessWidget {
               child: Column(
                 children: [
                   Text(
-                    'The Sanctuary\nof Stillness',
+                    'El santuario\nde la quietud',
                     textAlign: TextAlign.center,
                     style: GoogleFonts.playfairDisplay(
                       color: _StorePalette.textPrimary,
@@ -346,7 +425,7 @@ class _StoreHero extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
                     ),
                     child: Text(
-                      'Explore',
+                      'Explorar',
                       style: GoogleFonts.inter(
                         fontSize: 12,
                         letterSpacing: 3,
@@ -495,7 +574,7 @@ class _ProductCard extends StatelessWidget {
                     TextButton(
                       onPressed: onDetails,
                       child: Text(
-                        'Details',
+                        'Ver detalles',
                         style: GoogleFonts.inter(
                           color: _StorePalette.textMuted,
                           fontSize: 12,
@@ -511,7 +590,7 @@ class _ProductCard extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                       ),
                       child: Text(
-                        'Add',
+                        'Agregar',
                         style: GoogleFonts.inter(
                           fontSize: 12,
                           letterSpacing: 2,
@@ -561,7 +640,7 @@ class _MembershipCta extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
-                    'The Membership Elite',
+                    'La membresia exclusiva',
                     textAlign: TextAlign.center,
                     style: GoogleFonts.playfairDisplay(
                       color: _StorePalette.textPrimary,
@@ -572,7 +651,7 @@ class _MembershipCta extends StatelessWidget {
                   ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 620),
                     child: Text(
-                      'Unparalleled access to our global sanctuaries, priority rituals, and a bespoke digital wellness companion.',
+                      'Acceso preferente a nuestros santuarios, rituales prioritarios y una experiencia digital de bienestar disenada para extender Sahara a tu dia a dia.',
                       textAlign: TextAlign.center,
                       style: GoogleFonts.inter(
                         color: _StorePalette.textMuted,
@@ -583,7 +662,7 @@ class _MembershipCta extends StatelessWidget {
                   ),
                   const SizedBox(height: 30),
                   Text(
-                    'Apply for Access',
+                    'Solicitar acceso',
                     style: GoogleFonts.inter(
                       color: _StorePalette.gold,
                       fontSize: 12,

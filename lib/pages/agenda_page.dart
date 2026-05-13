@@ -117,7 +117,8 @@ class _Booking {
         serviceName: (m['services'] as Map?)?['name'] as String? ?? 'Servicio',
         therapistId: m['therapist_id'] as String? ?? '',
         therapistName:
-            (m['therapist'] as Map?)?['full_name'] as String? ?? 'Terapeuta',
+            (m['therapist'] as Map?)?['full_name'] as String? ??
+            'Sin asignar',
         date: DateTime.tryParse(dateStr) ?? DateTime.now(),
         startMinute: t.length >= 2 ? (int.tryParse(t[0]) ?? 9) * 60 + (int.tryParse(t[1]) ?? 0) : 540,
         durationMinutes: (m['duration_min'] as int?) ?? 60,

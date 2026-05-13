@@ -471,7 +471,7 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
           .select('''
             id, booking_date, booking_time, status, client_notes,
             services(name),
-            therapist:profiles!bookings_therapist_id_fkey(full_name)
+            therapist:staff!bookings_therapist_id_fkey(full_name)
           ''')
           .eq('client_record_id', widget.client.id)
           .order('booking_date', ascending: false)
