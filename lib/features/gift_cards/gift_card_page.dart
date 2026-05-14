@@ -233,6 +233,14 @@ class _GiftCardPageState extends State<GiftCardPage> {
       durationMinutes: base.durationMinutes,
       stockQuantity: base.stockQuantity,
       isFeatured: base.isFeatured,
+      checkoutMetadata: <String, dynamic>{
+        'base_product_id': base.id,
+        'gift_card_amount': selectedAmount,
+        'delivery_method': _physicalDelivery ? 'physical' : 'digital',
+        'recipient_name': recipient,
+        'sender_name': sender,
+        'message': message,
+      },
     );
   }
 

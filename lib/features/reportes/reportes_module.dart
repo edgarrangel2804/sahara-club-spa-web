@@ -47,18 +47,30 @@ class _ReportesModuleState extends State<ReportesModule> {
       final since   = DateTime.now().subtract(Duration(days: daysAgo));
       final sinceStr = since.toIso8601String().substring(0, 10);
 
-      final results = await Future.wait([
-        // All bookings in period
-        Supabase.instance.client
-            .from('bookings')
-            .select('id, status, service_name, therapist_name, booking_date')
-            .gte('booking_date', sinceStr),
-        // All sales in period
-        Supabase.instance.client
-            .from('sales')
-            .select('id, total, created_at')
-            .gte('created_at', since.toIso8601String()),
-      ]);
+      late final List results;
+      try {
+        results = await Future.wait([
+          Supabase.instance.client
+              .from('bookings')
+              .select('id, status, service_name, therapist_name, booking_date')
+              .gte('booking_date', sinceStr),
+          Supabase.instance.client
+              .from('sales')
+              .select('id, total, created_at, status, payment_status')
+              .gte('created_at', since.toIso8601String()),
+        ]);
+      } catch (_) {
+        results = await Future.wait([
+          Supabase.instance.client
+              .from('bookings')
+              .select('id, status, service_name, therapist_name, booking_date')
+              .gte('booking_date', sinceStr),
+          Supabase.instance.client
+              .from('sales')
+              .select('id, total, created_at, status')
+              .gte('created_at', since.toIso8601String()),
+        ]);
+      }
 
       final bookings = (results[0] as List)
           .map((m) => m as Map<String, dynamic>)
@@ -66,22 +78,29 @@ class _ReportesModuleState extends State<ReportesModule> {
       final sales = (results[1] as List)
           .map((m) => m as Map<String, dynamic>)
           .toList();
+      final paidSales = sales.where((sale) {
+        final paymentStatus = (sale['payment_status'] as String?)?.toLowerCase();
+        final legacyStatus = (sale['status'] as String?)?.toLowerCase();
+        return paymentStatus == 'paid' || legacyStatus == 'paid';
+      }).toList();
 
       // ── Booking stats ────────────────────────────────────────
       _totalBookings     = bookings.length;
       _attendedBookings  = bookings.where((b) =>
           (b['status'] as String?) == 'attended' ||
-          (b['status'] as String?) == 'completed').length;
+          (b['status'] as String?) == 'completed' ||
+          (b['status'] as String?) == 'awaiting_payment' ||
+          (b['status'] as String?) == 'paid').length;
       _cancelledBookings = bookings.where((b) =>
           (b['status'] as String?) == 'cancelled' ||
           (b['status'] as String?) == 'no_show').length;
 
       // ── Revenue ───────────────────────────────────────────────
-      _totalRevenue = sales.fold(0, (sum, s) =>
+      _totalRevenue = paidSales.fold(0, (sum, s) =>
           sum + ((s['total'] as num?)?.toDouble() ?? 0));
 
       final now = DateTime.now();
-      _revenueThisMonth = sales
+      _revenueThisMonth = paidSales
           .where((s) {
             final d = DateTime.tryParse((s['created_at'] as String?) ?? '');
             return d != null && d.month == now.month && d.year == now.year;
@@ -120,7 +139,7 @@ class _ReportesModuleState extends State<ReportesModule> {
         final d = today.subtract(Duration(days: i));
         dailyMap['${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}'] = 0;
       }
-      for (final s in sales) {
+      for (final s in paidSales) {
         final raw = (s['created_at'] as String?) ?? '';
         if (raw.length >= 10) {
           final key = raw.substring(0, 10);

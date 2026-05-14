@@ -1,16 +1,22 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_mode.dart';
+import '../features/auth/role_permissions.dart';
+import '../features/bookings/booking_sync_service.dart';
+import '../features/mensajes/chat_service.dart';
 import '../theme/sahara_theme.dart';
 import '../features/clients/clients_module.dart';
 import '../features/sales/sales_module.dart';
+import '../features/sales/services/agenda_sales_service.dart';
 import '../features/mensajes/mensajes_module.dart';
+import '../features/admin/admin_module.dart';
+import '../features/admin/finanzas_module.dart';
 import '../features/productos/productos_module.dart';
 import '../features/reportes/reportes_module.dart';
-import '../features/admin/admin_module.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
@@ -62,9 +68,12 @@ class _Therapist {
 class _Booking {
   final String id;
   final String clientId;
+  final String? profileClientId;
+  final String? clientRecordId;
   final String clientName;
   final String serviceId;
   final String serviceName;
+  final double servicePrice;
   final String therapistId;
   final String therapistName;
   final DateTime date;
@@ -77,9 +86,12 @@ class _Booking {
   const _Booking({
     required this.id,
     required this.clientId,
+    this.profileClientId,
+    this.clientRecordId,
     required this.clientName,
     required this.serviceId,
     required this.serviceName,
+    required this.servicePrice,
     required this.therapistId,
     required this.therapistName,
     required this.date,
@@ -109,12 +121,15 @@ class _Booking {
         id: m['id'] as String? ?? '',
         clientId:
             m['client_record_id'] as String? ?? m['client_id'] as String? ?? '',
+        profileClientId: m['client_id'] as String?,
+        clientRecordId: m['client_record_id'] as String?,
         clientName:
             (m['client_record'] as Map?)?['full_name'] as String? ??
             (m['client'] as Map?)?['full_name'] as String? ??
             'Cliente',
         serviceId: m['service_id'] as String? ?? '',
         serviceName: (m['services'] as Map?)?['name'] as String? ?? 'Servicio',
+        servicePrice: ((m['services'] as Map?)?['price'] as num?)?.toDouble() ?? 0,
         therapistId: m['therapist_id'] as String? ?? '',
         therapistName:
             (m['therapist'] as Map?)?['full_name'] as String? ??
@@ -142,7 +157,7 @@ class _Booking {
       return _Booking(
         id: m['id'] as String? ?? 'error',
         clientId: '', clientName: 'Error de datos',
-        serviceId: '', serviceName: 'Error',
+        serviceId: '', serviceName: 'Error', servicePrice: 0,
         therapistId: '', therapistName: '',
         date: DateTime.now(), startMinute: 0, durationMinutes: 30,
         status: 'error', notes: '',
@@ -218,6 +233,9 @@ class AgendaPage extends StatefulWidget {
 }
 
 class _AgendaPageState extends State<AgendaPage> {
+  final AgendaSalesService _agendaSalesService = const AgendaSalesService();
+  final BookingSyncService _bookingSyncService = const BookingSyncService();
+  final ChatService _chatService = const ChatService();
   late DateTime _weekStart;
   String? _therapistId;
   String _statusFilter = 'active';
@@ -235,7 +253,24 @@ class _AgendaPageState extends State<AgendaPage> {
   late DateTime _monthStart;
   bool _hasLoadedOnce = false;
   RealtimeChannel? _bookingsChannel;
+  RealtimeChannel? _messagesChannel;
   Timer? _bookingsReloadDebounce;
+  Timer? _messagesReloadDebounce;
+  String? _salesFocusId;
+  String? _messagesFocusConversationId;
+  String? _agendaChatConversationId;
+  _Booking? _agendaChatBooking;
+  String _userRole = 'reception';
+  int _messagesUnreadCount = 0;
+
+  Future<void> _logout() async {
+    await Supabase.instance.client.auth.signOut();
+    if (!mounted) return;
+    Navigator.of(
+      context,
+      rootNavigator: true,
+    ).pushNamedAndRemoveUntil('/recepcion', (_) => false);
+  }
 
   @override
   void initState() {
@@ -243,9 +278,11 @@ class _AgendaPageState extends State<AgendaPage> {
     _weekStart = _mondayOf(DateTime.now());
     _selectedDay = DateTime.now();
     _monthStart = DateTime(DateTime.now().year, DateTime.now().month);
+    _loadCurrentRole();
     _loadTherapists();
     _loadBranches().then((_) => _loadBookings());
     _subscribeToBookingsRealtime();
+    _subscribeToMessagesRealtime();
     _timer = Timer.periodic(
       const Duration(minutes: 1),
       (_) => setState(() => _now = DateTime.now()),
@@ -256,8 +293,12 @@ class _AgendaPageState extends State<AgendaPage> {
   void dispose() {
     _timer.cancel();
     _bookingsReloadDebounce?.cancel();
+    _messagesReloadDebounce?.cancel();
     if (_bookingsChannel != null) {
       Supabase.instance.client.removeChannel(_bookingsChannel!);
+    }
+    if (_messagesChannel != null) {
+      Supabase.instance.client.removeChannel(_messagesChannel!);
     }
     super.dispose();
   }
@@ -302,26 +343,83 @@ class _AgendaPageState extends State<AgendaPage> {
 
   // ── Data ────────────────────────────────────────────────────────────────────
   void _subscribeToBookingsRealtime() {
-    _bookingsChannel = Supabase.instance.client
-        .channel('agenda-bookings-realtime')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'bookings',
-          callback: (_) {
-            _bookingsReloadDebounce?.cancel();
-            _bookingsReloadDebounce = Timer(
-              const Duration(milliseconds: 350),
-              () {
-                if (mounted) _loadBookings();
-              },
-            );
+    _bookingsChannel = _bookingSyncService.subscribeToBookings(
+      channelName: 'agenda-bookings-realtime',
+      onChanged: () {
+        _bookingsReloadDebounce?.cancel();
+        _bookingsReloadDebounce = Timer(
+          const Duration(milliseconds: 350),
+          () {
+            if (mounted) {
+              _loadBookings();
+            }
           },
-        )
-        .subscribe();
+        );
+      },
+    );
+  }
+
+  void _subscribeToMessagesRealtime() {
+    _messagesChannel = _chatService.subscribeToMessages(
+      onChanged: () {
+        _messagesReloadDebounce?.cancel();
+        _messagesReloadDebounce = Timer(
+          const Duration(milliseconds: 250),
+          () {
+            if (mounted) {
+              _loadUnreadMessagesCount();
+            }
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _loadCurrentRole() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return;
+    try {
+      final profile = await Supabase.instance.client
+          .from('profiles')
+          .select('role')
+          .eq('id', userId)
+          .maybeSingle();
+      if (!mounted) return;
+      final role = RolePermissions.normalize(profile?['role'] as String?);
+      await RolePermissions.warmup(role, forceRefresh: true);
+      await _loadUnreadMessagesCount();
+      if (!mounted) return;
+      setState(() {
+        final visibleModules = RolePermissions.visibleModulesFor(role);
+        _userRole = role;
+        if (visibleModules.isEmpty) {
+          _activeModule = '';
+        } else if (!visibleModules.contains(_activeModule)) {
+          _activeModule = visibleModules.first;
+        }
+      });
+    } catch (_) {}
   }
 
   String get _sourcePlatform => kIsWeb ? 'web' : 'mobile';
+
+  Future<void> _loadUnreadMessagesCount() async {
+    try {
+      final count = await _chatService.unreadCount();
+      if (!mounted) {
+        return;
+      }
+      setState(() => _messagesUnreadCount = count);
+    } catch (_) {}
+  }
+
+  void _closeAgendaChat() {
+    if (!mounted) return;
+    setState(() {
+      _agendaChatConversationId = null;
+      _agendaChatBooking = null;
+    });
+  }
 
   List<_Booking> _bookingsForDay(DateTime day) {
     final list = _bookings.where((b) => _sameDay(b.date, day)).toList();
@@ -335,7 +433,7 @@ class _AgendaPageState extends State<AgendaPage> {
         .where(
           (b) =>
               b.status != 'cancelled' &&
-              b.status != 'completed' &&
+              b.status != 'paid' &&
               (b.date.isAfter(DateTime(_now.year, _now.month, _now.day)) ||
                   (_sameDay(b.date, _now) && b.endMinute >= nowMinute)),
         )
@@ -361,6 +459,10 @@ class _AgendaPageState extends State<AgendaPage> {
         return 'En proceso';
       case 'completed':
         return 'Completada';
+      case 'awaiting_payment':
+        return 'Pendiente de cobro';
+      case 'paid':
+        return 'Pagada';
       case 'cancelled':
         return 'Cancelada';
       case 'no_show':
@@ -385,6 +487,10 @@ class _AgendaPageState extends State<AgendaPage> {
         return const Color(0xFF6A54E0);
       case 'completed':
         return const Color(0xFF666666);
+      case 'awaiting_payment':
+        return const Color(0xFFB06A1F);
+      case 'paid':
+        return const Color(0xFF0E8F55);
       case 'cancelled':
         return const Color(0xFFB32D2D);
       case 'no_show':
@@ -398,21 +504,14 @@ class _AgendaPageState extends State<AgendaPage> {
 
   Future<bool> _updateBookingStatus(_Booking booking, String newStatus) async {
     try {
-      await Supabase.instance.client
-          .from('bookings')
-          .update({
-            'status': newStatus,
-            'updated_by': Supabase.instance.client.auth.currentUser?.id,
-            'source_platform': _sourcePlatform,
-          })
-          .eq('id', booking.id);
+      final finalStatus = await _persistBookingStatusFlow(booking, newStatus);
 
       await _loadBookings();
       if (!mounted) return true;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Cita actualizada a ${_statusLabel(newStatus)}'),
-          backgroundColor: _statusColor(newStatus),
+          content: Text('Cita actualizada a ${_statusLabel(finalStatus)}'),
+          backgroundColor: _statusColor(finalStatus),
         ),
       );
       return true;
@@ -425,6 +524,86 @@ class _AgendaPageState extends State<AgendaPage> {
         ),
       );
       return false;
+    }
+  }
+
+  Future<String> _persistBookingStatusFlow(_Booking booking, String newStatus) async {
+    final currentUserId = Supabase.instance.client.auth.currentUser?.id;
+
+    Future<void> updateStatus(String status) {
+      return Supabase.instance.client
+          .from('bookings')
+          .update({
+            'status': status,
+            'updated_by': currentUserId,
+            'source_platform': _sourcePlatform,
+          })
+          .eq('id', booking.id);
+    }
+
+    if (newStatus != 'completed') {
+      await updateStatus(newStatus);
+      if (newStatus == 'confirmed') {
+        await _emitReservationSystemMessage(
+          booking,
+          'Tu cita fue confirmada por recepcion. Te esperamos en Sahara Club Spa.',
+        );
+      }
+      return newStatus;
+    }
+
+    await updateStatus('completed');
+
+    final sale = await _agendaSalesService.ensureSaleForBooking(
+      AgendaSaleDraft(
+        bookingId: booking.id,
+        branchId: booking.sucursalId,
+        customerId: booking.clientRecordId ?? booking.profileClientId,
+        profileClientId: booking.profileClientId,
+        customerName: booking.clientName,
+        professionalId: booking.therapistId,
+        serviceId: booking.serviceId,
+        serviceName: booking.serviceName,
+        subtotal: booking.servicePrice,
+        total: booking.servicePrice,
+        notes: booking.notes,
+        durationMinutes: booking.durationMinutes,
+      ),
+    );
+
+    try {
+      await updateStatus('awaiting_payment');
+      _salesFocusId = sale.id;
+      return 'awaiting_payment';
+    } catch (_) {
+      _salesFocusId = sale.id;
+      return 'completed';
+    }
+  }
+
+  Future<void> _emitReservationSystemMessage(
+    _Booking booking,
+    String message,
+  ) async {
+    try {
+      final conversation = await _chatService.createConversation(
+        NewConversationDraft(
+          subject: booking.serviceName.isNotEmpty
+              ? 'Reserva: ${booking.serviceName}'
+              : 'Seguimiento de reserva',
+          customerId: booking.profileClientId,
+          professionalId: booking.therapistId.isEmpty ? null : booking.therapistId,
+          reservationId: booking.id,
+        ),
+      );
+      await _chatService.sendMessage(
+        conversationId: conversation.id,
+        text: message,
+        messageType: 'reservation_update',
+      );
+      await _loadUnreadMessagesCount();
+    } catch (error) {
+      debugPrint('reservation system message error: $error');
     }
   }
 
@@ -487,42 +666,17 @@ class _AgendaPageState extends State<AgendaPage> {
   Future<void> _loadBookings() async {
     setState(() => _loading = true);
     try {
-      dynamic q = Supabase.instance.client
-          .from('bookings')
-          .select('''
-        id, client_id, client_record_id, service_id, sucursal_id, booking_date, booking_time, duration_min, status, therapist_id, client_notes,
-        client:profiles!bookings_client_id_fkey(full_name),
-        client_record:clients!bookings_client_record_id_fkey(full_name, phone),
-        therapist:staff(full_name),
-        services(name, price),
-        sucursales(nombre, direccion_completa, link_maps)
-      ''')
-          .gte('booking_date', _yyyyMMdd(_rangeStart))
-          .lte('booking_date', _yyyyMMdd(_rangeEnd));
-
-      if (kEnableMultiBranch && _selectedBranchId != null) {
-        q = q.eq('sucursal_id', _selectedBranchId!);
-      }
-      if (_therapistId != null) q = q.eq('therapist_id', _therapistId!);
-
-      if (_statusFilter == 'active') {
-        q = q.or(
-          'status.eq.scheduled,status.eq.pending,status.eq.confirmed,'
-          'status.eq.checked_in,status.eq.in_progress,status.eq.rescheduled',
-        );
-      } else if (_statusFilter != 'all') {
-        q = q.eq('status', _statusFilter);
-      }
-
-      final data = await q.order('booking_date').order('booking_time') as List;
+      final data = await _bookingSyncService.fetchBookings(
+        rangeStart: _rangeStart,
+        rangeEnd: _rangeEnd,
+        therapistId: _therapistId,
+        branchId: kEnableMultiBranch ? _selectedBranchId : null,
+        statusFilter: _statusFilter,
+      );
       final parsed = <_Booking>[];
       for (final row in data) {
-        if (row is! Map) {
-          debugPrint('Skipping booking row with invalid type: ${row.runtimeType}');
-          continue;
-        }
         try {
-          parsed.add(_Booking.fromMap(Map<String, dynamic>.from(row)));
+          parsed.add(_Booking.fromMap(row));
         } catch (e) {
           debugPrint('Skipping malformed booking row: $e');
         }
@@ -612,29 +766,44 @@ class _AgendaPageState extends State<AgendaPage> {
   // ── Build ───────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    final visibleModules = RolePermissions.visibleModulesFor(_userRole);
+    final effectiveModule = visibleModules.isEmpty
+        ? ''
+        : visibleModules.contains(_activeModule)
+        ? _activeModule
+        : visibleModules.first;
     return Scaffold(
       backgroundColor: SaharaTheme.blancoAlmendra,
       body: Column(
         children: [
           _ModuleNav(
-            activeModule: _activeModule,
+            activeModule: effectiveModule,
+            userRole: _userRole,
+            messagesUnreadCount: _messagesUnreadCount,
             onModuleTap: (m) => setState(() => _activeModule = m),
+            onLogout: _logout,
           ),
           Expanded(
-            child: _activeModule == 'clientes'
+            child: visibleModules.isEmpty
+                ? _PlaceholderModule(module: 'sin_acceso')
+                : effectiveModule == 'clientes'
                 ? const ClientsModule()
-                : _activeModule == 'ventas'
-                ? const SalesModule()
-                : _activeModule == 'mensajes'
-                ? const MensajesModule()
-                : _activeModule == 'productos'
+                : effectiveModule == 'ventas'
+                ? SalesModule(initialSaleId: _salesFocusId)
+                : effectiveModule == 'mensajes'
+                ? MensajesModule(
+                    initialConversationId: _messagesFocusConversationId,
+                  )
+                : effectiveModule == 'productos'
                 ? const ProductosModule()
-                : _activeModule == 'reportes'
+                : effectiveModule == 'finanzas'
+                ? const FinanzasModule()
+                : effectiveModule == 'reportes'
                 ? const ReportesModule()
-                : _activeModule == 'admin'
-                ? const AdminModule()
-                : _activeModule != 'agenda'
-                ? _PlaceholderModule(module: _activeModule)
+                : effectiveModule == 'admin'
+                ? AdminModule(currentRole: _userRole)
+                : effectiveModule != 'agenda'
+                ? _PlaceholderModule(module: effectiveModule)
                 : LayoutBuilder(
                     builder: (context, constraints) {
                       final isCompact = constraints.maxWidth < 960;
@@ -681,91 +850,124 @@ class _AgendaPageState extends State<AgendaPage> {
                         );
                       }
 
-                      return Row(
+                      return Stack(
                         children: [
-                          _Sidebar(
-                            therapists: _therapists,
-                            therapistId: _therapistId,
-                            branches: _branches,
-                            selectedBranchId: _selectedBranchId,
-                            statusFilter: _statusFilter,
-                            weekStart: _weekStart,
-                            onBranch: (v) {
-                              setState(() => _selectedBranchId = v);
-                              _loadBookings();
-                            },
-                            onTherapist: (v) {
-                              setState(() => _therapistId = v);
-                              _loadBookings();
-                            },
-                            onStatus: (v) {
-                              setState(() => _statusFilter = v!);
-                              _loadBookings();
-                            },
-                            onDateTap: _goToDate,
+                          Row(
+                            children: [
+                              _Sidebar(
+                                therapists: _therapists,
+                                therapistId: _therapistId,
+                                branches: _branches,
+                                selectedBranchId: _selectedBranchId,
+                                statusFilter: _statusFilter,
+                                weekStart: _weekStart,
+                                onBranch: (v) {
+                                  setState(() => _selectedBranchId = v);
+                                  _loadBookings();
+                                },
+                                onTherapist: (v) {
+                                  setState(() => _therapistId = v);
+                                  _loadBookings();
+                                },
+                                onStatus: (v) {
+                                  setState(() => _statusFilter = v!);
+                                  _loadBookings();
+                                },
+                                onDateTap: _goToDate,
+                                onLogout: _logout,
+                              ),
+                              Expanded(
+                                child: Column(
+                                  children: [
+                                    _TopBar(
+                                      title: _topBarTitle,
+                                      viewMode: _viewMode,
+                                      onPrev: _viewMode == 'day'
+                                          ? _prevDay
+                                          : _viewMode == 'month'
+                                          ? _prevMonth
+                                          : _prevWeek,
+                                      onNext: _viewMode == 'day'
+                                          ? _nextDay
+                                          : _viewMode == 'month'
+                                          ? _nextMonth
+                                          : _nextWeek,
+                                      onToday: _goToToday,
+                                      onNew: () => _showNewDialog(
+                                        context,
+                                        date: _viewMode == 'day'
+                                            ? _selectedDay
+                                            : _weekStart,
+                                      ),
+                                      onViewMode: (v) {
+                                        setState(() => _viewMode = v);
+                                        _loadBookings();
+                                      },
+                                    ),
+                                    Expanded(
+                                      child: _loading && !_hasLoadedOnce
+                                          ? const Center(
+                                              child: CircularProgressIndicator(
+                                                color: SaharaTheme.gold,
+                                              ),
+                                            )
+                                          : _viewMode == 'week'
+                                          ? _WeekGrid(
+                                              weekStart: _weekStart,
+                                              bookings: _bookings,
+                                              now: _now,
+                                              onBookingTap: _showBookingDetail,
+                                              onReschedule: _rescheduleBooking,
+                                              onSlotTap: _onSlotTap,
+                                            )
+                                          : _viewMode == 'day'
+                                          ? _DayGrid(
+                                              day: _selectedDay,
+                                              bookings: _bookings,
+                                              now: _now,
+                                              onBookingTap: _showBookingDetail,
+                                              onReschedule: _rescheduleBooking,
+                                              onSlotTap: _onSlotTap,
+                                            )
+                                          : _MonthGrid(
+                                              monthStart: _monthStart,
+                                              bookings: _bookings,
+                                              onDayTap: _onMonthDayTap,
+                                            ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
-                          Expanded(
-                            child: Column(
-                              children: [
-                                _TopBar(
-                                  title: _topBarTitle,
-                                  viewMode: _viewMode,
-                                  onPrev: _viewMode == 'day'
-                                      ? _prevDay
-                                      : _viewMode == 'month'
-                                      ? _prevMonth
-                                      : _prevWeek,
-                                  onNext: _viewMode == 'day'
-                                      ? _nextDay
-                                      : _viewMode == 'month'
-                                      ? _nextMonth
-                                      : _nextWeek,
-                                  onToday: _goToToday,
-                                  onNew: () => _showNewDialog(
-                                    context,
-                                    date: _viewMode == 'day'
-                                        ? _selectedDay
-                                        : _weekStart,
-                                  ),
-                                  onViewMode: (v) {
-                                    setState(() => _viewMode = v);
-                                    _loadBookings();
-                                  },
+                          if (_agendaChatConversationId != null &&
+                              _agendaChatBooking != null) ...[
+                            Positioned.fill(
+                              child: GestureDetector(
+                                onTap: _closeAgendaChat,
+                                child: Container(
+                                  color: Colors.black.withValues(alpha: 0.12),
                                 ),
-                                Expanded(
-                                  child: _loading && !_hasLoadedOnce
-                                      ? const Center(
-                                          child: CircularProgressIndicator(
-                                            color: SaharaTheme.gold,
-                                          ),
-                                        )
-                                      : _viewMode == 'week'
-                                      ? _WeekGrid(
-                                          weekStart: _weekStart,
-                                          bookings: _bookings,
-                                          now: _now,
-                                          onBookingTap: _showBookingDetail,
-                                          onReschedule: _rescheduleBooking,
-                                          onSlotTap: _onSlotTap,
-                                        )
-                                      : _viewMode == 'day'
-                                      ? _DayGrid(
-                                          day: _selectedDay,
-                                          bookings: _bookings,
-                                          now: _now,
-                                          onBookingTap: _showBookingDetail,
-                                          onReschedule: _rescheduleBooking,
-                                          onSlotTap: _onSlotTap,
-                                        )
-                                      : _MonthGrid(
-                                          monthStart: _monthStart,
-                                          bookings: _bookings,
-                                          onDayTap: _onMonthDayTap,
-                                        ),
-                                ),
-                              ],
+                              ),
                             ),
-                          ),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: _AgendaReservationChatDrawer(
+                                booking: _agendaChatBooking!,
+                                conversationId: _agendaChatConversationId!,
+                                onClose: _closeAgendaChat,
+                                onViewReservation: () {
+                                  final booking = _agendaChatBooking;
+                                  _closeAgendaChat();
+                                  if (booking != null) {
+                                    Future.microtask(
+                                      () => _showBookingDetail(context, booking),
+                                    );
+                                  }
+                                },
+                              ),
+                            ),
+                          ],
                         ],
                       );
                     },
@@ -999,14 +1201,429 @@ class _AgendaPageState extends State<AgendaPage> {
         onEdit: () => _showEditDialog(context, b),
         onUpdateStatus: (status) => _updateBookingStatus(b, status),
         statusLabel: _statusLabel,
+        onCharge: () => _showChargeDialog(context, b),
+        onViewTicket: () => _openSaleFromBooking(context, b),
+        onOpenChat: () => _openChatFromBooking(context, b),
       ),
     );
+  }
+
+  AgendaSaleDraft _saleDraftFromBooking(_Booking booking) {
+    return AgendaSaleDraft(
+      bookingId: booking.id,
+      branchId: booking.sucursalId,
+      customerId: booking.clientRecordId ?? booking.profileClientId,
+      profileClientId: booking.profileClientId,
+      customerName: booking.clientName,
+      professionalId: booking.therapistId,
+      serviceId: booking.serviceId,
+      serviceName: booking.serviceName,
+      subtotal: booking.servicePrice,
+      total: booking.servicePrice,
+      notes: booking.notes,
+      durationMinutes: booking.durationMinutes,
+    );
+  }
+
+  Future<void> _openSaleFromBooking(BuildContext context, _Booking booking) async {
+    var sale = await _agendaSalesService.findSaleForBooking(booking.id);
+    if (!mounted) return;
+
+    if (sale == null &&
+        const ['completed', 'awaiting_payment', 'paid'].contains(booking.status)) {
+      try {
+        sale = await _agendaSalesService.ensureSaleForBooking(
+          _saleDraftFromBooking(booking),
+        );
+      } catch (_) {}
+    }
+
+    if (sale == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Todavia no existe un ticket para esta cita.')),
+      );
+      return;
+    }
+
+    final resolvedSale = sale;
+
+    Navigator.pop(context);
+    setState(() {
+      _salesFocusId = resolvedSale.id;
+      _activeModule = 'ventas';
+    });
+  }
+
+  Future<void> _showChargeDialog(BuildContext context, _Booking booking) async {
+    var sale = await _agendaSalesService.findSaleForBooking(booking.id);
+    if (!mounted) return;
+
+    if (sale == null &&
+        const ['completed', 'awaiting_payment'].contains(booking.status)) {
+      try {
+        sale = await _agendaSalesService.ensureSaleForBooking(
+          _saleDraftFromBooking(booking),
+        );
+        await _updateBookingStatus(booking, 'completed');
+      } catch (_) {}
+    }
+
+    if (sale == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo generar el ticket de esta cita para cobrarla.'),
+        ),
+      );
+      return;
+    }
+
+    final resolvedSale = sale;
+
+    final paid = await showDialog<bool>(
+      context: context,
+      builder: (_) => _ChargeBookingDialog(
+        booking: booking,
+        sale: resolvedSale,
+        salesService: _agendaSalesService,
+      ),
+    );
+
+    if (paid == true && mounted) {
+      await _loadBookings();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cobro registrado correctamente.')),
+      );
+    }
+  }
+
+  Future<void> _openChatFromBooking(BuildContext context, _Booking booking) async {
+    try {
+      if ((booking.profileClientId ?? '').isEmpty) {
+        throw const ChatException(
+          'La reserva no tiene un cliente enlazado para abrir el chat.',
+        );
+      }
+      final conversation = await _chatService.createConversation(
+        NewConversationDraft(
+          subject: booking.serviceName.isNotEmpty
+              ? 'Reserva: ${booking.serviceName}'
+              : 'Seguimiento de reserva',
+          customerId: booking.profileClientId,
+          reservationId: booking.id,
+        ),
+      );
+      if (!mounted) {
+        return;
+      }
+      final isCompact = MediaQuery.of(context).size.width < 960;
+      if (isCompact) {
+        await showDialog<void>(
+          context: context,
+          barrierDismissible: true,
+          builder: (_) => Dialog(
+            insetPadding: const EdgeInsets.all(20),
+            backgroundColor: Colors.transparent,
+            child: SizedBox(
+              width: 760,
+              height: 720,
+              child: _AgendaReservationChatDrawer(
+                booking: booking,
+                conversationId: conversation.id,
+                onClose: () => Navigator.of(context).pop(),
+                onViewReservation: () {
+                  Navigator.of(context).pop();
+                  Future.microtask(() => _showBookingDetail(context, booking));
+                },
+                compact: true,
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+      setState(() {
+        _agendaChatConversationId = conversation.id;
+        _agendaChatBooking = booking;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('No se pudo abrir el chat de esta reserva.'),
+          backgroundColor: const Color(0xFFB32D2D),
+        ),
+      );
+      debugPrint('openReservationChat error: $error');
+    }
   }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Top Bar
 // ═════════════════════════════════════════════════════════════════════════════
+class _AgendaReservationChatDrawer extends StatelessWidget {
+  const _AgendaReservationChatDrawer({
+    required this.booking,
+    required this.conversationId,
+    required this.onClose,
+    required this.onViewReservation,
+    this.compact = false,
+  });
+
+  final _Booking booking;
+  final String conversationId;
+  final VoidCallback onClose;
+  final VoidCallback onViewReservation;
+  final bool compact;
+
+  String _statusLabel(String s) {
+    switch (s) {
+      case 'pending':
+      case 'scheduled':
+        return 'Pendiente';
+      case 'confirmed':
+        return 'Confirmada';
+      case 'checked_in':
+        return 'Check-in';
+      case 'in_progress':
+        return 'En proceso';
+      case 'completed':
+        return 'Completada';
+      case 'awaiting_payment':
+        return 'Pendiente de cobro';
+      case 'paid':
+        return 'Pagada';
+      case 'cancelled':
+        return 'Cancelada';
+      case 'no_show':
+        return 'No asistio';
+      case 'rescheduled':
+        return 'Reagendada';
+      default:
+        return 'Reservada';
+    }
+  }
+
+  Color _statusColor(String s) {
+    switch (s) {
+      case 'confirmed':
+        return const Color(0xFF1A9E65);
+      case 'checked_in':
+        return const Color(0xFF2088D8);
+      case 'in_progress':
+        return const Color(0xFF6A54E0);
+      case 'completed':
+        return const Color(0xFF666666);
+      case 'awaiting_payment':
+        return const Color(0xFFB06A1F);
+      case 'paid':
+        return const Color(0xFF0E8F55);
+      case 'cancelled':
+        return const Color(0xFFB32D2D);
+      case 'rescheduled':
+        return const Color(0xFF0A9AA4);
+      default:
+        return SaharaTheme.gold;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final panelWidth = compact ? 760.0 : 560.0;
+    final statusColor = _statusColor(booking.status);
+    final dateLabel =
+        '${booking.date.day.toString().padLeft(2, '0')}/${booking.date.month.toString().padLeft(2, '0')}/${booking.date.year}';
+
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        width: panelWidth,
+        height: double.infinity,
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFFCF7),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.10),
+              blurRadius: 24,
+              offset: const Offset(-8, 0),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.fromLTRB(24, 22, 24, 18),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                border: Border(bottom: BorderSide(color: Color(0xFFEAE6DF))),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              booking.clientName,
+                              style: GoogleFonts.playfairDisplay(
+                                fontSize: 28,
+                                fontWeight: FontWeight.w600,
+                                color: const Color(0xFF201A16),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              booking.serviceName,
+                              style: GoogleFonts.inter(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: SaharaTheme.gold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: onClose,
+                        icon: const Icon(Icons.close, color: Color(0xFF6D655C)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      _ReservationMetaChip(
+                        icon: Icons.event_outlined,
+                        label: dateLabel,
+                      ),
+                      _ReservationMetaChip(
+                        icon: Icons.schedule_outlined,
+                        label: '${booking.timeLabel} - ${booking.endTimeLabel}',
+                      ),
+                      _ReservationMetaChip(
+                        icon: Icons.spa_outlined,
+                        label: booking.serviceName,
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 9,
+                        ),
+                        decoration: BoxDecoration(
+                          color: statusColor.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: statusColor.withValues(alpha: 0.25),
+                          ),
+                        ),
+                        child: Text(
+                          _statusLabel(booking.status),
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: statusColor,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: onViewReservation,
+                        icon: const Icon(Icons.visibility_outlined, size: 18),
+                        label: const Text('Ver reserva'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF52463C),
+                          side: const BorderSide(color: Color(0xFFD8C9B5)),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 14,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      FilledButton.icon(
+                        onPressed: onClose,
+                        icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                        label: const Text('Volver a agenda'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: SaharaTheme.gold,
+                          foregroundColor: const Color(0xFF22170D),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 14,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: MensajesModule(
+                initialConversationId: conversationId,
+                embedded: true,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReservationMetaChip extends StatelessWidget {
+  const _ReservationMetaChip({
+    required this.icon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F2E8),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: const Color(0xFF7F6441)),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: GoogleFonts.inter(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: const Color(0xFF4D4034),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TopBar extends StatelessWidget {
   const _TopBar({
     required this.title,
@@ -1193,7 +1810,6 @@ class _MobileAgendaView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final compact = MediaQuery.sizeOf(context).width < 960;
     return Container(
       color: SaharaTheme.blancoAlmendra,
       child: Column(
@@ -1273,6 +1889,8 @@ class _MobileAgendaView extends StatelessWidget {
                           DropdownMenuItem(value: 'pending', child: Text('Pendientes')),
                           DropdownMenuItem(value: 'confirmed', child: Text('Confirmadas')),
                           DropdownMenuItem(value: 'completed', child: Text('Completadas')),
+                          DropdownMenuItem(value: 'awaiting_payment', child: Text('Pendientes de cobro')),
+                          DropdownMenuItem(value: 'paid', child: Text('Pagadas')),
                           DropdownMenuItem(value: 'cancelled', child: Text('Canceladas')),
                           DropdownMenuItem(value: 'all', child: Text('Todas')),
                         ],
@@ -1309,7 +1927,8 @@ class _MobileAgendaView extends StatelessWidget {
                       onConfirm: booking.status == 'pending' || booking.status == 'scheduled'
                           ? () => onConfirm(booking)
                           : null,
-                      onCancel: booking.status != 'completed' && booking.status != 'cancelled'
+                      onCancel: !const ['completed', 'awaiting_payment', 'paid', 'cancelled']
+                              .contains(booking.status)
                           ? () => onCancel(booking)
                           : null,
                       onReschedule: () => onReschedule(booking),
@@ -1336,7 +1955,8 @@ class _MobileAgendaView extends StatelessWidget {
                       onConfirm: booking.status == 'pending' || booking.status == 'scheduled'
                           ? () => onConfirm(booking)
                           : null,
-                      onCancel: booking.status != 'completed' && booking.status != 'cancelled'
+                      onCancel: !const ['completed', 'awaiting_payment', 'paid', 'cancelled']
+                              .contains(booking.status)
                           ? () => onCancel(booking)
                           : null,
                       onReschedule: () => onReschedule(booking),
@@ -1386,7 +2006,6 @@ class _MobileEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final compact = MediaQuery.sizeOf(context).width < 960;
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -1546,6 +2165,7 @@ class _Sidebar extends StatefulWidget {
     required this.onTherapist,
     required this.onStatus,
     required this.onDateTap,
+    required this.onLogout,
   });
 
   final List<_Therapist> therapists;
@@ -1558,6 +2178,7 @@ class _Sidebar extends StatefulWidget {
   final ValueChanged<String?> onTherapist;
   final ValueChanged<String?> onStatus;
   final ValueChanged<DateTime> onDateTap;
+  final Future<void> Function() onLogout;
 
   @override
   State<_Sidebar> createState() => _SidebarState();
@@ -1681,6 +2302,14 @@ class _SidebarState extends State<_Sidebar> {
                         child: Text('Completadas'),
                       ),
                       DropdownMenuItem(
+                        value: 'awaiting_payment',
+                        child: Text('Pendientes de cobro'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'paid',
+                        child: Text('Pagadas'),
+                      ),
+                      DropdownMenuItem(
                         value: 'cancelled',
                         child: Text('Canceladas'),
                       ),
@@ -1716,12 +2345,7 @@ class _SidebarState extends State<_Sidebar> {
           ),
           // Logout
           InkWell(
-            onTap: () async {
-              await Supabase.instance.client.auth.signOut();
-              if (context.mounted) {
-                Navigator.pushReplacementNamed(context, '/recepcion');
-              }
-            },
+            onTap: widget.onLogout,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               decoration: const BoxDecoration(
@@ -3253,12 +3877,18 @@ class _BookingDetailDialog extends StatelessWidget {
     required this.onEdit,
     required this.onUpdateStatus,
     required this.statusLabel,
+    required this.onCharge,
+    required this.onViewTicket,
+    required this.onOpenChat,
   });
   final _Booking booking;
   final VoidCallback onRefresh;
   final VoidCallback onEdit;
   final Future<bool> Function(String) onUpdateStatus;
   final String Function(String) statusLabel;
+  final VoidCallback onCharge;
+  final VoidCallback onViewTicket;
+  final VoidCallback onOpenChat;
 
   @override
   Widget build(BuildContext context) {
@@ -3338,38 +3968,83 @@ class _BookingDetailDialog extends StatelessWidget {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  if (b.status == 'scheduled' || b.status == 'pending')
+                  if (b.status == 'scheduled' ||
+                      b.status == 'pending' ||
+                      b.status == 'rescheduled')
                     _DialogBtn(
                       label: 'Confirmar',
                       color: const Color(0xFF1A9E65),
                       onTap: () => _updateStatus(context, 'confirmed'),
                     ),
-                  if (b.status != 'completed' && b.status != 'cancelled')
+                  if (!const ['completed', 'awaiting_payment', 'paid', 'cancelled']
+                      .contains(b.status))
                     _DialogBtn(
                       label: 'Cancelar',
                       color: const Color(0xFFB32D2D),
                       onTap: () => _updateStatus(context, 'cancelled'),
                     ),
-                  if (b.status == 'confirmed')
+                  if (b.status == 'confirmed' || b.status == 'rescheduled')
                     _DialogBtn(
-                      label: 'Completada',
+                      label: 'Check-in',
+                      color: const Color(0xFF2088D8),
+                      onTap: () => _updateStatus(context, 'checked_in'),
+                    ),
+                  if (b.status == 'checked_in')
+                    _DialogBtn(
+                      label: 'Iniciar servicio',
+                      color: const Color(0xFF6A54E0),
+                      onTap: () => _updateStatus(context, 'in_progress'),
+                    ),
+                  if (b.status == 'in_progress')
+                    _DialogBtn(
+                      label: 'Finalizar servicio',
                       color: const Color(0xFF666666),
                       onTap: () => _updateStatus(context, 'completed'),
                     ),
+                  if (b.status == 'awaiting_payment' || b.status == 'completed')
+                    _DialogBtn(
+                      label: 'Cobrar',
+                      color: const Color(0xFF0E8F55),
+                      onTap: () {
+                        Navigator.pop(context);
+                        onCharge();
+                      },
+                    ),
+                  if (b.status == 'awaiting_payment' ||
+                      b.status == 'completed' ||
+                      b.status == 'paid')
+                    _DialogBtn(
+                      label: 'Ver ticket',
+                      color: const Color(0xFF4A4A4A),
+                      onTap: onViewTicket,
+                    ),
                   _DialogBtn(
-                    label: 'Historial',
-                    color: const Color(0xFF4A4A4A),
-                    onTap: () => _showClientHistory(context, b),
-                  ),
-                  _WhatsAppBtn(booking: b),
-                  _DialogBtn(
-                    label: 'Editar',
+                    label: 'Reagendar',
                     color: SaharaTheme.gold,
                     onTap: () {
                       Navigator.pop(context);
                       onEdit();
                     },
                   ),
+                  _DialogBtn(
+                    label: 'Historial',
+                    color: const Color(0xFF4A4A4A),
+                    onTap: () => _showClientHistory(context, b),
+                  ),
+                  _DialogBtn(
+                    label: 'Abrir chat',
+                    color: const Color(0xFF2088D8),
+                    onTap: () {
+                      Navigator.pop(context);
+                      onOpenChat();
+                    },
+                  ),
+                  if (b.status == 'paid')
+                    _DialogBtn(
+                      label: 'Pagada',
+                      color: const Color(0xFF0E8F55),
+                      onTap: () {},
+                    ),
                 ],
               ),
             ],
@@ -3395,6 +4070,14 @@ class _BookingDetailDialog extends StatelessWidget {
         return 'Cancelada';
       case 'completed':
         return 'Completada';
+      case 'checked_in':
+        return 'Check-in';
+      case 'in_progress':
+        return 'En proceso';
+      case 'awaiting_payment':
+        return 'Pendiente de cobro';
+      case 'paid':
+        return 'Pagada';
       default:
         return 'Reservada';
     }
@@ -3425,6 +4108,308 @@ class _BookingDetailDialog extends StatelessWidget {
       builder: (_) => _ClientHistoryDialog(
         booking: booking,
         statusLabel: statusLabel,
+      ),
+    );
+  }
+}
+
+class _ChargeBookingDialog extends StatefulWidget {
+  const _ChargeBookingDialog({
+    required this.booking,
+    required this.sale,
+    required this.salesService,
+  });
+
+  final _Booking booking;
+  final AgendaSaleRecord sale;
+  final AgendaSalesService salesService;
+
+  @override
+  State<_ChargeBookingDialog> createState() => _ChargeBookingDialogState();
+}
+
+class _ChargeBookingDialogState extends State<_ChargeBookingDialog> {
+  final TextEditingController _tipController = TextEditingController(text: '0');
+  final TextEditingController _discountController = TextEditingController(text: '0');
+  final TextEditingController _notesController = TextEditingController();
+  String _paymentMethod = 'efectivo';
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _tipController.dispose();
+    _discountController.dispose();
+    _notesController.dispose();
+    super.dispose();
+  }
+
+  double get _tip => double.tryParse(_tipController.text.trim()) ?? 0;
+  double get _discount => double.tryParse(_discountController.text.trim()) ?? 0;
+  double get _total => max(0.0, widget.sale.total - _discount + _tip).toDouble();
+
+  InputDecoration _paymentDeco(String label, IconData? icon) {
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: icon == null ? null : Icon(icon, size: 18),
+      filled: true,
+      fillColor: Colors.white,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: Color(0xFFE7E0D7)),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: Color(0xFFE7E0D7)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: SaharaTheme.gold, width: 1.2),
+      ),
+      labelStyle: GoogleFonts.inter(fontSize: 12, color: Colors.black54),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final booking = widget.booking;
+    return Dialog(
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: SizedBox(
+        width: 460,
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Cobrar servicio',
+                      style: GoogleFonts.playfairDisplay(
+                        color: Colors.black87,
+                        fontSize: 24,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.black38),
+                    onPressed: () => Navigator.pop(context, false),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _DetailRow(icon: Icons.person, text: booking.clientName),
+              _DetailRow(icon: Icons.spa_outlined, text: booking.serviceName),
+              _DetailRow(icon: Icons.badge_outlined, text: booking.therapistName),
+              _DetailRow(icon: Icons.timer_outlined, text: '${booking.durationMinutes} min'),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: _SimpleAmountField(
+                      label: 'Propina opcional',
+                      controller: _tipController,
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _SimpleAmountField(
+                      label: 'Descuento',
+                      controller: _discountController,
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Metodo de pago',
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  color: Colors.black54,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.6,
+                ),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                value: _paymentMethod,
+                decoration: _paymentDeco('Metodo de pago', null),
+                items: const [
+                  DropdownMenuItem(value: 'efectivo', child: Text('Efectivo')),
+                  DropdownMenuItem(value: 'tarjeta', child: Text('Tarjeta')),
+                  DropdownMenuItem(value: 'stripe', child: Text('Stripe')),
+                  DropdownMenuItem(value: 'transferencia', child: Text('Transferencia')),
+                  DropdownMenuItem(value: 'gift_card', child: Text('Gift card')),
+                  DropdownMenuItem(value: 'membresia', child: Text('Membresia')),
+                  DropdownMenuItem(value: 'saldo_cliente', child: Text('Saldo cliente')),
+                ],
+                onChanged: (value) {
+                  if (value != null) setState(() => _paymentMethod = value);
+                },
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _notesController,
+                minLines: 2,
+                maxLines: 3,
+                decoration: _paymentDeco('Notas de cobro', Icons.notes_outlined),
+              ),
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF7F3EC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFE8DDCA)),
+                ),
+                child: Column(
+                  children: [
+                    _SummaryLine(label: 'Servicio', value: '\$${widget.sale.total.toStringAsFixed(2)}'),
+                    _SummaryLine(label: 'Propina', value: '\$${_tip.toStringAsFixed(2)}'),
+                    _SummaryLine(label: 'Descuento', value: '-\$${_discount.toStringAsFixed(2)}'),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Text(
+                          'Total a cobrar',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          '\$${_total.toStringAsFixed(2)}',
+                          style: GoogleFonts.playfairDisplay(
+                            fontSize: 28,
+                            color: SaharaTheme.gold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _saving ? null : _collectPayment,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: SaharaTheme.gold,
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  icon: _saving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
+                        )
+                      : const Icon(Icons.point_of_sale_outlined),
+                  label: Text(
+                    'Registrar cobro',
+                    style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _collectPayment() async {
+    setState(() => _saving = true);
+    try {
+      await widget.salesService.collectPayment(
+        saleId: widget.sale.id,
+        paymentMethod: _paymentMethod,
+        baseTotal: widget.sale.total,
+        bookingId: widget.booking.id,
+        tip: _tip,
+        discount: _discount,
+        notes: _notesController.text.trim(),
+      );
+
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo registrar el cobro: $e')),
+      );
+      setState(() => _saving = false);
+    }
+  }
+}
+
+class _SimpleAmountField extends StatelessWidget {
+  const _SimpleAmountField({
+    required this.label,
+    required this.controller,
+    required this.onChanged,
+  });
+
+  final String label;
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      keyboardType: TextInputType.number,
+      onChanged: onChanged,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: const Icon(Icons.attach_money_outlined, size: 18),
+        filled: true,
+        fillColor: Colors.white,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: Color(0xFFE7E0D7)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: Color(0xFFE7E0D7)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: SaharaTheme.gold, width: 1.2),
+        ),
+        labelStyle: GoogleFonts.inter(fontSize: 12, color: Colors.black54),
+      ),
+    );
+  }
+}
+
+class _SummaryLine extends StatelessWidget {
+  const _SummaryLine({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          Text(label, style: GoogleFonts.inter(fontSize: 12, color: Colors.black54)),
+          const Spacer(),
+          Text(value, style: GoogleFonts.inter(fontSize: 12, color: Colors.black87)),
+        ],
       ),
     );
   }
@@ -3639,6 +4624,7 @@ class _NewBookingDialog extends StatefulWidget {
 }
 
 class _NewBookingDialogState extends State<_NewBookingDialog> {
+  final BookingSyncService _bookingSyncService = const BookingSyncService();
   final _clientCtrl = TextEditingController();
   final _clientFocus = FocusNode();
   final _notesCtrl = TextEditingController();
@@ -3703,6 +4689,8 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
     'cancelled': ('Cancelado', Color(0xFFB32D2D)),
     'rescheduled': ('Reagendado', Color(0xFF0A9AA4)),
     'completed': ('Completado', Color(0xFF888888)),
+    'awaiting_payment': ('Pendiente de cobro', Color(0xFFC6922B)),
+    'paid': ('Pagada', Color(0xFF52C41A)),
   };
 
   @override
@@ -3909,54 +4897,45 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
       // Resolve client ID: use cached selection, else lookup by name
       String? finalClientId = _clientId;
       if (finalClientId == null || finalClientId.isEmpty) {
-        final nameQ = await Supabase.instance.client
-            .from('clients')
-            .select('id')
-            .eq('full_name', _clientCtrl.text.trim())
-            .maybeSingle();
-        finalClientId = nameQ?['id'] as String?;
+        finalClientId = await _bookingSyncService.findClientRecordIdByName(
+          _clientCtrl.text.trim(),
+        );
         if (finalClientId == null)
           throw Exception('Cliente no encontrado. Verifica el nombre.');
       }
 
       final timeStr =
           '${_hour.toString().padLeft(2, '0')}:${_minute.toString().padLeft(2, '0')}:00';
-      final payload = {
-        'client_record_id': finalClientId,
-        'therapist_id': _therapistId,
-        'sucursal_id': _sucursalId,
-        'service_id': _serviceId,
-        'booking_date': _yyyyMMdd(_date),
-        'booking_time': timeStr,
-        'duration_min': _selectedServiceDuration,
-        'status': _status,
-        'client_notes': _notesCtrl.text.trim(),
-        'service_name': _selectedServiceName,
-        'source_platform': kIsWeb ? 'web' : 'mobile',
-        'updated_by': Supabase.instance.client.auth.currentUser?.id,
-      };
-
-      Map<String, dynamic>? res;
-      if (widget.editBooking != null) {
-        final data = await Supabase.instance.client
-            .from('bookings')
-            .update(payload)
-            .eq('id', widget.editBooking!.id)
-            .select('*, client_record:client_record_id(full_name, phone)')
-            .maybeSingle();
-        res = data;
-      } else {
-        final data = await Supabase.instance.client
-            .from('bookings')
-            .insert({
-              ...payload,
-              'created_by': Supabase.instance.client.auth.currentUser?.id,
-            })
-            .select('*, client_record:client_record_id(full_name, phone)')
-            .maybeSingle();
-        res = data;
+      final draft = BookingUpsertData(
+        bookingId: widget.editBooking?.id,
+        clientProfileId: widget.editBooking?.profileClientId,
+        clientRecordId: finalClientId,
+        clientName: _clientCtrl.text.trim(),
+        therapistId: _therapistId ?? '',
+        serviceId: _serviceId ?? '',
+        serviceName: _selectedServiceName,
+        bookingDate: _date,
+        bookingTime: timeStr,
+        durationMinutes: _selectedServiceDuration,
+        status: _status,
+        notes: _notesCtrl.text.trim(),
+        sourcePlatform: kIsWeb ? 'web' : 'mobile',
+        branchId: _sucursalId,
+      );
+      final validation = await _bookingSyncService.validateBookingDraft(draft);
+      if (!validation.isValid) {
+        throw Exception(validation.errorMessage ?? 'No se pudo validar la reserva.');
       }
-      return res;
+      final result = await _bookingSyncService.upsertBooking(draft);
+      if (validation.warningMessage != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(validation.warningMessage!),
+            backgroundColor: const Color(0xFFC68A17),
+          ),
+        );
+      }
+      return result;
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -5048,10 +6027,19 @@ class _StatusBadge extends StatelessWidget {
 // Module Navigation Bar
 // ═════════════════════════════════════════════════════════════════════════════
 class _ModuleNav extends StatelessWidget {
-  const _ModuleNav({required this.activeModule, required this.onModuleTap});
+  const _ModuleNav({
+    required this.activeModule,
+    required this.userRole,
+    required this.messagesUnreadCount,
+    required this.onModuleTap,
+    required this.onLogout,
+  });
 
   final String activeModule;
+  final String userRole;
+  final int messagesUnreadCount;
   final ValueChanged<String> onModuleTap;
+  final Future<void> Function() onLogout;
 
   static const _mods = [
     ('agenda', 'Agenda', Icons.calendar_today_outlined),
@@ -5059,6 +6047,7 @@ class _ModuleNav extends StatelessWidget {
     ('ventas', 'Ventas', Icons.point_of_sale_outlined),
     ('mensajes', 'Mensajes', Icons.chat_bubble_outline),
     ('productos', 'Productos', Icons.inventory_2_outlined),
+    ('finanzas', 'Finanzas', Icons.account_balance_wallet_outlined),
     ('reportes', 'Reportes', Icons.bar_chart_outlined),
     ('admin', 'Administración', Icons.settings_outlined),
   ];
@@ -5066,6 +6055,9 @@ class _ModuleNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final compact = MediaQuery.sizeOf(context).width < 960;
+    final visibleIds = RolePermissions.visibleModulesFor(userRole);
+    final visibleMods =
+        _mods.where((module) => visibleIds.contains(module.$1)).toList();
     return Container(
       height: 52,
       decoration: BoxDecoration(
@@ -5138,12 +6130,13 @@ class _ModuleNav extends StatelessWidget {
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Row(
-                children: _mods
+                children: visibleMods
                     .map(
                       (m) => _ModuleTab(
                         id: m.$1,
-                        label: m.$2,
+                        label: m.$1 == 'admin' ? 'Administracion' : m.$2,
                         icon: m.$3,
+                        badgeCount: m.$1 == 'mensajes' ? messagesUnreadCount : null,
                         active: activeModule == m.$1,
                         onTap: () => onModuleTap(m.$1),
                       ),
@@ -5152,10 +6145,21 @@ class _ModuleNav extends StatelessWidget {
               ),
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.logout_outlined, size: 20, color: Colors.black45),
-            onPressed: () => Supabase.instance.client.auth.signOut(),
-            tooltip: 'Cerrar sesión',
+          TextButton.icon(
+            onPressed: () => onLogout(),
+            icon: const Icon(Icons.logout_outlined, size: 18, color: Colors.black87),
+            label: Text(
+              'Cerrar sesion',
+              style: GoogleFonts.inter(
+                color: Colors.black87,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.black87,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            ),
           ),
           SizedBox(width: compact ? 8 : 16),
         ],
@@ -5169,6 +6173,7 @@ class _ModuleTab extends StatefulWidget {
     required this.id,
     required this.label,
     required this.icon,
+    this.badgeCount,
     required this.active,
     required this.onTap,
   });
@@ -5176,6 +6181,7 @@ class _ModuleTab extends StatefulWidget {
   final String id;
   final String label;
   final IconData icon;
+  final int? badgeCount;
   final bool active;
   final VoidCallback onTap;
 
@@ -5224,6 +6230,26 @@ class _ModuleTabState extends State<_ModuleTab> {
                   letterSpacing: 0.3,
                 ),
               ),
+              if ((widget.badgeCount ?? 0) > 0) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: widget.active
+                        ? Colors.white.withValues(alpha: 0.24)
+                        : const Color(0xFF1A9E65),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '${widget.badgeCount}',
+                    style: GoogleFonts.inter(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -5245,7 +6271,9 @@ class _PlaceholderModule extends StatelessWidget {
     'ventas': ('Ventas', Icons.point_of_sale_outlined),
     'mensajes': ('Mensajes', Icons.chat_bubble_outline),
     'productos': ('Productos', Icons.inventory_2_outlined),
+    'finanzas': ('Finanzas', Icons.account_balance_wallet_outlined),
     'reportes': ('Reportes', Icons.bar_chart_outlined),
+    'sin_acceso': ('Sin acceso', Icons.lock_outline),
     'admin': ('Administración', Icons.settings_outlined),
   };
 

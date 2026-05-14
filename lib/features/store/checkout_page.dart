@@ -1,23 +1,48 @@
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../theme/sahara_theme.dart';
 import 'controllers/store_cart_controller.dart';
 import 'models/cart_item.dart';
+import 'services/store_checkout_service.dart';
 
-class CheckoutPage extends StatelessWidget {
+class CheckoutPage extends StatefulWidget {
   const CheckoutPage({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final cart = StoreCartController.instance;
-    final subtotal = cart.subtotal;
-    final memberCredit = subtotal * 0.10;
-    final serviceCharge = subtotal * 0.037;
-    final total = subtotal - memberCredit + serviceCharge;
+  State<CheckoutPage> createState() => _CheckoutPageState();
+}
 
+class _CheckoutPageState extends State<CheckoutPage> {
+  final StoreCartController _cart = StoreCartController.instance;
+  final StoreCheckoutService _checkoutService = const StoreCheckoutService();
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
+  final TextEditingController _notesController = TextEditingController();
+
+  bool _submitting = false;
+
+  double get _subtotal => _cart.subtotal;
+  double get _memberCredit => _subtotal * 0.10;
+  double get _serviceCharge => _subtotal * 0.037;
+  double get _total => _subtotal - _memberCredit + _serviceCharge;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    _phoneController.dispose();
+    _notesController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _CheckoutPalette.background,
       body: Stack(
@@ -83,13 +108,20 @@ class CheckoutPage extends StatelessWidget {
                     child: LayoutBuilder(
                       builder: (context, constraints) {
                         final stacked = constraints.maxWidth < 980;
-                        final left = const _CheckoutForm();
+                        final left = _CheckoutForm(
+                          nameController: _nameController,
+                          emailController: _emailController,
+                          phoneController: _phoneController,
+                          notesController: _notesController,
+                        );
                         final right = _CheckoutSummary(
-                          subtotal: subtotal,
-                          memberCredit: memberCredit,
-                          serviceCharge: serviceCharge,
-                          total: total,
-                          items: cart.items,
+                          subtotal: _subtotal,
+                          memberCredit: _memberCredit,
+                          serviceCharge: _serviceCharge,
+                          total: _total,
+                          items: _cart.items,
+                          submitting: _submitting,
+                          onComplete: _handleCheckout,
                         );
 
                         if (stacked) {
@@ -105,18 +137,9 @@ class CheckoutPage extends StatelessWidget {
                         return Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Expanded(flex: 7, child: _CheckoutForm()),
+                            Expanded(flex: 7, child: left),
                             const SizedBox(width: 32),
-                            Expanded(
-                              flex: 5,
-                              child: _CheckoutSummary(
-                                subtotal: subtotal,
-                                memberCredit: memberCredit,
-                                serviceCharge: serviceCharge,
-                                total: total,
-                                items: cart.items,
-                              ),
-                            ),
+                            Expanded(flex: 5, child: right),
                           ],
                         );
                       },
@@ -130,10 +153,100 @@ class CheckoutPage extends StatelessWidget {
       ),
     );
   }
+
+  Future<void> _handleCheckout() async {
+    if (_submitting) return;
+    if (_cart.isEmpty) {
+      _showMessage('Tu carrito esta vacio. Agrega un ritual antes de pagar.');
+      return;
+    }
+
+    final customerName = _nameController.text.trim();
+    final customerEmail = _emailController.text.trim();
+    final customerPhone = _phoneController.text.trim();
+    final notes = _notesController.text.trim();
+
+    if (customerName.isEmpty || customerEmail.isEmpty || customerPhone.isEmpty) {
+      _showMessage('Completa nombre, telefono y correo para continuar.');
+      return;
+    }
+
+    setState(() => _submitting = true);
+
+    try {
+      final successUrl = _buildReturnUrl('success', includeSessionPlaceholder: true);
+      final cancelUrl = _buildReturnUrl('cancel');
+
+      final result = await _checkoutService.createCheckoutSession(
+        customerName: customerName,
+        customerEmail: customerEmail,
+        customerPhone: customerPhone,
+        notes: notes,
+        items: _cart.items,
+        pricing: CheckoutPricing(
+          subtotal: _subtotal,
+          memberCredit: _memberCredit,
+          serviceCharge: _serviceCharge,
+          total: _total,
+        ),
+        successUrl: successUrl,
+        cancelUrl: cancelUrl,
+      );
+
+      final uri = Uri.tryParse(result.checkoutUrl);
+      if (uri == null) {
+        throw const CheckoutException('Stripe devolvio una URL invalida.');
+      }
+
+      final launched = await launchUrl(
+        uri,
+        mode: kIsWeb ? LaunchMode.platformDefault : LaunchMode.externalApplication,
+      );
+
+      if (!launched) {
+        throw const CheckoutException('No se pudo abrir Stripe Checkout.');
+      }
+    } on CheckoutException catch (error) {
+      _showMessage(error.message);
+    } catch (_) {
+      _showMessage('No se pudo iniciar el pago. Intenta nuevamente.');
+    } finally {
+      if (mounted) {
+        setState(() => _submitting = false);
+      }
+    }
+  }
+
+  String _buildReturnUrl(String status, {bool includeSessionPlaceholder = false}) {
+    final current = Uri.base;
+    final params = <String, String>{
+      ...current.queryParameters,
+      'checkout': status,
+    };
+    if (includeSessionPlaceholder) {
+      params['session_id'] = '{CHECKOUT_SESSION_ID}';
+    }
+    return current.replace(queryParameters: params).toString();
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
 }
 
 class _CheckoutForm extends StatelessWidget {
-  const _CheckoutForm();
+  const _CheckoutForm({
+    required this.nameController,
+    required this.emailController,
+    required this.phoneController,
+    required this.notesController,
+  });
+
+  final TextEditingController nameController;
+  final TextEditingController emailController;
+  final TextEditingController phoneController;
+  final TextEditingController notesController;
 
   @override
   Widget build(BuildContext context) {
@@ -149,7 +262,12 @@ class _CheckoutForm extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 30),
-        const _FormGrid(),
+        _FormGrid(
+          nameController: nameController,
+          emailController: emailController,
+          phoneController: phoneController,
+          notesController: notesController,
+        ),
         const SizedBox(height: 70),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -194,17 +312,26 @@ class _CheckoutForm extends StatelessWidget {
         const SizedBox(height: 28),
         const _CheckoutInput(
           label: 'Numero de tarjeta',
-          hint: '0000 0000 0000 0000',
+          hint: 'Se captura de forma segura en Stripe',
+          readOnly: true,
         ),
         const SizedBox(height: 28),
         const Row(
           children: [
             Expanded(
-              child: _CheckoutInput(label: 'Expiry', hint: 'MM / YY'),
+              child: _CheckoutInput(
+                label: 'Vencimiento',
+                hint: 'Se completa en Stripe',
+                readOnly: true,
+              ),
             ),
             SizedBox(width: 24),
             Expanded(
-              child: _CheckoutInput(label: 'CVC', hint: '***'),
+              child: _CheckoutInput(
+                label: 'CVC',
+                hint: 'Se completa en Stripe',
+                readOnly: true,
+              ),
             ),
           ],
         ),
@@ -214,42 +341,90 @@ class _CheckoutForm extends StatelessWidget {
 }
 
 class _FormGrid extends StatelessWidget {
-  const _FormGrid();
+  const _FormGrid({
+    required this.nameController,
+    required this.emailController,
+    required this.phoneController,
+    required this.notesController,
+  });
+
+  final TextEditingController nameController;
+  final TextEditingController emailController;
+  final TextEditingController phoneController;
+  final TextEditingController notesController;
 
   @override
   Widget build(BuildContext context) {
     final stacked = MediaQuery.of(context).size.width < 760;
     if (stacked) {
-      return const Column(
+      return Column(
         children: [
-          _CheckoutInput(label: 'Nombre completo', hint: 'Elias Vance'),
-          SizedBox(height: 28),
-          _CheckoutInput(label: 'Correo electronico', hint: 'elias.v@sanctuary.com'),
-          SizedBox(height: 28),
+          _CheckoutInput(
+            label: 'Nombre completo',
+            hint: 'Elias Vance',
+            controller: nameController,
+          ),
+          const SizedBox(height: 28),
+          _CheckoutInput(
+            label: 'Correo electronico',
+            hint: 'elias.v@sanctuary.com',
+            controller: emailController,
+          ),
+          const SizedBox(height: 28),
+          _CheckoutInput(
+            label: 'Telefono',
+            hint: '+52 664 000 0000',
+            controller: phoneController,
+          ),
+          const SizedBox(height: 28),
           _CheckoutInput(
             label: 'Preferencias del ritual (opcional)',
             hint: 'Especifica preferencias o alergias...',
+            controller: notesController,
           ),
         ],
       );
     }
-    return const Column(
+    return Column(
       children: [
         Row(
           children: [
             Expanded(
-              child: _CheckoutInput(label: 'Nombre completo', hint: 'Elias Vance'),
+              child: _CheckoutInput(
+                label: 'Nombre completo',
+                hint: 'Elias Vance',
+                controller: nameController,
+              ),
             ),
-            SizedBox(width: 24),
+            const SizedBox(width: 24),
             Expanded(
-              child: _CheckoutInput(label: 'Correo electronico', hint: 'elias.v@sanctuary.com'),
+              child: _CheckoutInput(
+                label: 'Correo electronico',
+                hint: 'elias.v@sanctuary.com',
+                controller: emailController,
+              ),
             ),
           ],
         ),
-        SizedBox(height: 28),
-        _CheckoutInput(
-          label: 'Preferencias del ritual (opcional)',
-          hint: 'Especifica preferencias o alergias...',
+        const SizedBox(height: 28),
+        Row(
+          children: [
+            Expanded(
+              child: _CheckoutInput(
+                label: 'Telefono',
+                hint: '+52 664 000 0000',
+                controller: phoneController,
+              ),
+            ),
+            const SizedBox(width: 24),
+            Expanded(
+              child: _CheckoutInput(
+                label: 'Preferencias del ritual (opcional)',
+                hint: 'Especifica preferencias o alergias...',
+                controller: notesController,
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -260,10 +435,14 @@ class _CheckoutInput extends StatelessWidget {
   const _CheckoutInput({
     required this.label,
     required this.hint,
+    this.controller,
+    this.readOnly = false,
   });
 
   final String label;
   final String hint;
+  final TextEditingController? controller;
+  final bool readOnly;
 
   @override
   Widget build(BuildContext context) {
@@ -279,6 +458,8 @@ class _CheckoutInput extends StatelessWidget {
           ),
         ),
         TextField(
+          controller: controller,
+          readOnly: readOnly,
           style: GoogleFonts.inter(
             color: _CheckoutPalette.inputText,
             fontSize: 18,
@@ -354,6 +535,8 @@ class _CheckoutSummary extends StatelessWidget {
     required this.serviceCharge,
     required this.total,
     required this.items,
+    required this.submitting,
+    required this.onComplete,
   });
 
   final double subtotal;
@@ -361,6 +544,8 @@ class _CheckoutSummary extends StatelessWidget {
   final double serviceCharge;
   final double total;
   final List<CartItem> items;
+  final bool submitting;
+  final VoidCallback onComplete;
 
   @override
   Widget build(BuildContext context) {
@@ -473,23 +658,26 @@ class _CheckoutSummary extends StatelessWidget {
               ),
               const SizedBox(height: 24),
               ElevatedButton(
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('La confirmacion y Stripe real se conectan en la siguiente fase.'),
-                    ),
-                  );
-                },
+                onPressed: submitting ? null : onComplete,
                 style: ElevatedButton.styleFrom(
                   minimumSize: const Size(double.infinity, 60),
                   backgroundColor: _CheckoutPalette.gold,
                   foregroundColor: _CheckoutPalette.onPrimary,
+                  disabledBackgroundColor: _CheckoutPalette.gold.withValues(alpha: 0.4),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
+                    if (submitting) ...[
+                      const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      const SizedBox(width: 12),
+                    ],
                     Text(
-                      'Completar reserva',
+                      submitting ? 'Redirigiendo a Stripe...' : 'Ir a pagar con Stripe',
                       style: GoogleFonts.inter(
                         fontSize: 12,
                         letterSpacing: 2,
@@ -504,7 +692,7 @@ class _CheckoutSummary extends StatelessWidget {
               const SizedBox(height: 16),
               Center(
                 child: Text(
-                  'Protegido por Sahara Secure Systems',
+                  'Stripe captura los datos sensibles en un entorno seguro.',
                   style: GoogleFonts.inter(
                     color: _CheckoutPalette.textMuted.withValues(alpha: 0.4),
                     fontSize: 10,

@@ -59,6 +59,7 @@ class StoreProduct {
     this.durationMinutes,
     this.stockQuantity,
     this.isFeatured = false,
+    this.checkoutMetadata = const <String, dynamic>{},
   });
 
   final String id;
@@ -77,6 +78,7 @@ class StoreProduct {
   final int? durationMinutes;
   final int? stockQuantity;
   final bool isFeatured;
+  final Map<String, dynamic> checkoutMetadata;
 
   String get priceLabel {
     final format = NumberFormat.currency(
@@ -134,7 +136,16 @@ class StoreProduct {
       durationMinutes: durationMinutes,
       stockQuantity: stockQuantity,
       isFeatured: map['is_featured'] as bool? ?? false,
+      checkoutMetadata: _readCheckoutMetadata(map),
     );
+  }
+
+  static Map<String, dynamic> _readCheckoutMetadata(Map<String, dynamic> map) {
+    final raw = map['checkout_metadata'];
+    if (raw is Map) {
+      return Map<String, dynamic>.from(raw);
+    }
+    return const <String, dynamic>{};
   }
 
   static List<String> _readBenefits(

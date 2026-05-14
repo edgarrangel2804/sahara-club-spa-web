@@ -67,7 +67,7 @@ class _CartPageState extends State<CartPage> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Your Rituals',
+                              'Tus rituales',
                               style: GoogleFonts.playfairDisplay(
                                 color: _CartPalette.textPrimary,
                                 fontSize: 64,
@@ -77,7 +77,7 @@ class _CartPageState extends State<CartPage> {
                             ConstrainedBox(
                               constraints: const BoxConstraints(maxWidth: 620),
                               child: Text(
-                                'Every selection is a step toward stillness. Review your curated experiences and essentials before proceeding.',
+                                'Cada seleccion es un paso hacia la quietud. Revisa tus experiencias y esenciales curados antes de continuar.',
                                 style: GoogleFonts.inter(
                                   color: _CartPalette.textMuted.withValues(alpha: 0.7),
                                   fontSize: 18,
@@ -137,7 +137,7 @@ class _CartPageState extends State<CartPage> {
                         child: Column(
                           children: [
                             Text(
-                              'Enhance Your Journey',
+                              'Eleva tu experiencia',
                               style: GoogleFonts.playfairDisplay(
                                 color: _CartPalette.textPrimary,
                                 fontSize: 34,
@@ -213,12 +213,12 @@ class _CartTopBar extends StatelessWidget {
         Row(
           children: [
             if (MediaQuery.of(context).size.width >= 768) ...[
-              _NavText(label: 'Sanctuary'),
+              _NavText(label: 'Santuario'),
               const SizedBox(width: 28),
-              _NavText(label: 'Rituals'),
+              _NavText(label: 'Rituales'),
               const SizedBox(width: 28),
               Text(
-                'Cart',
+                'Carrito',
                 style: GoogleFonts.inter(
                   color: _CartPalette.gold,
                   fontSize: 12,
@@ -392,7 +392,7 @@ class _CartItemCard extends StatelessWidget {
                       TextButton(
                         onPressed: () => cart.remove(item.product.id),
                         child: Text(
-                          'Remove',
+                          'Quitar',
                           style: GoogleFonts.inter(
                             color: _CartPalette.textMuted.withValues(alpha: 0.45),
                             fontSize: 12,
@@ -424,7 +424,7 @@ class _CartItemCard extends StatelessWidget {
 
   String _cartMeta(StoreProduct product) {
     if (product.durationMinutes != null) {
-      return '${product.durationMinutes} MINUTES • ${product.typeLabel.toUpperCase()}';
+      return '${product.durationMinutes} MIN • ${product.typeLabel.toUpperCase()}';
     }
     return product.typeLabel.toUpperCase();
   }
@@ -454,7 +454,7 @@ class _OrderSummary extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Summary',
+            'Resumen',
             style: GoogleFonts.playfairDisplay(
               color: _CartPalette.textPrimary,
               fontSize: 34,
@@ -463,9 +463,9 @@ class _OrderSummary extends StatelessWidget {
           const SizedBox(height: 28),
           _SummaryRow(label: 'Subtotal', value: _formatPrice(cart.subtotal)),
           const SizedBox(height: 18),
-          _SummaryRow(label: 'Service Fee', value: _formatPrice(fee)),
+          _SummaryRow(label: 'Cargo por servicio', value: _formatPrice(fee)),
           const SizedBox(height: 18),
-          _SummaryRow(label: 'Tax', value: _formatPrice(tax)),
+          _SummaryRow(label: 'Impuestos', value: _formatPrice(tax)),
           const SizedBox(height: 24),
           Container(height: 1, color: _CartPalette.gold.withValues(alpha: 0.15)),
           const SizedBox(height: 24),
@@ -473,7 +473,7 @@ class _OrderSummary extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'Total Amount',
+                'Total',
                 style: GoogleFonts.inter(
                   color: _CartPalette.gold,
                   fontSize: 12,
@@ -499,7 +499,7 @@ class _OrderSummary extends StatelessWidget {
               disabledBackgroundColor: Colors.white12,
             ),
             child: Text(
-              'Secure Checkout',
+              'Ir al checkout',
               style: GoogleFonts.inter(
                 fontSize: 12,
                 letterSpacing: 2,
@@ -510,7 +510,7 @@ class _OrderSummary extends StatelessWidget {
           const SizedBox(height: 16),
           Center(
             child: Text(
-              'Complimentary shipping on all ritual essentials.',
+              'Recogida en sucursal disponible para esenciales fisicos.',
               textAlign: TextAlign.center,
               style: GoogleFonts.inter(
                 color: _CartPalette.textMuted.withValues(alpha: 0.4),

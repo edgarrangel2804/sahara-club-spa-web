@@ -4,7 +4,11 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../config/app_mode.dart';
+import '../auth/role_permissions.dart';
+import '../productos/productos_module.dart';
 import '../../theme/sahara_theme.dart';
+import 'finanzas_module.dart';
+import 'reception_permissions_module.dart';
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Models
@@ -235,7 +239,9 @@ class _Branch {
 // Main widget
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class AdminModule extends StatefulWidget {
-  const AdminModule({super.key});
+  const AdminModule({super.key, required this.currentRole});
+
+  final String currentRole;
 
   @override
   State<AdminModule> createState() => _AdminModuleState();
@@ -243,13 +249,14 @@ class AdminModule extends StatefulWidget {
 
 class _AdminModuleState extends State<AdminModule>
     with SingleTickerProviderStateMixin {
-  late final _tab = TabController(length: 4, vsync: this);
+  late final _tab = TabController(length: 7, vsync: this);
   bool _loading = true;
   List<_Staff> _staff = [];
   List<_ServiceItem> _services = [];
   List<WhatsAppTemplate> _templates = [];
   List<_Branch> _branches = [];
-  bool _isAdmin = false;
+  bool _canAccessAdministration = false;
+  String _role = 'reception';
 
   @override
   void initState() {
@@ -257,27 +264,39 @@ class _AdminModuleState extends State<AdminModule>
     _load();
   }
 
+  @override
+  void dispose() {
+    _tab.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final resS = await Supabase.instance.client.from('staff').select();
-      final resV = await Supabase.instance.client.from('services').select();
-      final resW = await Supabase.instance.client
-          .from('whatsapp_templates')
-          .select();
-
-      // Check role
       final userId = Supabase.instance.client.auth.currentUser?.id;
+      _role = RolePermissions.normalize(widget.currentRole);
       if (userId != null) {
         final profile = await Supabase.instance.client
             .from('profiles')
             .select('role')
             .eq('id', userId)
             .maybeSingle();
-        _isAdmin = profile != null && profile['role'] == 'admin';
+        _role = RolePermissions.normalize(profile?['role'] as String? ?? _role);
       }
 
-      if (_isAdmin) {
+      _canAccessAdministration = RolePermissions.isAdminLevel(_role);
+      if (!_canAccessAdministration) {
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
+
+      final resS = await Supabase.instance.client.from('staff').select();
+      final resV = await Supabase.instance.client.from('services').select();
+      final resW = await Supabase.instance.client
+          .from('whatsapp_templates')
+          .select();
+
+      if (_canAccessAdministration) {
         final resB = await Supabase.instance.client.from('sucursales').select();
         _branches = (resB as List).map((m) => _Branch.fromMap(m)).toList();
         if (!kEnableMultiBranch && _branches.isEmpty) {
@@ -372,7 +391,7 @@ class _AdminModuleState extends State<AdminModule>
     final ok = await _confirmDelete(
       context,
       'Eliminar miembro',
-      'Â¿Seguro que deseas eliminar a ${s.fullName}?',
+      'Seguro que deseas eliminar a ${s.fullName}?',
     );
     if (ok == true) {
       await Supabase.instance.client.from('staff').delete().eq('id', s.id);
@@ -384,7 +403,7 @@ class _AdminModuleState extends State<AdminModule>
     final ok = await _confirmDelete(
       context,
       'Eliminar servicio',
-      'Â¿Seguro que deseas eliminar el servicio ${s.name}?',
+      'Seguro que deseas eliminar el servicio ${s.name}?',
     );
     if (ok == true) {
       await Supabase.instance.client.from('services').delete().eq('id', s.id);
@@ -396,7 +415,7 @@ class _AdminModuleState extends State<AdminModule>
     final ok = await _confirmDelete(
       context,
       'Eliminar plantilla',
-      'Â¿Seguro que deseas eliminar esta plantilla?',
+      'Seguro que deseas eliminar esta plantilla?',
     );
     if (ok == true) {
       await Supabase.instance.client
@@ -415,78 +434,159 @@ class _AdminModuleState extends State<AdminModule>
         children: [
           // Header
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-            color: Colors.white,
-            child: Row(
-              children: [
-                Text(
-                  'AdministraciÃ³n',
-                  style: GoogleFonts.playfairDisplay(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF1A1A1A),
-                  ),
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 18),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFCFAF6),
+              border: Border(
+                bottom: BorderSide(
+                  color: SaharaTheme.gold.withValues(alpha: 0.14),
                 ),
-                const SizedBox(width: 40),
-                TabBar(
-                  controller: _tab,
-                  isScrollable: true,
-                  labelColor: const Color(0xFFC6A76A),
-                  unselectedLabelColor: Colors.black45,
-                  indicatorColor: const Color(0xFFC6A76A),
-                  labelStyle: GoogleFonts.inter(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  unselectedLabelStyle: GoogleFonts.inter(
-                    fontSize: 13,
-                    color: Colors.black87,
-                  ),
-                  tabs: const [
-                    Tab(text: 'Personal'),
-                    Tab(text: 'Servicios'),
-                    Tab(text: 'Plantillas'),
-                    Tab(text: 'ConfiguraciÃ³n'),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF2B2118).withValues(alpha: 0.03),
+                  blurRadius: 18,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Column(
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Sahara Club Spa',
+                            style: GoogleFonts.inter(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 2.8,
+                              color: SaharaTheme.gold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Administracion',
+                            style: GoogleFonts.playfairDisplay(
+                              fontSize: 30,
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFF1A1A1A),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Centro privado de operacion, configuracion y control interno de Sahara.',
+                            style: GoogleFonts.inter(
+                              fontSize: 13,
+                              height: 1.5,
+                              color: const Color(0xFF6D655B),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 20),
+                    AnimatedBuilder(
+                      animation: _tab,
+                      builder: (_, __) {
+                        if (_tab.index >= 3) return const SizedBox.shrink();
+                        return FilledButton.icon(
+                          onPressed: () {
+                            if (_tab.index == 0) {
+                              _openStaffForm();
+                            } else if (_tab.index == 1) {
+                              _openServiceForm();
+                            } else {
+                              _openWhatsAppForm();
+                            }
+                          },
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFFC6A76A),
+                            foregroundColor: const Color(0xFF1F170F),
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 14,
+                            ),
+                          ),
+                          icon: const Icon(Icons.add, size: 16),
+                          label: Text(
+                            _tab.index == 1
+                                ? 'Nuevo servicio'
+                                : (_tab.index == 2
+                                      ? 'Nueva plantilla'
+                                      : 'Nuevo miembro'),
+                            style: GoogleFonts.inter(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
                   ],
                 ),
-                const Spacer(),
-                AnimatedBuilder(
-                  animation: _tab,
-                  builder: (_, __) {
-                    if (_tab.index == 3) return const SizedBox.shrink();
-                    return FilledButton.icon(
-                      onPressed: () {
-                        if (_tab.index == 0)
-                          _openStaffForm();
-                        else if (_tab.index == 1)
-                          _openServiceForm();
-                        else
-                          _openWhatsAppForm();
-                      },
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFFC6A76A),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 10,
-                        ),
+                const SizedBox(height: 18),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF6F0E6),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: SaharaTheme.gold.withValues(alpha: 0.16),
+                    ),
+                  ),
+                  child: TabBar(
+                    controller: _tab,
+                    isScrollable: true,
+                    tabAlignment: TabAlignment.start,
+                    padding: EdgeInsets.zero,
+                    labelPadding: const EdgeInsets.symmetric(horizontal: 6),
+                    indicatorSize: TabBarIndicatorSize.tab,
+                    dividerColor: Colors.transparent,
+                    splashBorderRadius: BorderRadius.circular(14),
+                    labelColor: const Color(0xFF1F170F),
+                    unselectedLabelColor: const Color(0xFF7D7366),
+                    indicator: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      color: Colors.white,
+                      border: Border.all(
+                        color: SaharaTheme.gold.withValues(alpha: 0.22),
                       ),
-                      icon: const Icon(Icons.add, size: 16),
-                      label: Text(
-                        _tab.index == 1
-                            ? 'Nuevo servicio'
-                            : (_tab.index == 2
-                                  ? 'Nueva plantilla'
-                                  : 'Nuevo miembro'),
-                        style: GoogleFonts.inter(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF2B2118).withValues(alpha: 0.05),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
                         ),
-                      ),
-                    );
-                  },
+                      ],
+                    ),
+                    labelStyle: GoogleFonts.inter(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    unselectedLabelStyle: GoogleFonts.inter(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    tabs: const [
+                      Tab(text: 'Personal'),
+                      Tab(text: 'Servicios'),
+                      Tab(text: 'Plantillas WhatsApp'),
+                      Tab(text: 'Productos'),
+                      Tab(text: 'Finanzas'),
+                      Tab(text: 'Permisos Recepcion'),
+                      Tab(text: 'Configuración'),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -495,6 +595,10 @@ class _AdminModuleState extends State<AdminModule>
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                : !_canAccessAdministration
+                ? const Center(
+                    child: Text('Acceso restringido a administradores'),
+                  )
                 : TabBarView(
                     controller: _tab,
                     children: [
@@ -516,13 +620,10 @@ class _AdminModuleState extends State<AdminModule>
                         onEdit: _openWhatsAppForm,
                         onDelete: _deleteTemplate,
                       ),
-                      _isAdmin
-                          ? _SettingsTab(branches: _branches, onRefresh: _load)
-                          : const Center(
-                              child: Text(
-                                'Acceso restringido a administradores',
-                              ),
-                            ),
+                      const ProductosModule(),
+                      const FinanzasModule(),
+                      const ReceptionPermissionsModule(),
+                      _SettingsTab(branches: _branches, onRefresh: _load),
                     ],
                   ),
           ),
@@ -615,7 +716,7 @@ class _ServicesTab extends StatelessWidget {
               style: GoogleFonts.inter(fontWeight: FontWeight.w600),
             ),
             subtitle: Text(
-              '${s.category} Â· ${s.duration} min Â· \$${s.price}',
+              '${s.category} · ${s.duration} min · \$${s.price}',
               style: GoogleFonts.inter(fontSize: 12),
             ),
             trailing: Row(
@@ -692,12 +793,12 @@ class _WhatsAppTabState extends State<_WhatsAppTab> {
                     children: [
                       TextSpan(
                         text:
-                            'Â¡Ahora podrÃ¡s enviar mensajes personalizados por WhatsApp! ',
+                            'Ahora podras enviar mensajes personalizados por WhatsApp! ',
                         style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                       const TextSpan(
                         text:
-                            'ConfigÃºralos y envÃ­alos de manera personalizada desde la Agenda.',
+                            'Configuralos y envialos de manera personalizada desde la Agenda.',
                       ),
                     ],
                   ),
@@ -884,7 +985,7 @@ class _WhatsAppLanding extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  'Â¡Potencia tus mensajes de WhatsApp con nuestras plantillas prediseÃ±adas!',
+                  'Potencia tus mensajes de WhatsApp con nuestras plantillas predisenadas!',
                   style: GoogleFonts.playfairDisplay(
                     fontSize: 28,
                     fontWeight: FontWeight.w700,
@@ -893,7 +994,7 @@ class _WhatsAppLanding extends StatelessWidget {
                 ),
                 const SizedBox(height: 20),
                 Text(
-                  'Crea mensajes personalizados de manera rÃ¡pida y efectiva con nuestras plantillas listas para usar.',
+                  'Crea mensajes personalizados de manera rapida y efectiva con nuestras plantillas listas para usar.',
                   style: GoogleFonts.inter(fontSize: 15, color: Colors.black54),
                 ),
                 const SizedBox(height: 32),
@@ -1224,7 +1325,7 @@ class _WhatsAppSelectionDialogState extends State<_WhatsAppSelectionDialog> {
               child: Row(
                 children: [
                   Text(
-                    'Plantillas prediseÃ±adas',
+                    'Plantillas predisenadas',
                     style: GoogleFonts.inter(
                       fontSize: 18,
                       fontWeight: FontWeight.w600,
@@ -1251,7 +1352,7 @@ class _WhatsAppSelectionDialogState extends State<_WhatsAppSelectionDialog> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Elige entre plantillas prediseÃ±adas para utilizarlas como base para tu mensaje ideal.',
+                            'Elige entre plantillas predisenadas para utilizarlas como base para tu mensaje ideal.',
                             style: GoogleFonts.inter(
                               fontSize: 13,
                               color: Colors.black54,
@@ -1479,7 +1580,7 @@ class _WhatsAppFormDialogState extends State<_WhatsAppFormDialog> {
                           TextField(
                             controller: _title,
                             style: const TextStyle(color: Colors.black87),
-                            decoration: _deco('Ej: ConfirmaciÃ³n'),
+                            decoration: _deco('Ej: Confirmacion'),
                           ),
                           const SizedBox(height: 32),
                           _Label('Personaliza el mensaje *'),
@@ -1549,7 +1650,7 @@ class _WhatsAppFormDialogState extends State<_WhatsAppFormDialog> {
                       child: Column(
                         children: [
                           const Text(
-                            'PrevisualizaciÃ³n del mensaje',
+                            'Previsualizacion del mensaje',
                             style: TextStyle(color: Colors.black87),
                           ),
                           const SizedBox(height: 24),
@@ -1772,7 +1873,7 @@ class _DropdownType extends StatelessWidget {
       items: const [
         DropdownMenuItem(
           value: 'confirmation',
-          child: Text('ConfirmaciÃ³n', style: TextStyle(color: Colors.black87)),
+          child: Text('Confirmacion', style: TextStyle(color: Colors.black87)),
         ),
         DropdownMenuItem(
           value: 'reminder_24h',
@@ -1814,20 +1915,20 @@ class _AutomationEventDropdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const options = [
-      ('reservation_confirmed', 'ConfirmaciÃ³n'),
+      ('reservation_confirmed', 'Confirmacion'),
       ('reminder_24h', 'Recordatorio 24h'),
       ('reminder_3h', 'Recordatorio 3h'),
       ('reminder_1h', 'Recordatorio 1h'),
       ('reservation_rescheduled', 'Reagendado'),
-      ('reservation_cancelled', 'CancelaciÃ³n'),
+      ('reservation_cancelled', 'Cancelacion'),
       ('payment_pending', 'Pago pendiente'),
       ('payment_confirmed', 'Pago confirmado'),
-      ('birthday_customer', 'CumpleaÃ±os'),
+      ('birthday_customer', 'Cumpleanos'),
       ('first_visit', 'Bienvenida'),
-      ('membership_created', 'MembresÃ­a'),
+      ('membership_created', 'Membresia'),
       ('giftcard_created', 'Gift card'),
       ('post_service', 'Post-servicio'),
-      ('promotion', 'PromociÃ³n'),
+      ('promotion', 'Promocion'),
       ('custom', 'Personalizado'),
     ];
 
@@ -1930,7 +2031,7 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
                       children: [
                         _FieldLabel('Nombre completo *'),
                         const SizedBox(height: 6),
-                        _Field(ctrl: _name, hint: 'Ej: Juan PÃ©rez'),
+                        _Field(ctrl: _name, hint: 'Ej: Juan Perez'),
                       ],
                     ),
                     const SizedBox(height: 12),
@@ -1977,7 +2078,7 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
                             ),
                             DropdownMenuItem(
                               value: 'reception',
-                              child: Text('RecepciÃ³n'),
+                              child: Text('Recepcion'),
                             ),
                           ],
                           onChanged: (v) => setState(() => _role = v!),
@@ -2117,8 +2218,8 @@ class _ServiceFormDialogState extends State<_ServiceFormDialog> {
     'Corporales',
     'Fusionadas',
     'Rituales',
-    'TecnologÃ­a Facial',
-    'TecnologÃ­a Corporal',
+    'Tecnologia Facial',
+    'Tecnologia Corporal',
     'Moldeo',
     'Paquetes',
     'Otros',
@@ -2243,7 +2344,7 @@ class _ServiceFormDialogState extends State<_ServiceFormDialog> {
                     const SizedBox(height: 12),
                     _FormCard(
                       children: [
-                        _FieldLabel('CategorÃ­a'),
+                        _FieldLabel('Categoria'),
                         const SizedBox(height: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -2282,7 +2383,7 @@ class _ServiceFormDialogState extends State<_ServiceFormDialog> {
                         Expanded(
                           child: _FormCard(
                             children: [
-                              _FieldLabel('DuraciÃ³n (min) *'),
+                              _FieldLabel('Duracion (min) *'),
                               const SizedBox(height: 6),
                               _Field(
                                 ctrl: _durationCtrl,
@@ -2443,7 +2544,7 @@ Future<bool?> _confirmDelete(BuildContext context, String title, String msg) =>
               foregroundColor: Colors.black,
             ),
             child: Text(
-              'SÃ­',
+              'Si',
               style: GoogleFonts.inter(fontWeight: FontWeight.bold),
             ),
           ),
@@ -2544,7 +2645,7 @@ class _SettingsTabState extends State<_SettingsTab> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('ConfiguraciÃ³n guardada correctamente'),
+            content: const Text('Configuracion guardada correctamente'),
             backgroundColor: SaharaTheme.gold,
           ),
         );
@@ -2576,7 +2677,7 @@ class _SettingsTabState extends State<_SettingsTab> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Eliminar sucursal'),
-        content: Text('Â¿Seguro que deseas eliminar ${b.name}?'),
+        content: Text('Seguro que deseas eliminar ${b.name}?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -2811,7 +2912,7 @@ class _SettingsTabState extends State<_SettingsTab> {
         ),
         const SizedBox(height: 8),
         Text(
-          'El modo multi-sucursal estÃƒÂ¡ desactivado temporalmente.',
+          'El modo multi-sucursal esta desactivado temporalmente.',
           style: GoogleFonts.inter(color: Colors.black54, fontSize: 13),
         ),
         const SizedBox(height: 16),
@@ -2832,7 +2933,7 @@ class _SettingsTabState extends State<_SettingsTab> {
         Row(
           children: [
             Text(
-              'GestiÃ³n de Sucursales',
+              'Gestion de sucursales',
               style: GoogleFonts.inter(
                 fontWeight: FontWeight.w600,
                 fontSize: 18,
@@ -2842,7 +2943,7 @@ class _SettingsTabState extends State<_SettingsTab> {
             TextButton.icon(
               onPressed: () => _openBranchForm(),
               icon: const Icon(Icons.add, size: 18),
-              label: const Text('AÃ±adir Sucursal'),
+              label: const Text('Anadir sucursal'),
               style: TextButton.styleFrom(
                 foregroundColor: const Color(0xFFC6A76A),
               ),
@@ -3691,7 +3792,7 @@ class _BranchCard extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              text.isEmpty ? 'â€”' : text,
+              text.isEmpty ? '-' : text,
               style: GoogleFonts.inter(
                 color: const Color(0xFF4A4A4A),
                 fontSize: 13,
@@ -3852,11 +3953,11 @@ class _BranchFormDialogState extends State<_BranchFormDialog> {
                     const SizedBox(height: 12),
                     _FormCard(
                       children: [
-                        _FieldLabel('DirecciÃ³n Completa'),
+                        _FieldLabel('Direccion Completa'),
                         const SizedBox(height: 6),
                         _Field(
                           ctrl: _addrCtrl,
-                          hint: 'Calle, NÃºmero, Ciudad...',
+                          hint: 'Calle, Numero, Ciudad...',
                         ),
                       ],
                     ),
@@ -3866,7 +3967,7 @@ class _BranchFormDialogState extends State<_BranchFormDialog> {
                         Expanded(
                           child: _FormCard(
                             children: [
-                              _FieldLabel('TelÃ©fono'),
+                              _FieldLabel('Telefono'),
                               const SizedBox(height: 6),
                               _Field(
                                 ctrl: _phoneCtrl,

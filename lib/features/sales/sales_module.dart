@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../theme/sahara_theme.dart';
 import 'receipt_generator.dart';
+import 'services/agenda_sales_service.dart';
 
 
 // ── UUID helper ───────────────────────────────────────────────────────────────
@@ -38,34 +39,64 @@ class _SaleItem {
 
 class _Sale {
   final String  id;
+  final String? appointmentId;
   final String  clientId;
   final String  clientName;
   final double  total;
   final String  paymentMethod;
   final String  status;
+  final String  paymentStatus;
+  final String  saleStatus;
   final String  notes;
   final DateTime createdAt;
   final List<Map<String, dynamic>> items;
 
   const _Sale({
     required this.id,
+    this.appointmentId,
     required this.clientId,
     required this.clientName,
     required this.total,
     required this.paymentMethod,
     required this.status,
+    required this.paymentStatus,
+    required this.saleStatus,
     required this.notes,
     required this.createdAt,
     this.items = const [],
   });
 
+  _Sale copyWith({
+    String? clientName,
+  }) {
+    return _Sale(
+      id: id,
+      appointmentId: appointmentId,
+      clientId: clientId,
+      clientName: clientName ?? this.clientName,
+      total: total,
+      paymentMethod: paymentMethod,
+      status: status,
+      paymentStatus: paymentStatus,
+      saleStatus: saleStatus,
+      notes: notes,
+      createdAt: createdAt,
+      items: items,
+    );
+  }
+
   factory _Sale.fromMap(Map<String, dynamic> m) => _Sale(
     id:            m['id']             as String,
+    appointmentId: m['appointment_id'] as String?,
     clientId:      m['client_id']      as String? ?? '',
-    clientName:    (m['client'] as Map?)?['full_name'] as String? ?? 'Sin cliente',
+    clientName:    (m['client'] as Map?)?['full_name'] as String? ??
+                   m['client_name'] as String? ??
+                   'Sin cliente',
     total:         (m['total'] as num?)?.toDouble() ?? 0,
-    paymentMethod: m['payment_method'] as String? ?? 'efectivo',
+    paymentMethod: m['payment_method'] as String? ?? 'pendiente',
     status:        m['status']         as String? ?? 'paid',
+    paymentStatus: m['payment_status'] as String? ?? (m['status'] as String? ?? 'paid'),
+    saleStatus:    m['sale_status']    as String? ?? 'completed',
     notes:         m['notes']          as String? ?? '',
     createdAt:     m['created_at'] != null
         ? DateTime.parse(m['created_at'] as String)
@@ -76,15 +107,20 @@ class _Sale {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const _kMethods = [
+  ('pendiente',      'Pendiente',      Icons.receipt_long_outlined),
   ('efectivo',      'Efectivo',      Icons.payments_outlined),
   ('tarjeta',       'Tarjeta',       Icons.credit_card_outlined),
+  ('stripe',        'Stripe',        Icons.language_outlined),
   ('transferencia', 'Transferencia', Icons.account_balance_outlined),
+  ('gift_card',     'Gift card',     Icons.card_giftcard_outlined),
+  ('membresia',     'Membresia',     Icons.workspace_premium_outlined),
+  ('saldo_cliente', 'Saldo cliente', Icons.account_balance_wallet_outlined),
   ('qr',            'QR / App',      Icons.qr_code_outlined),
 ];
 
 const _kStatusMeta = {
   'paid':      ('Pagado',    Color(0xFF52C41A)),
-  'pending':   ('Pendiente', Color(0xFFFFB347)),
+  'pending':   ('Pendiente de cobro', Color(0xFFFFB347)),
   'cancelled': ('Cancelado', Color(0xFFB32D2D)),
 };
 
@@ -92,7 +128,9 @@ const _kStatusMeta = {
 // SalesModule  (entry point)
 // ─────────────────────────────────────────────────────────────────────────────
 class SalesModule extends StatefulWidget {
-  const SalesModule({super.key});
+  const SalesModule({super.key, this.initialSaleId});
+
+  final String? initialSaleId;
 
   @override
   State<SalesModule> createState() => _SalesModuleState();
@@ -111,26 +149,127 @@ class _SalesModuleState extends State<SalesModule> {
     _loadSales();
   }
 
+  @override
+  void didUpdateWidget(covariant SalesModule oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialSaleId != widget.initialSaleId) {
+      _syncInitialSelection();
+    }
+  }
+
   Future<void> _loadSales() async {
     setState(() => _loading = true);
     try {
-      final data = await Supabase.instance.client
-          .from('sales')
-          .select('''
-            id, client_id, total, payment_method, status, notes, created_at,
-            client:profiles!sales_client_id_fkey(full_name),
-            sale_items(id, name, price, quantity, discount_pct)
-          ''')
-          .order('created_at', ascending: false)
-          .limit(200) as List;
+      late final List data;
+      try {
+        data = await Supabase.instance.client
+            .from('sales')
+            .select('''
+              id, appointment_id, client_id, total, payment_method, status, payment_status, sale_status, notes, created_at,
+              client:profiles!sales_client_id_fkey(full_name),
+              sale_items(id, name, price, quantity, discount_pct, description, unit_price, total_price)
+            ''')
+            .order('created_at', ascending: false)
+            .limit(200) as List;
+      } catch (_) {
+        data = await Supabase.instance.client
+            .from('sales')
+            .select('''
+              id, client_id, total, payment_method, status, notes, created_at,
+              client:profiles!sales_client_id_fkey(full_name),
+              sale_items(id, name, price, quantity, discount_pct)
+            ''')
+            .order('created_at', ascending: false)
+            .limit(200) as List;
+      }
+      final parsed = data.map((m) => _Sale.fromMap(m as Map<String, dynamic>)).toList();
+      final hydrated = await _hydrateMissingClientNames(parsed);
       if (!mounted) return;
       setState(() {
-        _sales   = data.map((m) => _Sale.fromMap(m as Map<String, dynamic>)).toList();
+        _sales   = hydrated;
+        _syncInitialSelection();
         _loading = false;
       });
     } catch (e) {
       debugPrint('loadSales: $e');
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<List<_Sale>> _hydrateMissingClientNames(List<_Sale> sales) async {
+    final missingIds = sales
+        .where((sale) =>
+            sale.clientName.trim().toLowerCase() == 'sin cliente' &&
+            (sale.appointmentId?.isNotEmpty ?? false))
+        .map((sale) => sale.appointmentId!)
+        .toSet()
+        .toList();
+
+    if (missingIds.isEmpty) {
+      return sales;
+    }
+
+    try {
+      final rows = await Supabase.instance.client
+          .from('bookings')
+          .select('''
+            id,
+            client:profiles!bookings_client_id_fkey(full_name),
+            client_record:clients!bookings_client_record_id_fkey(full_name)
+          ''')
+          .inFilter('id', missingIds);
+
+      final bookingClientNames = <String, String>{};
+      for (final raw in (rows as List)) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final bookingId = row['id']?.toString() ?? '';
+        if (bookingId.isEmpty) {
+          continue;
+        }
+        final profileName =
+            (row['client'] as Map?)?['full_name']?.toString().trim() ?? '';
+        final clientRecordName =
+            (row['client_record'] as Map?)?['full_name']?.toString().trim() ?? '';
+        final resolved = profileName.isNotEmpty
+            ? profileName
+            : clientRecordName.isNotEmpty
+                ? clientRecordName
+                : 'Sin cliente';
+        bookingClientNames[bookingId] = resolved;
+      }
+
+      return sales.map((sale) {
+        final appointmentId = sale.appointmentId;
+        if (appointmentId == null || appointmentId.isEmpty) {
+          return sale;
+        }
+        final fallbackName = bookingClientNames[appointmentId];
+        if (fallbackName == null || fallbackName.trim().isEmpty) {
+          return sale;
+        }
+        if (sale.clientName.trim().toLowerCase() != 'sin cliente') {
+          return sale;
+        }
+        return sale.copyWith(clientName: fallbackName);
+      }).toList();
+    } catch (error) {
+      debugPrint('hydrateMissingClientNames: $error');
+      return sales;
+    }
+  }
+
+  void _syncInitialSelection() {
+    final requestedId = widget.initialSaleId;
+    if (requestedId == null || requestedId.isEmpty) return;
+    _Sale? match;
+    for (final sale in _sales) {
+      if (sale.id == requestedId) {
+        match = sale;
+        break;
+      }
+    }
+    if (match != null) {
+      _detail = match;
     }
   }
 
@@ -378,20 +517,27 @@ const _kPeriods = [
   ('all',   'Todos'),
 ];
 
-String _fmt(double v) {
-  if (v >= 1000000) return '${(v / 1000000).toStringAsFixed(1)}M';
-  if (v >= 1000)    return '${(v / 1000).toStringAsFixed(0)}K';
-  return v.toStringAsFixed(0);
-}
+String _fmt(double v) => _fmtFull(v);
 
 String _fmtFull(double v) {
-  final parts = v.toStringAsFixed(0).split('').reversed.toList();
+  final negative = v < 0;
+  final abs = v.abs();
+  final fixed = abs.toStringAsFixed(2);
+  final chunks = fixed.split('.');
+  final intPart = chunks.first;
+  final decimalPart = chunks.length > 1 ? chunks[1] : '00';
+
+  final reversed = intPart.split('').reversed.toList();
   final withDots = <String>[];
-  for (int i = 0; i < parts.length; i++) {
-    if (i > 0 && i % 3 == 0) withDots.add('.');
-    withDots.add(parts[i]);
+  for (int i = 0; i < reversed.length; i++) {
+    if (i > 0 && i % 3 == 0) {
+      withDots.add('.');
+    }
+    withDots.add(reversed[i]);
   }
-  return withDots.reversed.join();
+
+  final formattedInt = withDots.reversed.join();
+  return '${negative ? '-' : ''}$formattedInt,$decimalPart';
 }
 
 String _fmtDate(DateTime d) {
@@ -528,10 +674,63 @@ class _SaleDetail extends StatelessWidget {
   final VoidCallback    onDeleted;
   final VoidCallback    onStatusChanged;
 
+  Future<void> _chargeSale(BuildContext context) async {
+    final result = await showDialog<_ChargeSaleResult>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _ChargeSaleDialog(sale: sale),
+    );
+    if (result == null) return;
+
+    final salesService = const AgendaSalesService();
+    try {
+      await salesService.collectPayment(
+        saleId: sale.id,
+        paymentMethod: result.paymentMethod,
+        baseTotal: sale.total,
+        bookingId: sale.appointmentId,
+        tip: result.tip,
+        discount: result.discount,
+        notes: result.notes,
+      );
+      onStatusChanged();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Cobro registrado correctamente.')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo registrar el cobro: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _changeStatus(BuildContext ctx, String newStatus) async {
+    try {
+      await Supabase.instance.client
+          .from('sales')
+          .update({
+            'status': newStatus,
+            if (newStatus == 'cancelled') 'sale_status': 'cancelled',
+          })
+          .eq('id', sale.id);
+      onStatusChanged();
+    } catch (e) {
+      if (ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final statusMeta =
-        _kStatusMeta[sale.status] ?? const ('—', Color(0xFF888888));
+                    _kStatusMeta[sale.status] ?? const ('—', Color(0xFF888888));
     final methodInfo = _kMethods.firstWhere(
         (m) => m.$1 == sale.paymentMethod,
         orElse: () => _kMethods[0]);
@@ -618,10 +817,16 @@ class _SaleDetail extends StatelessWidget {
                           letterSpacing: 0.5)),
                   const SizedBox(height: 8),
                   ...sale.items.map((item) {
-                    final price   = (item['price'] as num?)?.toDouble() ?? 0;
+                    final label   = item['description'] as String? ??
+                        item['name'] as String? ??
+                        'Concepto';
+                    final price   = (item['unit_price'] as num?)?.toDouble() ??
+                        (item['price'] as num?)?.toDouble() ??
+                        0;
                     final qty     = (item['quantity'] as int?) ?? 1;
                     final disc    = (item['discount_pct'] as num?)?.toDouble() ?? 0;
-                    final sub     = price * qty * (1 - disc / 100);
+                    final richSub = (item['total_price'] as num?)?.toDouble();
+                    final sub     = richSub ?? (price * qty * (1 - disc / 100));
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Row(children: [
@@ -636,7 +841,7 @@ class _SaleDetail extends StatelessWidget {
                         Expanded(child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(item['name'] as String? ?? '',
+                            Text(label,
                                 style: GoogleFonts.inter(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w500,
@@ -728,7 +933,7 @@ class _SaleDetail extends StatelessWidget {
             const SizedBox(width: 8),
             if (sale.status == 'pending')
               FilledButton.icon(
-                onPressed: () => _changeStatus(context, 'paid'),
+                onPressed: () => _chargeSale(context),
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF52C41A),
                   foregroundColor: Colors.white,
@@ -738,7 +943,7 @@ class _SaleDetail extends StatelessWidget {
                       borderRadius: BorderRadius.circular(6)),
                 ),
                 icon: const Icon(Icons.check, size: 14),
-                label: Text('Marcar pagado',
+                label: Text('Cobrar',
                     style: GoogleFonts.inter(
                         fontSize: 12, fontWeight: FontWeight.w600)),
               ),
@@ -755,13 +960,18 @@ class _SaleDetail extends StatelessWidget {
           orElse: () => _kMethods[0]);
       
       // Ensure safe mapping
-      final items = sale.items.map((dynamic item) {
+        final items = sale.items.map((dynamic item) {
         final Map<String, dynamic> i = Map<String, dynamic>.from(item as Map);
+        final qty = (i['quantity'] as num?)?.toInt() ?? 1;
+        final price = (i['unit_price'] as num?)?.toDouble() ??
+            (i['price'] as num?)?.toDouble() ??
+            0;
+        final subtotal = (i['total_price'] as num?)?.toDouble() ?? (price * qty);
         return {
-          'name': i['name'] ?? 'Item',
-          'qty': i['quantity'] ?? 1,
-          'price': (i['price'] as num?)?.toDouble() ?? 0,
-          'subtotal': ((i['price'] as num?)?.toDouble() ?? 0) * ((i['quantity'] as num?)?.toInt() ?? 1),
+          'name': i['description'] ?? i['name'] ?? 'Item',
+          'qty': qty,
+          'price': price,
+          'subtotal': subtotal,
         };
       }).toList();
 
@@ -783,20 +993,231 @@ class _SaleDetail extends StatelessWidget {
     }
   }
 
-  Future<void> _changeStatus(BuildContext ctx, String newStatus) async {
-    try {
-      await Supabase.instance.client
-          .from('sales')
-          .update({'status': newStatus})
-          .eq('id', sale.id);
-      onStatusChanged();
-    } catch (e) {
-      if (ctx.mounted) {
-        ScaffoldMessenger.of(ctx).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
-      }
-    }
+}
+
+class _ChargeSaleResult {
+  const _ChargeSaleResult({
+    required this.paymentMethod,
+    required this.tip,
+    required this.discount,
+    required this.notes,
+  });
+
+  final String paymentMethod;
+  final double tip;
+  final double discount;
+  final String notes;
+}
+
+class _ChargeSaleDialog extends StatefulWidget {
+  const _ChargeSaleDialog({required this.sale});
+
+  final _Sale sale;
+
+  @override
+  State<_ChargeSaleDialog> createState() => _ChargeSaleDialogState();
+}
+
+class _ChargeSaleDialogState extends State<_ChargeSaleDialog> {
+  final _tipCtrl = TextEditingController(text: '0');
+  final _discountCtrl = TextEditingController(text: '0');
+  final _notesCtrl = TextEditingController();
+  String _paymentMethod = 'efectivo';
+
+  double get _tip => double.tryParse(_tipCtrl.text.trim()) ?? 0;
+  double get _discount => double.tryParse(_discountCtrl.text.trim()) ?? 0;
+  double get _total => max(0, widget.sale.total - _discount + _tip);
+
+  @override
+  void dispose() {
+    _tipCtrl.dispose();
+    _discountCtrl.dispose();
+    _notesCtrl.dispose();
+    super.dispose();
+  }
+
+  InputDecoration _input(String label) => InputDecoration(
+        labelText: label,
+        isDense: true,
+        filled: true,
+        fillColor: const Color(0xFFF8F6F2),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide.none,
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Cobrar servicio',
+                style: GoogleFonts.playfairDisplay(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                widget.sale.clientName,
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  color: Colors.black54,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8F6F2),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Column(
+                  children: [
+                    _ChargeLine(label: 'Subtotal', value: widget.sale.total),
+                    const SizedBox(height: 8),
+                    _ChargeLine(label: 'Propina', value: _tip),
+                    const SizedBox(height: 8),
+                    _ChargeLine(label: 'Descuento', value: -_discount),
+                    const Divider(height: 24),
+                    _ChargeLine(
+                      label: 'Total a cobrar',
+                      value: _total,
+                      emphasize: true,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                initialValue: _paymentMethod,
+                decoration: _input('Metodo de pago'),
+                items: const [
+                  DropdownMenuItem(value: 'efectivo', child: Text('Efectivo')),
+                  DropdownMenuItem(value: 'tarjeta', child: Text('Tarjeta')),
+                  DropdownMenuItem(value: 'stripe', child: Text('Stripe')),
+                  DropdownMenuItem(value: 'transferencia', child: Text('Transferencia')),
+                  DropdownMenuItem(value: 'gift_card', child: Text('Gift card')),
+                  DropdownMenuItem(value: 'membresia', child: Text('Membresia')),
+                  DropdownMenuItem(value: 'saldo_cliente', child: Text('Saldo cliente')),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() => _paymentMethod = value);
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _tipCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: _input('Propina'),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _discountCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: _input('Descuento'),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _notesCtrl,
+                minLines: 2,
+                maxLines: 3,
+                decoration: _input('Notas del cobro'),
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Cancelar'),
+                  ),
+                  const Spacer(),
+                  FilledButton.icon(
+                    onPressed: () {
+                      Navigator.pop(
+                        context,
+                        _ChargeSaleResult(
+                          paymentMethod: _paymentMethod,
+                          tip: _tip,
+                          discount: _discount,
+                          notes: _notesCtrl.text.trim(),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.point_of_sale, size: 16),
+                    label: const Text('Confirmar cobro'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ChargeLine extends StatelessWidget {
+  const _ChargeLine({
+    required this.label,
+    required this.value,
+    this.emphasize = false,
+  });
+
+  final String label;
+  final double value;
+  final bool emphasize;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = emphasize ? Colors.black87 : Colors.black54;
+    final weight = emphasize ? FontWeight.w700 : FontWeight.w500;
+    final fontSize = emphasize ? 18.0 : 13.0;
+    final prefix = value < 0 ? '-' : '';
+    return Row(
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.inter(
+            fontSize: fontSize,
+            color: color,
+            fontWeight: weight,
+          ),
+        ),
+        const Spacer(),
+        Text(
+          '$prefix\$${_fmtFull(value.abs())}',
+          style: GoogleFonts.inter(
+            fontSize: fontSize,
+            color: color,
+            fontWeight: weight,
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -1319,7 +1740,7 @@ class _ItemRow extends StatefulWidget {
 class _ItemRowState extends State<_ItemRow> {
   late final _nameCtrl  = TextEditingController(text: widget.item.name);
   late final _priceCtrl = TextEditingController(
-      text: widget.item.price > 0 ? widget.item.price.toStringAsFixed(0) : '');
+      text: widget.item.price > 0 ? widget.item.price.toStringAsFixed(2) : '');
   late final _qtyCtrl   = TextEditingController(
       text: widget.item.quantity.toString());
 
@@ -1359,7 +1780,7 @@ class _ItemRowState extends State<_ItemRow> {
                     widget.item.price = price;
                   });
                   _nameCtrl.text = widget.item.name;
-                  _priceCtrl.text = price.toStringAsFixed(0);
+                  _priceCtrl.text = price.toStringAsFixed(2);
                 },
                 fieldViewBuilder: (context, controller, focusNode, onEditingComplete) {
                   if (controller.text.isEmpty && _nameCtrl.text.isNotEmpty) {

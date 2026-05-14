@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../features/store/controllers/store_cart_controller.dart';
+import '../features/store/services/store_checkout_service.dart';
 import '../widgets/navbar.dart';
 import '../widgets/hero_section.dart';
 import '../widgets/animated_section.dart';
@@ -17,7 +19,9 @@ class LandingPage extends StatefulWidget {
 
 class _LandingPageState extends State<LandingPage> {
   final ScrollController _scrollController = ScrollController();
+  final StoreCheckoutService _checkoutService = const StoreCheckoutService();
   bool _isScrolled = false;
+  bool _handledCheckoutReturn = false;
 
   final GlobalKey _heroKey       = GlobalKey();
   final GlobalKey _servicesKey   = GlobalKey();
@@ -32,6 +36,7 @@ class _LandingPageState extends State<LandingPage> {
       final scrolled = _scrollController.offset > 80;
       if (scrolled != _isScrolled) setState(() => _isScrolled = scrolled);
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _handleCheckoutReturn());
   }
 
   @override
@@ -48,6 +53,46 @@ class _LandingPageState extends State<LandingPage> {
       duration: const Duration(milliseconds: 900),
       curve: Curves.easeInOutCubic,
     );
+  }
+
+  Future<void> _handleCheckoutReturn() async {
+    if (_handledCheckoutReturn || !mounted) return;
+    _handledCheckoutReturn = true;
+
+    final checkoutStatus = Uri.base.queryParameters['checkout'];
+    final sessionId = Uri.base.queryParameters['session_id'];
+
+    if (checkoutStatus == 'cancel') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('El pago fue cancelado. Tu carrito sigue disponible.')),
+      );
+      return;
+    }
+
+    if (checkoutStatus != 'success' || sessionId == null || sessionId.isEmpty) {
+      return;
+    }
+
+    try {
+      final result = await _checkoutService.confirmOrderPayment(sessionId: sessionId);
+      if (!mounted) return;
+
+      if (result.paymentStatus == 'paid' || result.status == 'paid') {
+        StoreCartController.instance.clear();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Pago confirmado. Tu orden ya quedo registrada.')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Stripe regreso con estado ${result.paymentStatus}.')),
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No pudimos confirmar el pago automaticamente.')),
+      );
+    }
   }
 
   @override
