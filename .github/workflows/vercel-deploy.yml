@@ -14,13 +14,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Flutter SDK and build
-        run: |
-          git clone https://github.com/flutter/flutter.git -b 3.38.9 --depth 1 ~/flutter
-          export PATH="$PATH:~/flutter/bin:~/flutter/bin/cache/dart-sdk/bin"
-          flutter --version
-          flutter pub get
-          flutter build web --release
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.9'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build web
+        run: flutter build web --release
 
       - name: Prepare Vercel prebuilt output
         run: |
