@@ -1324,9 +1324,9 @@ class _PayrollDialogState extends State<_PayrollDialog> {
           ),
           Row(
             children: [
-              Expanded(child: _LabeledField(controller: _periodStartCtrl, label: 'Periodo inicio (YYYY-MM-DD)')),
+              Expanded(child: _DatePickerField(controller: _periodStartCtrl, label: 'Periodo inicio')),
               const SizedBox(width: 12),
-              Expanded(child: _LabeledField(controller: _periodEndCtrl, label: 'Periodo fin (YYYY-MM-DD)')),
+              Expanded(child: _DatePickerField(controller: _periodEndCtrl, label: 'Periodo fin')),
             ],
           ),
           _LabeledField(controller: _baseCtrl, label: 'Sueldo base', number: true),
@@ -1407,6 +1407,48 @@ class _BaseAdminDialog extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DatePickerField extends StatelessWidget {
+  const _DatePickerField({
+    required this.controller,
+    required this.label,
+  });
+
+  final TextEditingController controller;
+  final String label;
+
+  Future<void> _pick(BuildContext context) async {
+    final initial = DateTime.tryParse(controller.text.trim()) ?? DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2035),
+      locale: const Locale('es', 'MX'),
+    );
+    if (picked != null) {
+      controller.text =
+          '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextField(
+        controller: controller,
+        readOnly: true,
+        onTap: () => _pick(context),
+        decoration: InputDecoration(
+          labelText: label,
+          border: const OutlineInputBorder(),
+          suffixIcon: const Icon(Icons.calendar_today_outlined, size: 18),
         ),
       ),
     );
