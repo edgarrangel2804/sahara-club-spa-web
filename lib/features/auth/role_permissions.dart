@@ -182,6 +182,11 @@ class RolePermissions {
       description: 'Permite administrar tarjetas de regalo.',
     ),
     const PermissionModuleDefinition(
+      key: 'web_content',
+      title: 'Contenido Web',
+      description: 'Permite administrar el contenido visible de la pagina web.',
+    ),
+    const PermissionModuleDefinition(
       key: 'inventory',
       title: 'Inventario',
       description: 'Permite consultar y administrar inventario.',

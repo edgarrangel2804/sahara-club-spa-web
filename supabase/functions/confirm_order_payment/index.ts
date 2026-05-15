@@ -60,7 +60,9 @@ serve(async (req) => {
     )
 
     const paymentStatus = String(session.payment_status ?? "")
-    const paymentIntent = session.payment_intent as Record<string, unknown>? ?? {}
+    const paymentIntent =
+      (session.payment_intent as Record<string, unknown> | null | undefined) ??
+      {}
     const paymentIntentId = String(paymentIntent.id ?? session.payment_intent ?? "")
 
     if (paymentStatus == "paid") {

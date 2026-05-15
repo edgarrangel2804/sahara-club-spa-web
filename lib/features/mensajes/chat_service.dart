@@ -423,9 +423,15 @@ class ChatService {
     }
   }
 
-  RealtimeChannel subscribeToConversations({required VoidCallback onChanged}) {
+  RealtimeChannel subscribeToConversations({
+    required VoidCallback onChanged,
+    String? channelName,
+  }) {
+    final channelId =
+        channelName ??
+        'chats-realtime-${_myId ?? 'guest'}-${DateTime.now().microsecondsSinceEpoch}';
     return _client
-        .channel('chats-realtime')
+        .channel(channelId)
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
@@ -435,9 +441,15 @@ class ChatService {
         .subscribe();
   }
 
-  RealtimeChannel subscribeToMessages({required VoidCallback onChanged}) {
+  RealtimeChannel subscribeToMessages({
+    required VoidCallback onChanged,
+    String? channelName,
+  }) {
+    final channelId =
+        channelName ??
+        'messages-realtime-${_myId ?? 'guest'}-${DateTime.now().microsecondsSinceEpoch}';
     return _client
-        .channel('messages-realtime')
+        .channel(channelId)
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',

@@ -253,9 +253,11 @@ class _AgendaPageState extends State<AgendaPage> {
   late DateTime _monthStart;
   bool _hasLoadedOnce = false;
   RealtimeChannel? _bookingsChannel;
+  RealtimeChannel? _conversationsChannel;
   RealtimeChannel? _messagesChannel;
   Timer? _bookingsReloadDebounce;
   Timer? _messagesReloadDebounce;
+  Timer? _messagesPollingTimer;
   String? _salesFocusId;
   String? _messagesFocusConversationId;
   String? _agendaChatConversationId;
@@ -283,6 +285,7 @@ class _AgendaPageState extends State<AgendaPage> {
     _loadBranches().then((_) => _loadBookings());
     _subscribeToBookingsRealtime();
     _subscribeToMessagesRealtime();
+    _startMessagesPolling();
     _timer = Timer.periodic(
       const Duration(minutes: 1),
       (_) => setState(() => _now = DateTime.now()),
@@ -294,8 +297,12 @@ class _AgendaPageState extends State<AgendaPage> {
     _timer.cancel();
     _bookingsReloadDebounce?.cancel();
     _messagesReloadDebounce?.cancel();
+    _messagesPollingTimer?.cancel();
     if (_bookingsChannel != null) {
       Supabase.instance.client.removeChannel(_bookingsChannel!);
+    }
+    if (_conversationsChannel != null) {
+      Supabase.instance.client.removeChannel(_conversationsChannel!);
     }
     if (_messagesChannel != null) {
       Supabase.instance.client.removeChannel(_messagesChannel!);
@@ -360,17 +367,36 @@ class _AgendaPageState extends State<AgendaPage> {
   }
 
   void _subscribeToMessagesRealtime() {
+    final userId = Supabase.instance.client.auth.currentUser?.id ?? 'guest';
+    _conversationsChannel = _chatService.subscribeToConversations(
+      channelName: 'agenda-conversations-$userId',
+      onChanged: _scheduleUnreadMessagesRefresh,
+    );
     _messagesChannel = _chatService.subscribeToMessages(
-      onChanged: () {
-        _messagesReloadDebounce?.cancel();
-        _messagesReloadDebounce = Timer(
-          const Duration(milliseconds: 250),
-          () {
-            if (mounted) {
-              _loadUnreadMessagesCount();
-            }
-          },
-        );
+      channelName: 'agenda-messages-$userId',
+      onChanged: _scheduleUnreadMessagesRefresh,
+    );
+  }
+
+  void _scheduleUnreadMessagesRefresh() {
+    _messagesReloadDebounce?.cancel();
+    _messagesReloadDebounce = Timer(
+      const Duration(milliseconds: 250),
+      () {
+        if (mounted) {
+          _loadUnreadMessagesCount();
+        }
+      },
+    );
+  }
+
+  void _startMessagesPolling() {
+    _messagesPollingTimer ??= Timer.periodic(
+      Duration(seconds: kIsWeb ? 5 : 12),
+      (_) {
+        if (mounted) {
+          _loadUnreadMessagesCount();
+        }
       },
     );
   }
@@ -1099,6 +1125,26 @@ class _AgendaPageState extends State<AgendaPage> {
     return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:00';
   }
 
+  String _statusAfterReschedule(String currentStatus) {
+    switch (currentStatus) {
+      case 'confirmed':
+      case 'checked_in':
+      case 'in_progress':
+      case 'rescheduled':
+        return 'confirmed';
+      case 'completed':
+      case 'awaiting_payment':
+      case 'paid':
+      case 'cancelled':
+      case 'no_show':
+        return currentStatus;
+      case 'scheduled':
+      case 'pending':
+      default:
+        return 'pending';
+    }
+  }
+
   Future<bool> _rescheduleBooking(
     _Booking b,
     DateTime newDate,
@@ -1119,9 +1165,7 @@ class _AgendaPageState extends State<AgendaPage> {
           .update({
             'booking_date': bookingDate,
             'booking_time': bookingTime,
-            'status': (b.status == 'completed' || b.status == 'cancelled')
-                ? b.status
-                : 'rescheduled',
+            'status': _statusAfterReschedule(b.status),
             'updated_by': Supabase.instance.client.auth.currentUser?.id,
             'source_platform': _sourcePlatform,
           })
@@ -3969,8 +4013,7 @@ class _BookingDetailDialog extends StatelessWidget {
                 runSpacing: 8,
                 children: [
                   if (b.status == 'scheduled' ||
-                      b.status == 'pending' ||
-                      b.status == 'rescheduled')
+                      b.status == 'pending')
                     _DialogBtn(
                       label: 'Confirmar',
                       color: const Color(0xFF1A9E65),

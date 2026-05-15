@@ -1,50 +1,105 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
 
-class ContactSection extends StatelessWidget {
+import '../features/web_content/web_content_models.dart';
+import '../features/web_content/web_content_repository.dart';
+
+class ContactSection extends StatefulWidget {
   const ContactSection({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: const Color(0xFF141414),
-      child: Column(
-        children: [
-          _buildMain(),
-          _buildBottomStrip(),
-        ],
-      ),
+  State<ContactSection> createState() => _ContactSectionState();
+}
+
+class _ContactSectionState extends State<ContactSection> {
+  final WebContentRepository _repository = WebContentRepository();
+
+  late Future<_ContactSectionViewData> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
+
+  Future<_ContactSectionViewData> _load() async {
+    final results = await Future.wait([
+      _repository.loadBusinessProfile(),
+      _repository.loadContent(sectionKey: 'contact_info', activeOnly: true),
+      _repository.loadContent(sectionKey: 'contact_hours', activeOnly: true),
+    ]);
+
+    final profile = results[0] as WebBusinessProfile;
+    final contactItems = results[1] as List<WebContentItem>;
+    final hourItems = results[2] as List<WebContentItem>;
+
+    return _ContactSectionViewData(
+      profile: profile,
+      contactItem: contactItems.isNotEmpty ? contactItems.first : null,
+      hourItems: hourItems,
     );
   }
 
-  Widget _buildMain() {
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<_ContactSectionViewData>(
+      future: _future,
+      builder: (context, snapshot) {
+        final data = snapshot.data ?? _ContactSectionViewData.fallback();
+        return Container(
+          color: const Color(0xFF141414),
+          child: Column(
+            children: [
+              _buildMain(data),
+              _buildBottomStrip(data),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildMain(_ContactSectionViewData data) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(100, 120, 100, 80),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Left: contact info
           Expanded(
             flex: 5,
-            child: _buildContactInfo(),
+            child: _buildContactInfo(data),
           ),
           const SizedBox(width: 100),
-          // Right: schedule
           Expanded(
             flex: 4,
-            child: _buildSchedule(),
+            child: _buildSchedule(data),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildContactInfo() {
+  Widget _buildContactInfo(_ContactSectionViewData data) {
+    final item = data.contactItem;
+    final profile = data.profile;
+    final sectionTag = item?.subtitle.isNotEmpty == true
+        ? item!.subtitle
+        : 'CONTACTO';
+    final title = item?.title.isNotEmpty == true ? item!.title : 'Encuéntranos';
+    final intro = item?.shortDescription.isNotEmpty == true
+        ? item!.shortDescription
+        : 'Estamos en Ensenada, Baja California, listos para recibir tu cuerpo y devolverle la calma que merece.';
+    final reserveText = item?.ctaText.isNotEmpty == true
+        ? item!.ctaText
+        : 'RESERVA TU RITUAL';
+    final reserveUrl = item?.ctaUrl ?? '#contacto';
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'CONTACTO',
+          sectionTag.toUpperCase(),
           style: GoogleFonts.inter(
             fontSize: 11,
             color: const Color(0xFFC6A76A),
@@ -54,7 +109,7 @@ class ContactSection extends StatelessWidget {
         ),
         const SizedBox(height: 20),
         Text(
-          'Encuéntranos',
+          title,
           style: GoogleFonts.playfairDisplay(
             fontSize: 60,
             color: const Color(0xFFE8DCC8),
@@ -63,7 +118,7 @@ class ContactSection extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         Text(
-          'Estamos en Ensenada, Baja California, listos para recibir tu cuerpo y devolverle la calma que merece.',
+          intro,
           style: GoogleFonts.inter(
             fontSize: 16,
             color: Colors.white54,
@@ -72,17 +127,37 @@ class ContactSection extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 56),
-        _contactRow(Icons.location_on_outlined, 'Ensenada, Baja California, México'),
+        _contactRow(
+          Icons.location_on_outlined,
+          profile.address.isNotEmpty
+              ? profile.address
+              : 'Ensenada, Baja California, México',
+        ),
         const SizedBox(height: 28),
-        _contactRow(Icons.phone_outlined, '+52 (646) 123-4567'),
+        _contactRow(
+          Icons.phone_outlined,
+          profile.phone.isNotEmpty ? profile.phone : '+52 (646) 123-4567',
+        ),
         const SizedBox(height: 28),
-        _contactRow(Icons.mail_outline_rounded, 'hola@saharaclubspa.mx'),
+        _contactRow(
+          Icons.mail_outline_rounded,
+          profile.email.isNotEmpty ? profile.email : 'hola@saharaclubspa.mx',
+        ),
         const SizedBox(height: 56),
         Row(
           children: [
-            _WhatsAppButton(),
+            _ActionButton(
+              label: 'WHATSAPP',
+              icon: Icons.chat_bubble_outline_rounded,
+              filled: false,
+              url: _buildWhatsAppUrl(profile.whatsapp),
+            ),
             const SizedBox(width: 20),
-            _ReserveButton(),
+            _ActionButton(
+              label: reserveText.toUpperCase(),
+              filled: true,
+              url: reserveUrl,
+            ),
           ],
         ),
       ],
@@ -94,19 +169,25 @@ class ContactSection extends StatelessWidget {
       children: [
         Icon(icon, color: const Color(0xFFC6A76A), size: 20),
         const SizedBox(width: 18),
-        Text(
-          text,
-          style: GoogleFonts.inter(
-            fontSize: 16,
-            color: Colors.white70,
-            fontWeight: FontWeight.w300,
+        Expanded(
+          child: Text(
+            text,
+            style: GoogleFonts.inter(
+              fontSize: 16,
+              color: Colors.white70,
+              fontWeight: FontWeight.w300,
+            ),
           ),
         ),
       ],
     );
   }
 
-  Widget _buildSchedule() {
+  Widget _buildSchedule(_ContactSectionViewData data) {
+    final scheduleItems = data.scheduleItems;
+    final note = data.note ??
+        'Las citas se asignan con confirmación del equipo. Te contactamos en menos de 2 horas.';
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -121,27 +202,38 @@ class ContactSection extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 40),
-        _scheduleRow('Lunes — Viernes', '9:00 am · 9:00 pm'),
-        _divider(),
-        _scheduleRow('Sábados', '9:00 am · 8:00 pm'),
-        _divider(),
-        _scheduleRow('Domingos', '10:00 am · 6:00 pm'),
-        const SizedBox(height: 48),
+        ...scheduleItems.expand((item) => [
+              _scheduleRow(item.title, item.shortDescription),
+              _divider(),
+            ]),
+        if (scheduleItems.isEmpty) ...[
+          _scheduleRow('Lunes — Viernes', '9:00 am · 9:00 pm'),
+          _divider(),
+          _scheduleRow('Sábados', '9:00 am · 8:00 pm'),
+          _divider(),
+          _scheduleRow('Domingos', '10:00 am · 6:00 pm'),
+        ] else
+          const SizedBox(height: 24),
+        if (scheduleItems.isEmpty) const SizedBox(height: 48),
         Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
             border: Border.all(
-                color: const Color(0xFFC6A76A).withValues(alpha: 0.15)),
+              color: const Color(0xFFC6A76A).withValues(alpha: 0.15),
+            ),
             color: const Color(0xFFC6A76A).withValues(alpha: 0.04),
           ),
           child: Row(
             children: [
-              const Icon(Icons.info_outline_rounded,
-                  color: Color(0xFFC6A76A), size: 16),
+              const Icon(
+                Icons.info_outline_rounded,
+                color: Color(0xFFC6A76A),
+                size: 16,
+              ),
               const SizedBox(width: 14),
               Expanded(
                 child: Text(
-                  'Las citas se asignan con confirmación del equipo. Te contactamos en menos de 2 horas.',
+                  note,
                   style: GoogleFonts.inter(
                     fontSize: 13,
                     color: Colors.white54,
@@ -187,113 +279,167 @@ class ContactSection extends StatelessWidget {
   Widget _divider() =>
       Container(height: 0.5, color: Colors.white.withValues(alpha: 0.07));
 
-  Widget _buildBottomStrip() {
+  Widget _buildBottomStrip(_ContactSectionViewData data) {
+    final note = data.contactItem?.longDescription.isNotEmpty == true
+        ? data.contactItem!.longDescription
+        : 'Cada visita a Sahara Club es confidencial, sin juicios, sin prisa.';
+
     return Container(
       width: double.infinity,
       color: const Color(0xFF0A0A0A),
       padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 100),
       child: Row(
         children: [
-          const Icon(Icons.spa_outlined,
-              color: Color(0xFFC6A76A), size: 16),
+          const Icon(Icons.spa_outlined, color: Color(0xFFC6A76A), size: 16),
           const SizedBox(width: 14),
-          Text(
-            'Cada visita a Sahara Club es confidencial, sin juicios, sin prisa.',
-            style: GoogleFonts.inter(
-              fontSize: 14,
-              color: Colors.white38,
-              fontWeight: FontWeight.w300,
-              fontStyle: FontStyle.italic,
+          Expanded(
+            child: Text(
+              note,
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                color: Colors.white38,
+                fontWeight: FontWeight.w300,
+                fontStyle: FontStyle.italic,
+              ),
             ),
           ),
         ],
       ),
     );
   }
-}
 
-class _WhatsAppButton extends StatefulWidget {
-  @override
-  State<_WhatsAppButton> createState() => _WhatsAppButtonState();
-}
-
-class _WhatsAppButtonState extends State<_WhatsAppButton> {
-  bool _hovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 250),
-        padding:
-            const EdgeInsets.symmetric(horizontal: 32, vertical: 18),
-        decoration: BoxDecoration(
-          color: _hovered
-              ? const Color(0xFFC6A76A)
-              : Colors.transparent,
-          border: Border.all(color: const Color(0xFFC6A76A)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.chat_bubble_outline_rounded,
-              size: 16,
-              color: _hovered ? Colors.black : const Color(0xFFC6A76A),
-            ),
-            const SizedBox(width: 12),
-            Text(
-              'WHATSAPP',
-              style: GoogleFonts.inter(
-                fontSize: 11,
-                color: _hovered ? Colors.black : const Color(0xFFC6A76A),
-                letterSpacing: 2,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+  String _buildWhatsAppUrl(String raw) {
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) {
+      return 'https://wa.me/526461234567';
+    }
+    return 'https://wa.me/$digits';
   }
 }
 
-class _ReserveButton extends StatefulWidget {
-  @override
-  State<_ReserveButton> createState() => _ReserveButtonState();
+class _ContactSectionViewData {
+  const _ContactSectionViewData({
+    required this.profile,
+    required this.contactItem,
+    required this.hourItems,
+  });
+
+  final WebBusinessProfile profile;
+  final WebContentItem? contactItem;
+  final List<WebContentItem> hourItems;
+
+  factory _ContactSectionViewData.fallback() => _ContactSectionViewData(
+        profile: WebBusinessProfile.empty(),
+        contactItem: null,
+        hourItems: const <WebContentItem>[],
+      );
+
+  List<WebContentItem> get scheduleItems => hourItems
+      .where((item) => item.category.trim().toLowerCase() != 'note')
+      .toList()
+    ..sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+
+  String? get note {
+    for (final item in hourItems) {
+      if (item.category.trim().toLowerCase() == 'note' &&
+          item.shortDescription.isNotEmpty) {
+        return item.shortDescription;
+      }
+    }
+    return null;
+  }
 }
 
-class _ReserveButtonState extends State<_ReserveButton> {
+class _ActionButton extends StatefulWidget {
+  const _ActionButton({
+    required this.label,
+    required this.url,
+    this.icon,
+    required this.filled,
+  });
+
+  final String label;
+  final String url;
+  final IconData? icon;
+  final bool filled;
+
+  @override
+  State<_ActionButton> createState() => _ActionButtonState();
+}
+
+class _ActionButtonState extends State<_ActionButton> {
   bool _hovered = false;
+
+  Future<void> _open() async {
+    final uri = _resolveUrl(widget.url);
+    if (uri != null) {
+      await launchUrl(uri, mode: LaunchMode.platformDefault);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final hoveredFill = widget.filled
+        ? const Color(0xFFE8DCC8)
+        : const Color(0xFFC6A76A);
+    final idleFill =
+        widget.filled ? const Color(0xFFC6A76A) : Colors.transparent;
+    final textColor = widget.filled ? Colors.black : const Color(0xFFC6A76A);
+
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 250),
-        padding:
-            const EdgeInsets.symmetric(horizontal: 32, vertical: 18),
-        decoration: BoxDecoration(
-          color: _hovered
-              ? const Color(0xFFE8DCC8)
-              : const Color(0xFFC6A76A),
-        ),
-        child: Text(
-          'RESERVA TU RITUAL',
-          style: GoogleFonts.inter(
-            fontSize: 11,
-            color: Colors.black,
-            letterSpacing: 2,
-            fontWeight: FontWeight.w700,
+      child: GestureDetector(
+        onTap: _open,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 18),
+          decoration: BoxDecoration(
+            color: _hovered ? hoveredFill : idleFill,
+            border: widget.filled
+                ? null
+                : Border.all(color: const Color(0xFFC6A76A)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.icon != null) ...[
+                Icon(
+                  widget.icon,
+                  size: 16,
+                  color: _hovered ? Colors.black : textColor,
+                ),
+                const SizedBox(width: 12),
+              ],
+              Text(
+                widget.label,
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  color: _hovered ? Colors.black : textColor,
+                  letterSpacing: 2,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
           ),
         ),
       ),
     );
+  }
+
+  Uri? _resolveUrl(String raw) {
+    final value = raw.trim();
+    if (value.isEmpty) return null;
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return Uri.tryParse(value);
+    }
+    if (value.startsWith('/')) {
+      return Uri.base.resolve(value);
+    }
+    if (value.startsWith('#')) {
+      return Uri.base.resolve(Uri.base.path + value);
+    }
+    return Uri.tryParse(value);
   }
 }

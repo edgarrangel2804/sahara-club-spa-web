@@ -143,6 +143,7 @@ values
   ('receptionist', 'staff', false, false, false, false, false, false),
   ('receptionist', 'memberships', false, false, false, false, false, false),
   ('receptionist', 'gift_cards', false, false, false, false, false, false),
+  ('receptionist', 'web_content', false, false, false, false, false, false),
   ('receptionist', 'inventory', false, false, false, false, false, false),
   ('receptionist', 'analytics', false, false, false, false, false, false),
   ('receptionist', 'administration', false, false, false, false, false, false)

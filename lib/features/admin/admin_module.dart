@@ -2713,6 +2713,8 @@ class _SettingsTabState extends State<_SettingsTab> {
               const SizedBox(height: 24),
               _WhatsAppMetaSetup(onRefresh: widget.onRefresh),
               const SizedBox(height: 32),
+              _StripeSetup(onRefresh: widget.onRefresh),
+              const SizedBox(height: 32),
               kEnableMultiBranch
                   ? _buildBranchesSection()
                   : _buildSingleBranchSection(),
@@ -3686,6 +3688,645 @@ class _WhatsAppMetaSetupState extends State<_WhatsAppMetaSetup> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _StripeSetup extends StatefulWidget {
+  const _StripeSetup({required this.onRefresh});
+
+  final VoidCallback onRefresh;
+
+  @override
+  State<_StripeSetup> createState() => _StripeSetupState();
+}
+
+class _StripeSetupState extends State<_StripeSetup> {
+  final _publishableKeyCtrl = TextEditingController();
+  final _secretKeyCtrl = TextEditingController();
+  final _webhookSecretCtrl = TextEditingController();
+  final _accountIdCtrl = TextEditingController();
+
+  bool _loading = true;
+  bool _saving = false;
+  bool _testing = false;
+  bool _showSecretKey = false;
+  bool _showWebhookSecret = false;
+  String _environmentMode = 'testing';
+  Map<String, _StripeSettingsSnapshot> _settingsByMode =
+      <String, _StripeSettingsSnapshot>{};
+  String? _secretKeyMask;
+  String? _webhookSecretMask;
+  _StripeSettingsSnapshot _settings = _StripeSettingsSnapshot.empty();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _publishableKeyCtrl.dispose();
+    _secretKeyCtrl.dispose();
+    _webhookSecretCtrl.dispose();
+    _accountIdCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final response = await Supabase.instance.client.functions.invoke(
+        'save_stripe_settings',
+        body: {'action': 'load'},
+      );
+      final payload = Map<String, dynamic>.from(response.data as Map);
+      final activeMode =
+          payload['active_mode'] as String? ?? _environmentMode;
+      final rows = ((payload['settings'] as List?) ?? const [])
+          .map((row) => _StripeSettingsSnapshot.fromMap(
+                Map<String, dynamic>.from(row as Map),
+              ))
+          .toList();
+      _settingsByMode = {
+        for (final row in rows) row.environmentMode: row,
+      };
+      final current = rows.firstWhere(
+        (row) => row.environmentMode == activeMode,
+        orElse: () => _StripeSettingsSnapshot.empty(
+          environmentMode: activeMode,
+        ),
+      );
+      _applySettings(current);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo cargar Stripe: $e'),
+          backgroundColor: SaharaTheme.rojoCoral,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _applySettings(_StripeSettingsSnapshot settings) {
+    _settings = settings;
+    _environmentMode = settings.environmentMode;
+    _publishableKeyCtrl.text = settings.publishableKey;
+    _accountIdCtrl.text = settings.accountId;
+    _secretKeyCtrl.clear();
+    _webhookSecretCtrl.clear();
+    _secretKeyMask = settings.secretKeyMasked.isEmpty
+        ? null
+        : settings.secretKeyMasked;
+    _webhookSecretMask = settings.webhookSecretMasked.isEmpty
+        ? null
+        : settings.webhookSecretMasked;
+    if (mounted) setState(() {});
+  }
+
+  bool get _hasRequiredFields =>
+      _publishableKeyCtrl.text.trim().isNotEmpty &&
+      (_secretKeyCtrl.text.trim().isNotEmpty || _settings.hasSecretKey) &&
+      (_webhookSecretCtrl.text.trim().isNotEmpty || _settings.hasWebhookSecret);
+
+  Future<bool> _save() async {
+    setState(() => _saving = true);
+    try {
+      final response = await Supabase.instance.client.functions.invoke(
+        'save_stripe_settings',
+        body: {
+          'environment_mode': _environmentMode,
+          'publishable_key': _publishableKeyCtrl.text.trim(),
+          'secret_key': _secretKeyCtrl.text.trim(),
+          'webhook_secret': _webhookSecretCtrl.text.trim(),
+          'stripe_account_id': _accountIdCtrl.text.trim(),
+          'is_active': true,
+        },
+      );
+      final payload = Map<String, dynamic>.from(response.data as Map);
+      final current = _StripeSettingsSnapshot.fromMap(
+        Map<String, dynamic>.from(payload['current'] as Map),
+      );
+      _settingsByMode = {
+        ..._settingsByMode,
+        current.environmentMode: current,
+      };
+      _applySettings(current);
+      widget.onRefresh();
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Configuracion de Stripe guardada'),
+          backgroundColor: SaharaTheme.gold,
+        ),
+      );
+      return true;
+    } catch (e) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo guardar Stripe: $e'),
+          backgroundColor: SaharaTheme.rojoCoral,
+        ),
+      );
+      return false;
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _testConnection() async {
+    if (!_hasRequiredFields) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Completa publishable key, secret key y webhook secret para probar Stripe.',
+          ),
+          backgroundColor: SaharaTheme.rojoCoral,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _testing = true);
+    try {
+      final saved = await _save();
+      if (!saved) return;
+
+      final response = await Supabase.instance.client.functions.invoke(
+        'test_stripe_connection',
+        body: {'environment_mode': _environmentMode},
+      );
+      final payload = Map<String, dynamic>.from(response.data as Map);
+      final settings = _StripeSettingsSnapshot.fromMap(
+        Map<String, dynamic>.from(payload['settings'] as Map),
+      );
+      _applySettings(settings);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            payload['message'] as String? ??
+                'La conexion con Stripe fue validada correctamente.',
+          ),
+          backgroundColor: const Color(0xFF1A9E65),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      await _load();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No pudimos validar Stripe. Revisa las credenciales del entorno activo.',
+          ),
+          backgroundColor: SaharaTheme.rojoCoral,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _testing = false);
+    }
+  }
+
+  String _statusLabel(String status) {
+    switch (status) {
+      case 'connected':
+        return 'Conectado';
+      case 'pending':
+        return 'Pendiente';
+      case 'error':
+        return 'Error';
+      default:
+        return 'No configurado';
+    }
+  }
+
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'connected':
+        return const Color(0xFF1A9E65);
+      case 'pending':
+        return const Color(0xFFC68A17);
+      case 'error':
+        return const Color(0xFFB32D2D);
+      default:
+        return Colors.black45;
+    }
+  }
+
+  String _connectionButtonLabel(String status) {
+    if (_testing) return 'Probando conexion...';
+    switch (status) {
+      case 'connected':
+        return 'Conexion correcta';
+      case 'error':
+        return 'Conexion con error';
+      case 'pending':
+        return 'Probar conexion';
+      default:
+        return 'Probar conexion';
+    }
+  }
+
+  Color _connectionButtonBackgroundColor(String status) {
+    if (_testing) return const Color(0xFFF5F2EC);
+    switch (status) {
+      case 'connected':
+        return const Color(0xFF1A9E65);
+      case 'error':
+        return const Color(0xFFB32D2D);
+      case 'pending':
+        return const Color(0xFFC6A76A);
+      default:
+        return Colors.white;
+    }
+  }
+
+  Color _connectionButtonForegroundColor(String status) {
+    if (_testing) return SaharaTheme.grisCarbon;
+    switch (status) {
+      case 'connected':
+      case 'error':
+      case 'pending':
+        return Colors.white;
+      default:
+        return SaharaTheme.grisCarbon;
+    }
+  }
+
+  BorderSide _connectionButtonBorder(String status) {
+    if (_testing) {
+      return const BorderSide(color: Color(0xFFE0D8CA));
+    }
+    switch (status) {
+      case 'connected':
+        return const BorderSide(color: Color(0xFF1A9E65));
+      case 'error':
+        return const BorderSide(color: Color(0xFFB32D2D));
+      case 'pending':
+        return const BorderSide(color: Color(0xFFC6A76A));
+      default:
+        return const BorderSide(color: Color(0xFFE0D8CA));
+    }
+  }
+
+  Widget _field(
+    String label,
+    TextEditingController controller, {
+    String? hint,
+    bool obscure = false,
+    VoidCallback? onToggle,
+    String? helper,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.inter(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: SaharaTheme.grisCarbon,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: controller,
+          obscureText: obscure,
+          style: GoogleFonts.inter(fontSize: 14),
+          decoration: InputDecoration(
+            hintText: hint,
+            filled: true,
+            fillColor: const Color(0xFFF9F9F9),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 12,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: Color(0xFFECE9E4)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: Color(0xFFC6A76A)),
+            ),
+            suffixIcon: onToggle == null
+                ? null
+                : IconButton(
+                    onPressed: onToggle,
+                    icon: Icon(
+                      obscure ? Icons.visibility_off : Icons.visibility,
+                      size: 18,
+                    ),
+                  ),
+          ),
+        ),
+        if (helper != null && helper.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            helper,
+            style: GoogleFonts.inter(fontSize: 11, color: Colors.black45),
+          ),
+        ],
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFFF7F1E7), Color(0xFFFFFFFF)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFECE9E4)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF635BFF).withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.credit_card_outlined,
+                  color: Color(0xFF635BFF),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Stripe Checkout',
+                      style: GoogleFonts.inter(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: SaharaTheme.grisCarbon,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Configura credenciales de Stripe en testing o produccion sin hardcodear secretos en el frontend.',
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: _statusColor(_settings.connectionStatus).withValues(
+                    alpha: 0.12,
+                  ),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  _statusLabel(_settings.connectionStatus),
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: _statusColor(_settings.connectionStatus),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (_settings.lastValidatedAt != null) ...[
+          const SizedBox(height: 12),
+          Text(
+            'Ultima validacion: ${_settings.lastValidatedAt}',
+            style: GoogleFonts.inter(fontSize: 12, color: Colors.black45),
+          ),
+        ],
+        const SizedBox(height: 20),
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFECE9E4)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      initialValue: _environmentMode,
+                      decoration: InputDecoration(
+                        labelText: 'Modo',
+                        filled: true,
+                        fillColor: const Color(0xFFF9F9F9),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide:
+                              const BorderSide(color: Color(0xFFECE9E4)),
+                        ),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'testing',
+                          child: Text('Testing / Sandbox'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'production',
+                          child: Text('Produccion'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) return;
+                        final snapshot = _settingsByMode[value] ??
+                            _StripeSettingsSnapshot.empty(
+                              environmentMode: value,
+                            );
+                        _applySettings(snapshot);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _field(
+                      'Stripe Account ID',
+                      _accountIdCtrl,
+                      hint: 'acct_...',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _field(
+                'Publishable Key',
+                _publishableKeyCtrl,
+                hint: 'pk_test_...',
+              ),
+              const SizedBox(height: 16),
+              _field(
+                'Secret Key',
+                _secretKeyCtrl,
+                hint: _secretKeyMask == null
+                    ? 'sk_test_...'
+                    : 'Secret guardado: $_secretKeyMask',
+                obscure: !_showSecretKey,
+                onToggle: () =>
+                    setState(() => _showSecretKey = !_showSecretKey),
+                helper: _settings.hasSecretKey
+                    ? 'Deja este campo vacio si no deseas reemplazar la secret key guardada.'
+                    : '',
+              ),
+              const SizedBox(height: 16),
+              _field(
+                'Webhook Secret',
+                _webhookSecretCtrl,
+                hint: _webhookSecretMask == null
+                    ? 'whsec_...'
+                    : 'Webhook guardado: $_webhookSecretMask',
+                obscure: !_showWebhookSecret,
+                onToggle: () => setState(
+                  () => _showWebhookSecret = !_showWebhookSecret,
+                ),
+                helper: _settings.hasWebhookSecret
+                    ? 'Deja este campo vacio si no deseas reemplazar el webhook secret guardado.'
+                    : '',
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: _saving ? null : _save,
+                    icon: _saving
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.save_outlined, size: 18),
+                    label: const Text('Guardar configuracion'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: SaharaTheme.gold,
+                      foregroundColor: Colors.black,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 14,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  OutlinedButton.icon(
+                    onPressed: _testing ? null : _testConnection,
+                    icon: _testing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.verified_outlined, size: 18),
+                    label: Text(
+                      _connectionButtonLabel(_settings.connectionStatus),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _connectionButtonForegroundColor(
+                        _settings.connectionStatus,
+                      ),
+                      backgroundColor: _connectionButtonBackgroundColor(
+                        _settings.connectionStatus,
+                      ),
+                      side: _connectionButtonBorder(_settings.connectionStatus),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 14,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _StripeSettingsSnapshot {
+  const _StripeSettingsSnapshot({
+    required this.environmentMode,
+    required this.publishableKey,
+    required this.secretKeyMasked,
+    required this.webhookSecretMasked,
+    required this.accountId,
+    required this.connectionStatus,
+    required this.lastValidatedAt,
+    required this.isActive,
+    required this.hasSecretKey,
+    required this.hasWebhookSecret,
+  });
+
+  final String environmentMode;
+  final String publishableKey;
+  final String secretKeyMasked;
+  final String webhookSecretMasked;
+  final String accountId;
+  final String connectionStatus;
+  final String? lastValidatedAt;
+  final bool isActive;
+  final bool hasSecretKey;
+  final bool hasWebhookSecret;
+
+  factory _StripeSettingsSnapshot.empty({String environmentMode = 'testing'}) {
+    return _StripeSettingsSnapshot(
+      environmentMode: environmentMode,
+      publishableKey: '',
+      secretKeyMasked: '',
+      webhookSecretMasked: '',
+      accountId: '',
+      connectionStatus: 'not_configured',
+      lastValidatedAt: null,
+      isActive: environmentMode == 'testing',
+      hasSecretKey: false,
+      hasWebhookSecret: false,
+    );
+  }
+
+  factory _StripeSettingsSnapshot.fromMap(Map<String, dynamic> map) {
+    return _StripeSettingsSnapshot(
+      environmentMode: map['environment_mode'] as String? ?? 'testing',
+      publishableKey: map['publishable_key'] as String? ?? '',
+      secretKeyMasked: map['secret_key_masked'] as String? ?? '',
+      webhookSecretMasked: map['webhook_secret_masked'] as String? ?? '',
+      accountId: map['stripe_account_id'] as String? ?? '',
+      connectionStatus: map['connection_status'] as String? ?? 'not_configured',
+      lastValidatedAt: map['last_validated_at'] as String?,
+      isActive: map['is_active'] as bool? ?? false,
+      hasSecretKey: map['has_secret_key'] as bool? ?? false,
+      hasWebhookSecret: map['has_webhook_secret'] as bool? ?? false,
     );
   }
 }

@@ -109,7 +109,7 @@ class BookingSyncService {
     if (statusFilter == 'active') {
       query = query.or(
         'status.eq.scheduled,status.eq.pending,status.eq.confirmed,'
-        'status.eq.checked_in,status.eq.in_progress,status.eq.rescheduled,'
+        'status.eq.checked_in,status.eq.in_progress,'
         'status.eq.completed,status.eq.awaiting_payment',
       );
     } else if (statusFilter != 'all') {

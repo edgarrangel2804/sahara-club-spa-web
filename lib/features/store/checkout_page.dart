@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../theme/sahara_theme.dart';
@@ -26,6 +27,22 @@ class _CheckoutPageState extends State<CheckoutPage> {
   final TextEditingController _notesController = TextEditingController();
 
   bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Pre-fill from the authenticated session so customer_email matches the account
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user != null) {
+      if (user.email != null) _emailController.text = user.email!;
+      final meta = user.userMetadata;
+      if (meta != null) {
+        final name = meta['full_name'] as String? ??
+            meta['name'] as String? ?? '';
+        if (name.isNotEmpty) _nameController.text = name;
+      }
+    }
+  }
 
   double get _subtotal => _cart.subtotal;
   double get _memberCredit => _subtotal * 0.10;
@@ -223,10 +240,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
       ...current.queryParameters,
       'checkout': status,
     };
+    // Build base URL without session_id so queryParameters doesn't percent-encode the braces
+    final base = current.replace(queryParameters: params).toString();
     if (includeSessionPlaceholder) {
-      params['session_id'] = '{CHECKOUT_SESSION_ID}';
+      // Append raw so Stripe substitutes {CHECKOUT_SESSION_ID} at redirect time
+      return '$base&session_id={CHECKOUT_SESSION_ID}';
     }
-    return current.replace(queryParameters: params).toString();
+    return base;
   }
 
   void _showMessage(String message) {
@@ -290,50 +310,62 @@ class _CheckoutForm extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 24),
-        Row(
-          children: const [
-            Expanded(
-              child: _PaymentMethod(
-                icon: Icons.credit_card,
-                label: 'Tarjeta',
-                active: true,
-              ),
-            ),
-            SizedBox(width: 12),
-            Expanded(
-              child: _PaymentMethod(
-                icon: Icons.phone_iphone,
-                label: 'Apple Pay',
-              ),
-            ),
-          ],
-        ),
         const SizedBox(height: 28),
-        const _CheckoutInput(
-          label: 'Numero de tarjeta',
-          hint: 'Se captura de forma segura en Stripe',
-          readOnly: true,
-        ),
-        const SizedBox(height: 28),
-        const Row(
-          children: [
-            Expanded(
-              child: _CheckoutInput(
-                label: 'Vencimiento',
-                hint: 'Se completa en Stripe',
-                readOnly: true,
+        Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1A1A1A),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFF2A2A2A)),
+          ),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: _CheckoutPalette.gold.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.lock_outline_rounded,
+                        color: _CheckoutPalette.gold, size: 20),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Pago procesado por Stripe',
+                            style: GoogleFonts.inter(
+                              color: _CheckoutPalette.textStrong,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            )),
+                        const SizedBox(height: 2),
+                        Text('Al continuar seras redirigido a la pagina segura de Stripe para ingresar los datos de tu tarjeta.',
+                            style: GoogleFonts.inter(
+                              color: _CheckoutPalette.textMuted,
+                              fontSize: 12,
+                              height: 1.5,
+                            )),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ),
-            SizedBox(width: 24),
-            Expanded(
-              child: _CheckoutInput(
-                label: 'CVC',
-                hint: 'Se completa en Stripe',
-                readOnly: true,
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  _CardBadge(icon: Icons.credit_card_rounded, label: 'Visa / MC'),
+                  const SizedBox(width: 10),
+                  _CardBadge(icon: Icons.contactless_rounded, label: 'Amex'),
+                  const SizedBox(width: 10),
+                  _CardBadge(icon: Icons.shield_outlined, label: 'SSL 256-bit'),
+                ],
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ],
     );
@@ -884,6 +916,39 @@ class _CheckoutPalette {
   static const Color inputText = Color(0xFF1A1612);
   static const Color inputHint = Color(0xFF8A8178);
   static const Color textPrimary = Color(0xFFE5E2E1);
+  static const Color textStrong = Color(0xFFF5F0EB);
   static const Color textMuted = Color(0xFFD1C5B4);
   static const Color divider = Color(0x264E4639);
+}
+
+class _CardBadge extends StatelessWidget {
+  const _CardBadge({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFF252525),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFF333333)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: _CheckoutPalette.textMuted),
+          const SizedBox(width: 5),
+          Text(label,
+              style: GoogleFonts.inter(
+                fontSize: 11,
+                color: _CheckoutPalette.textMuted,
+                fontWeight: FontWeight.w500,
+              )),
+        ],
+      ),
+    );
+  }
 }

@@ -1,24 +1,84 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
 
-class FeaturedSection extends StatelessWidget {
+import '../features/web_content/web_content_models.dart';
+import '../features/web_content/web_content_repository.dart';
+
+class FeaturedSection extends StatefulWidget {
   const FeaturedSection({super.key});
 
   @override
+  State<FeaturedSection> createState() => _FeaturedSectionState();
+}
+
+class _FeaturedSectionState extends State<FeaturedSection> {
+  final WebContentRepository _repository = WebContentRepository();
+  late final Future<_FeaturedContentState> _future = _loadContent();
+
+  Future<_FeaturedContentState> _loadContent() async {
+    try {
+      final items = await _repository.loadContent(activeOnly: true);
+      final featured = items
+          .where(
+            (item) =>
+                item.sectionKey == 'featured_posts' ||
+                (item.isFeatured &&
+                    (item.contentType == 'post' ||
+                        item.contentType == 'promotion' ||
+                        item.contentType == 'massage' ||
+                        item.contentType == 'facial')),
+          )
+          .toList()
+        ..sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+
+      final promotions = items
+          .where((item) => item.sectionKey == 'promotions')
+          .toList()
+        ..sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+
+      return _FeaturedContentState(
+        cards: featured.take(3).toList(),
+        promo: promotions.isNotEmpty ? promotions.first : null,
+      );
+    } catch (_) {
+      return const _FeaturedContentState(cards: <WebContentItem>[]);
+    }
+  }
+
+  Future<void> _openCta(String rawUrl) async {
+    final value = rawUrl.trim();
+    if (value.isEmpty) return;
+    final uri = value.startsWith('/') || value.startsWith('#')
+        ? Uri.base.resolve(value)
+        : Uri.tryParse(value.startsWith('http') ? value : 'https://$value');
+    if (uri == null) return;
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Container(
-      color: const Color(0xFF0B0B0B),
-      padding: const EdgeInsets.symmetric(vertical: 120, horizontal: 100),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildHeader(),
-          const SizedBox(height: 72),
-          _buildCards(),
-          const SizedBox(height: 80),
-          _buildPromoStrip(),
-        ],
-      ),
+    return FutureBuilder<_FeaturedContentState>(
+      future: _future,
+      builder: (context, snapshot) {
+        final state = snapshot.data ?? const _FeaturedContentState(cards: <WebContentItem>[]);
+        return Container(
+          color: const Color(0xFF0B0B0B),
+          padding: const EdgeInsets.symmetric(vertical: 120, horizontal: 100),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildHeader(),
+              const SizedBox(height: 72),
+              _buildCards(state.cards),
+              if (state.promo != null) ...[
+                const SizedBox(height: 80),
+                _buildPromoStrip(state.promo!),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -41,7 +101,7 @@ class FeaturedSection extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                'Lo que más\nte va a transformar',
+                'Lo que mas\nte va a transformar',
                 style: GoogleFonts.playfairDisplay(
                   fontSize: 56,
                   color: const Color(0xFFE8DCC8),
@@ -53,7 +113,7 @@ class FeaturedSection extends StatelessWidget {
             const SizedBox(width: 60),
             Expanded(
               child: Text(
-                'Servicios seleccionados por nuestras terapeutas como los rituales que más impacto generan en quienes los reciben.',
+                'Contenido destacado, promociones vivas y experiencias seleccionadas para mostrar lo mejor de Sahara Club Spa.',
                 style: GoogleFonts.inter(
                   fontSize: 16,
                   color: Colors.white54,
@@ -68,80 +128,52 @@ class FeaturedSection extends StatelessWidget {
     );
   }
 
-  Widget _buildCards() {
-    final cards = [
-      _FeaturedCard(
-        image: 'assets/images/06.png',
-        tag: 'EL MÁS SOLICITADO',
-        tagColor: const Color(0xFFC6A76A),
-        title: 'Sahara Soul',
-        subtitle: 'Masaje de la casa',
-        description:
-            'El ritual que abrió la puerta entre cuerpo y alma. Maniobras envolventes, respiración consciente y ritmo terapéutico profundo.',
-        price: 'Desde \$1,089',
-        duration: '60 · 90 · 120 min',
-      ),
-      _FeaturedCard(
-        image: 'assets/images/07.png',
-        tag: 'EXCLUSIVO',
-        tagColor: const Color(0xFF8B7355),
-        title: 'Amazing Experience',
-        subtitle: 'Creado por Jochebed',
-        description:
-            'Un método propio. Un encuentro completo con el cuerpo. Cada toque tiene un propósito: recordarle que ya no tiene que sostener nada.',
-        price: '\$1,777',
-        duration: '90 min',
-      ),
-      _FeaturedCard(
-        image: 'assets/images/08.png',
-        tag: 'MÁS RESERVADO',
-        tagColor: const Color(0xFF6B7B5E),
-        title: 'Faciales Sahara',
-        subtitle: 'Piel que respira',
-        description:
-            'Desde el Sahara Soul Facial hasta tratamientos con LED y neuro yoga facial. Tu piel también necesita un ritual de presencia.',
-        price: 'Desde \$900',
-        duration: '60 · 90 min',
-      ),
-    ];
+  Widget _buildCards(List<WebContentItem> cards) {
+    if (cards.isEmpty) {
+      return Text(
+        'Aun no hay publicaciones destacadas activas.',
+        style: GoogleFonts.inter(
+          fontSize: 15,
+          color: Colors.white54,
+        ),
+      );
+    }
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: List.generate(cards.length, (i) {
-        final c = cards[i];
+      children: List.generate(cards.length, (index) {
+        final card = cards[index];
         return Expanded(
           child: Container(
-            margin: EdgeInsets.only(right: i < cards.length - 1 ? 28 : 0),
-            child: _buildCard(c),
+            margin: EdgeInsets.only(right: index < cards.length - 1 ? 28 : 0),
+            child: _buildCard(card),
           ),
         );
       }),
     );
   }
 
-  Widget _buildCard(_FeaturedCard c) {
+  Widget _buildCard(WebContentItem item) {
     return Container(
       decoration: const BoxDecoration(color: Color(0xFF111111)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Image
           Stack(
             children: [
               SizedBox(
                 height: 280,
                 width: double.infinity,
-                child: Image.asset(c.image, fit: BoxFit.cover),
+                child: _FeaturedImage(url: item.imageUrl),
               ),
               Positioned(
                 top: 20,
                 left: 20,
                 child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  color: c.tagColor,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  color: const Color(0xFFC6A76A),
                   child: Text(
-                    c.tag,
+                    item.isFeatured ? 'DESTACADO' : item.sectionLabel.toUpperCase(),
                     style: GoogleFonts.inter(
                       fontSize: 9,
                       color: Colors.black,
@@ -153,23 +185,23 @@ class FeaturedSection extends StatelessWidget {
               ),
             ],
           ),
-          // Content
           Padding(
             padding: const EdgeInsets.all(28),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  c.subtitle.toUpperCase(),
-                  style: GoogleFonts.inter(
-                    fontSize: 10,
-                    color: const Color(0xFFC6A76A),
-                    letterSpacing: 2.5,
+                if (item.subtitle.isNotEmpty)
+                  Text(
+                    item.subtitle.toUpperCase(),
+                    style: GoogleFonts.inter(
+                      fontSize: 10,
+                      color: const Color(0xFFC6A76A),
+                      letterSpacing: 2.5,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 10),
+                if (item.subtitle.isNotEmpty) const SizedBox(height: 10),
                 Text(
-                  c.title,
+                  item.title,
                   style: GoogleFonts.playfairDisplay(
                     fontSize: 26,
                     color: const Color(0xFFE8DCC8),
@@ -178,7 +210,9 @@ class FeaturedSection extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  c.description,
+                  item.shortDescription.isNotEmpty
+                      ? item.shortDescription
+                      : item.longDescription,
                   style: GoogleFonts.inter(
                     fontSize: 14,
                     color: Colors.white54,
@@ -195,22 +229,45 @@ class FeaturedSection extends StatelessWidget {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(c.price,
+                        if (item.promoPriceLabel.isNotEmpty)
+                          Text(
+                            item.promoPriceLabel,
                             style: GoogleFonts.inter(
                               fontSize: 18,
                               color: const Color(0xFFC6A76A),
                               fontWeight: FontWeight.w500,
-                            )),
-                        const SizedBox(height: 4),
-                        Text(c.duration,
+                            ),
+                          )
+                        else if (item.priceLabel.isNotEmpty)
+                          Text(
+                            item.priceLabel,
+                            style: GoogleFonts.inter(
+                              fontSize: 18,
+                              color: const Color(0xFFC6A76A),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        if (item.priceLabel.isNotEmpty &&
+                            item.promoPriceLabel.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            item.priceLabel,
                             style: GoogleFonts.inter(
                               fontSize: 12,
                               color: Colors.white38,
-                              letterSpacing: 0.5,
-                            )),
+                              decoration: TextDecoration.lineThrough,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
-                    _HoverButton(label: 'RESERVAR'),
+                    if (item.ctaText.trim().isNotEmpty && item.ctaUrl.trim().isNotEmpty)
+                      _HoverButton(
+                        label: item.ctaText.toUpperCase(),
+                        onTap: () => _openCta(item.ctaUrl),
+                      )
+                    else
+                      const _HoverButton(label: 'RESERVAR'),
                   ],
                 ),
               ],
@@ -221,7 +278,7 @@ class FeaturedSection extends StatelessWidget {
     );
   }
 
-  Widget _buildPromoStrip() {
+  Widget _buildPromoStrip(WebContentItem promo) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 60),
@@ -231,100 +288,131 @@ class FeaturedSection extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Primera visita',
-                style: GoogleFonts.playfairDisplay(
-                  fontSize: 32,
-                  color: const Color(0xFFE8DCC8),
-                  fontWeight: FontWeight.w300,
-                  fontStyle: FontStyle.italic,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  promo.title,
+                  style: GoogleFonts.playfairDisplay(
+                    fontSize: 32,
+                    color: const Color(0xFFE8DCC8),
+                    fontWeight: FontWeight.w300,
+                    fontStyle: FontStyle.italic,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Cuéntanos dónde carga tu cuerpo y diseñamos tu ritual.',
-                style: GoogleFonts.inter(
-                  fontSize: 15,
-                  color: Colors.white54,
-                  fontWeight: FontWeight.w300,
+                const SizedBox(height: 8),
+                Text(
+                  promo.shortDescription.isNotEmpty
+                      ? promo.shortDescription
+                      : promo.longDescription,
+                  style: GoogleFonts.inter(
+                    fontSize: 15,
+                    color: Colors.white54,
+                    fontWeight: FontWeight.w300,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-          _HoverButton(label: 'AGENDA TU CONSULTA', large: true),
+          const SizedBox(width: 24),
+          _HoverButton(
+            label: promo.ctaText.trim().isNotEmpty
+                ? promo.ctaText.toUpperCase()
+                : 'AGENDA TU CONSULTA',
+            large: true,
+            onTap: promo.ctaUrl.trim().isNotEmpty
+                ? () => _openCta(promo.ctaUrl)
+                : null,
+          ),
         ],
       ),
     );
   }
 }
 
+class _FeaturedContentState {
+  const _FeaturedContentState({
+    required this.cards,
+    this.promo,
+  });
+
+  final List<WebContentItem> cards;
+  final WebContentItem? promo;
+}
+
+class _FeaturedImage extends StatelessWidget {
+  const _FeaturedImage({required this.url});
+
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return Image.network(
+        url,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Container(color: const Color(0xFF1A1A1A)),
+      );
+    }
+    if (url.trim().isNotEmpty) {
+      return Image.asset(
+        url,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Container(color: const Color(0xFF1A1A1A)),
+      );
+    }
+    return Container(color: const Color(0xFF1A1A1A));
+  }
+}
+
 class _HoverButton extends StatefulWidget {
+  const _HoverButton({
+    required this.label,
+    this.large = false,
+    this.onTap,
+  });
+
   final String label;
   final bool large;
-  const _HoverButton({required this.label, this.large = false});
+  final VoidCallback? onTap;
 
   @override
   State<_HoverButton> createState() => _HoverButtonState();
 }
 
 class _HoverButtonState extends State<_HoverButton> {
-  bool _hovered = false;
+  bool _hover = false;
 
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 250),
-        padding: EdgeInsets.symmetric(
-          horizontal: widget.large ? 40 : 20,
-          vertical: widget.large ? 18 : 12,
-        ),
-        decoration: BoxDecoration(
-          color: _hovered ? const Color(0xFFC6A76A) : Colors.transparent,
-          border: Border.all(
-            color: _hovered
-                ? const Color(0xFFC6A76A)
-                : const Color(0xFFC6A76A).withValues(alpha: 0.5),
+      cursor: widget.onTap == null ? SystemMouseCursors.basic : SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: EdgeInsets.symmetric(
+            horizontal: widget.large ? 22 : 16,
+            vertical: widget.large ? 14 : 12,
           ),
-        ),
-        child: Text(
-          widget.label,
-          style: GoogleFonts.inter(
-            fontSize: 10,
-            color: _hovered ? Colors.black : const Color(0xFFC6A76A),
-            letterSpacing: 2,
-            fontWeight: FontWeight.w700,
+          decoration: BoxDecoration(
+            color: _hover ? const Color(0xFFE1C88C) : const Color(0xFFC6A76A),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            widget.label,
+            style: GoogleFonts.inter(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.5,
+              color: const Color(0xFF1F170F),
+            ),
           ),
         ),
       ),
     );
   }
-}
-
-class _FeaturedCard {
-  final String image;
-  final String tag;
-  final Color tagColor;
-  final String title;
-  final String subtitle;
-  final String description;
-  final String price;
-  final String duration;
-
-  const _FeaturedCard({
-    required this.image,
-    required this.tag,
-    required this.tagColor,
-    required this.title,
-    required this.subtitle,
-    required this.description,
-    required this.price,
-    required this.duration,
-  });
 }

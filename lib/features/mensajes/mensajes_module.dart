@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -29,6 +30,7 @@ class _MensajesModuleState extends State<MensajesModule> {
   RealtimeChannel? _conversationsChannel;
   RealtimeChannel? _messagesChannel;
   Timer? _reloadDebounce;
+  Timer? _fallbackRefreshTimer;
 
   String _role = 'guest';
   String? _currentUserId;
@@ -74,6 +76,7 @@ class _MensajesModuleState extends State<MensajesModule> {
     _messageController.dispose();
     _messagesScrollController.dispose();
     _reloadDebounce?.cancel();
+    _fallbackRefreshTimer?.cancel();
     if (_conversationsChannel != null) {
       Supabase.instance.client.removeChannel(_conversationsChannel!);
     }
@@ -121,10 +124,20 @@ class _MensajesModuleState extends State<MensajesModule> {
 
   void _subscribeRealtime() {
     _conversationsChannel ??= _chatService.subscribeToConversations(
+      channelName: 'mensajes-conversations-${_currentUserId ?? 'guest'}',
       onChanged: _scheduleRefresh,
     );
     _messagesChannel ??= _chatService.subscribeToMessages(
+      channelName: 'mensajes-messages-${_currentUserId ?? 'guest'}',
       onChanged: _scheduleRefresh,
+    );
+    _startFallbackRefresh();
+  }
+
+  void _startFallbackRefresh() {
+    _fallbackRefreshTimer ??= Timer.periodic(
+      Duration(seconds: kIsWeb ? 4 : 10),
+      (_) => _scheduleRefresh(),
     );
   }
 

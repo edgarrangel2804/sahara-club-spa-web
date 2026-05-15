@@ -141,11 +141,21 @@ class StoreProduct {
   }
 
   static Map<String, dynamic> _readCheckoutMetadata(Map<String, dynamic> map) {
-    final raw = map['checkout_metadata'];
+    final raw = map['checkout_metadata'] ?? map['metadata'];
+    final metadata = <String, dynamic>{};
     if (raw is Map) {
-      return Map<String, dynamic>.from(raw);
+      metadata.addAll(Map<String, dynamic>.from(raw));
     }
-    return const <String, dynamic>{};
+    final digitalFileUrl = (map['digital_file_url'] as String? ?? '').trim();
+    if (digitalFileUrl.isNotEmpty) {
+      metadata['digital_file_url'] = digitalFileUrl;
+    }
+    final durationMinutes = (map['duration_minutes'] as num?)?.toInt();
+    if (durationMinutes != null) {
+      metadata['duration_minutes'] = durationMinutes;
+      metadata['membership_duration_days'] = durationMinutes;
+    }
+    return metadata;
   }
 
   static List<String> _readBenefits(

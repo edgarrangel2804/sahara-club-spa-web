@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../store/store_page.dart';
+import '../store/controllers/store_cart_controller.dart';
+import '../store/models/store_product.dart';
+import '../cart/cart_page.dart';
 import '../../theme/sahara_theme.dart';
 
 class VipMembershipsPage extends StatelessWidget {
@@ -193,6 +196,8 @@ class _MembershipTiersSection extends StatelessWidget {
                 title: 'Oasis Plata',
                 subtitle: 'Lujo de entrada',
                 price: '\$250',
+                priceValue: 250,
+                productId: 'mem-oasis-plata',
                 period: '/mes',
                 tone: _TierTone.silver,
                 cta: 'SELECCIONAR MEMBRESIA',
@@ -207,6 +212,8 @@ class _MembershipTiersSection extends StatelessWidget {
                 title: 'Duna Dorada',
                 subtitle: 'La experiencia de autor',
                 price: '\$550',
+                priceValue: 550,
+                productId: 'mem-duna-dorada',
                 period: '/mes',
                 tone: _TierTone.gold,
                 badge: 'Mas popular',
@@ -222,6 +229,8 @@ class _MembershipTiersSection extends StatelessWidget {
                 title: 'Sahara Black',
                 subtitle: 'El nivel mas alto',
                 price: '\$1,200',
+                priceValue: 1200,
+                productId: 'mem-sahara-black',
                 period: '/mes',
                 tone: _TierTone.black,
                 cta: 'SELECCIONAR MEMBRESIA',
@@ -340,6 +349,8 @@ class _TierCard extends StatefulWidget {
     required this.title,
     required this.subtitle,
     required this.price,
+    required this.priceValue,
+    required this.productId,
     required this.period,
     required this.benefits,
     required this.cta,
@@ -350,6 +361,8 @@ class _TierCard extends StatefulWidget {
   final String title;
   final String subtitle;
   final String price;
+  final double priceValue;
+  final String productId;
   final String period;
   final List<_TierBenefit> benefits;
   final String cta;
@@ -501,7 +514,7 @@ class _TierCardState extends State<_TierCard> {
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                               ),
-                              onPressed: () => _showMembershipIntent(context, widget.title),
+                              onPressed: () => _showMembershipIntent(context),
                               child: Text(
                                 widget.cta,
                                 style: GoogleFonts.inter(
@@ -526,7 +539,7 @@ class _TierCardState extends State<_TierCard> {
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                               ),
-                              onPressed: () => _showMembershipIntent(context, widget.title),
+                              onPressed: () => _showMembershipIntent(context),
                               child: Text(
                                 widget.cta,
                                 style: GoogleFonts.inter(
@@ -547,9 +560,30 @@ class _TierCardState extends State<_TierCard> {
     );
   }
 
-  void _showMembershipIntent(BuildContext context, String membershipName) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Seleccionaste $membershipName. La activacion quedara conectada en la fase de checkout.')),
+  void _showMembershipIntent(BuildContext context) {
+    final product = StoreProduct(
+      id: widget.productId,
+      name: widget.title,
+      slug: widget.productId,
+      description: '${widget.subtitle} · ${widget.period}',
+      shortDescription: widget.subtitle,
+      price: widget.priceValue,
+      currency: 'MXN',
+      type: StoreProductType.membership,
+      imageUrl: '',
+      categoryKey: 'memberships',
+      categoryLabel: 'Membresias',
+      benefits: widget.benefits.where((b) => b.included).map((b) => b.label).toList(),
+      availability: 'Activacion inmediata al confirmar pago',
+      isFeatured: false,
+    );
+
+    StoreCartController.instance.clear();
+    StoreCartController.instance.add(product);
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const CartPage()),
     );
   }
 }

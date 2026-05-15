@@ -1,4 +1,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import {
+  createAdminClient as createStripeAdminClient,
+  DEFAULT_BRANCH_ID,
+  loadActiveStripeSettings,
+} from "./stripe_settings.ts"
 
 export const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -53,6 +58,35 @@ export function requireEnv(name: string) {
   if (!value) {
     throw new Error(`Missing environment variable: ${name}`)
   }
+  return value
+}
+
+let _cachedStripeSecretKey: string | null = null
+let _cachedStripeWebhookSecret: string | null = null
+
+export async function loadStripeSecretKey() {
+  if (_cachedStripeSecretKey) return _cachedStripeSecretKey
+
+  const supabase = createStripeAdminClient()
+  const active = await loadActiveStripeSettings(supabase, DEFAULT_BRANCH_ID)
+  const value = active?.secretKey || Deno.env.get("STRIPE_SECRET_KEY") || ""
+  if (!value) {
+    throw new Error("Missing active Stripe secret key")
+  }
+  _cachedStripeSecretKey = value
+  return value
+}
+
+export async function loadStripeWebhookSecret() {
+  if (_cachedStripeWebhookSecret) return _cachedStripeWebhookSecret
+
+  const supabase = createStripeAdminClient()
+  const active = await loadActiveStripeSettings(supabase, DEFAULT_BRANCH_ID)
+  const value = active?.webhookSecret || Deno.env.get("STRIPE_WEBHOOK_SECRET") || ""
+  if (!value) {
+    throw new Error("Missing active Stripe webhook secret")
+  }
+  _cachedStripeWebhookSecret = value
   return value
 }
 
@@ -114,7 +148,7 @@ export async function stripeApiRequest<T>(
     form?: Record<string, string>
   } = {},
 ) {
-  const secretKey = requireEnv("STRIPE_SECRET_KEY")
+  const secretKey = await loadStripeSecretKey()
   const response = await fetch(`https://api.stripe.com/v1${path}`, {
     method: init.method ?? "POST",
     headers: {
@@ -322,9 +356,13 @@ export async function fulfillOrder(
     }
 
     if (productType === "membership") {
+      const requestedDurationDays = Math.max(
+        1,
+        Number(metadata.membership_duration_days ?? 90),
+      )
       const startsAt = new Date()
       const endsAt = new Date(startsAt)
-      endsAt.setDate(endsAt.getDate() + 30)
+      endsAt.setDate(endsAt.getDate() + requestedDurationDays)
 
       const { error } = await supabase
         .from("memberships")

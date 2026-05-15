@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
+
 import '../data/services_data.dart';
+import '../features/web_content/web_content_models.dart';
+import '../features/web_content/web_content_repository.dart';
 
 class ServicesSection extends StatefulWidget {
   const ServicesSection({super.key});
@@ -9,47 +14,121 @@ class ServicesSection extends StatefulWidget {
 }
 
 class _ServicesSectionState extends State<ServicesSection> {
+  final WebContentRepository _repository = WebContentRepository();
+  late final Future<List<_ServiceCategoryView>> _future = _loadCategories();
+
+  Future<List<_ServiceCategoryView>> _loadCategories() async {
+    try {
+      final items = await _repository.loadContent(activeOnly: true);
+      final allowedSections = <String>{
+        'facials',
+        'massages',
+        'memberships',
+        'digital_products',
+        'physical_products',
+        'gift_cards',
+      };
+      final filtered = items.where((item) => allowedSections.contains(item.sectionKey)).toList();
+      if (filtered.isNotEmpty) {
+        return WebContentItem.sections
+            .where((section) => allowedSections.contains(section.key))
+            .map((section) {
+              final entries = filtered
+                  .where((item) => item.sectionKey == section.key)
+                  .toList()
+                ..sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+              return _ServiceCategoryView(
+                title: section.label,
+                subtitle: section.description,
+                items: entries,
+              );
+            })
+            .where((category) => category.items.isNotEmpty)
+            .toList();
+      }
+    } catch (_) {}
+
+    return servicesData.map((category) {
+      return _ServiceCategoryView(
+        title: category.title,
+        subtitle: category.subtitle,
+        items: category.services.map((service) {
+          return WebContentItem.empty(
+            sectionKey: category.title.toLowerCase(),
+            contentType: category.title.toLowerCase().contains('facial')
+                ? 'facial'
+                : 'massage',
+          ).copyWith(
+            title: service.name,
+            shortDescription: service.description,
+            longDescription: service.details,
+          );
+        }).toList(),
+      );
+    }).toList();
+  }
+
+  Future<void> _openCta(String rawUrl) async {
+    final value = rawUrl.trim();
+    if (value.isEmpty) return;
+    final uri = value.startsWith('/') || value.startsWith('#')
+        ? Uri.base.resolve(value)
+        : Uri.tryParse(value.startsWith('http') ? value : 'https://$value');
+    if (uri == null) return;
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 120, horizontal: 80),
-      color: const Color(0xFF0B0B0B),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            "Rituales & Experiencias",
-            style: TextStyle(
-              fontSize: 48,
-              color: Color(0xFFE8DCC8),
-              fontFamily: 'Playfair',
-            ),
+    return FutureBuilder<List<_ServiceCategoryView>>(
+      future: _future,
+      builder: (context, snapshot) {
+        final categories = snapshot.data ?? const <_ServiceCategoryView>[];
+        return Container(
+          padding: const EdgeInsets.symmetric(vertical: 120, horizontal: 80),
+          color: const Color(0xFF0B0B0B),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Rituales & Experiencias',
+                style: TextStyle(
+                  fontSize: 48,
+                  color: Color(0xFFE8DCC8),
+                  fontFamily: 'Playfair',
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'Selecciona una categoria para explorar nuestros servicios, productos y experiencias disponibles en la web.',
+                style: TextStyle(
+                  fontSize: 18,
+                  color: Colors.white70,
+                  fontWeight: FontWeight.w300,
+                ),
+              ),
+              const SizedBox(height: 60),
+              if (snapshot.connectionState == ConnectionState.waiting &&
+                  categories.isEmpty)
+                const Center(child: CircularProgressIndicator())
+              else
+                ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: categories.length,
+                  itemBuilder: (context, index) {
+                    final category = categories[index];
+                    return _buildCategoryTile(category);
+                  },
+                ),
+            ],
           ),
-          const SizedBox(height: 20),
-          const Text(
-            "Selecciona una categoría para explorar nuestros servicios y descubrir tu próximo momento de calma.",
-            style: TextStyle(
-              fontSize: 18,
-              color: Colors.white70,
-              fontWeight: FontWeight.w300,
-            ),
-          ),
-          const SizedBox(height: 60),
-          ListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: servicesData.length,
-            itemBuilder: (context, index) {
-              final category = servicesData[index];
-              return _buildCategoryTile(category);
-            },
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
-  Widget _buildCategoryTile(ServiceCategory category) {
+  Widget _buildCategoryTile(_ServiceCategoryView category) {
     return Container(
       margin: const EdgeInsets.only(bottom: 20),
       decoration: BoxDecoration(
@@ -92,7 +171,7 @@ class _ServicesSectionState extends State<ServicesSection> {
                     ),
                   ),
                   const SizedBox(height: 40),
-                  ...category.services.map((service) => _buildServiceItem(service)),
+                  ...category.items.map((service) => _buildServiceItem(service)),
                 ],
               ),
             ),
@@ -102,13 +181,13 @@ class _ServicesSectionState extends State<ServicesSection> {
     );
   }
 
-  Widget _buildServiceItem(SpaService service) {
+  Widget _buildServiceItem(WebContentItem item) {
     return Container(
       margin: const EdgeInsets.only(bottom: 30),
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         color: const Color(0xFF141414),
-        borderRadius: BorderRadius.circular(0), // Luxury rects
+        borderRadius: BorderRadius.circular(0),
         border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
       ),
       child: Row(
@@ -119,8 +198,19 @@ class _ServicesSectionState extends State<ServicesSection> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (item.subtitle.trim().isNotEmpty)
+                  Text(
+                    item.subtitle.toUpperCase(),
+                    style: GoogleFonts.inter(
+                      color: const Color(0xFFC6A76A),
+                      fontSize: 10,
+                      letterSpacing: 2,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                if (item.subtitle.trim().isNotEmpty) const SizedBox(height: 8),
                 Text(
-                  service.name,
+                  item.title,
                   style: const TextStyle(
                     fontSize: 20,
                     color: Colors.white,
@@ -129,7 +219,9 @@ class _ServicesSectionState extends State<ServicesSection> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  service.description,
+                  item.shortDescription.isNotEmpty
+                      ? item.shortDescription
+                      : item.longDescription,
                   style: const TextStyle(
                     fontSize: 14,
                     color: Colors.white70,
@@ -147,7 +239,7 @@ class _ServicesSectionState extends State<ServicesSection> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  "DETALLES",
+                  'DETALLES',
                   style: TextStyle(
                     fontSize: 12,
                     color: Color(0xFFC6A76A),
@@ -156,14 +248,39 @@ class _ServicesSectionState extends State<ServicesSection> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                Text(
-                  service.details,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Colors.white,
-                    height: 1.5,
+                if (item.longDescription.isNotEmpty)
+                  Text(
+                    item.longDescription,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Colors.white,
+                      height: 1.5,
+                    ),
                   ),
-                ),
+                if (item.priceLabel.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  Text(
+                    item.promoPriceLabel.isNotEmpty
+                        ? '${item.promoPriceLabel} · antes ${item.priceLabel}'
+                        : item.priceLabel,
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      color: const Color(0xFFE8DCC8),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+                if (item.ctaText.trim().isNotEmpty && item.ctaUrl.trim().isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  OutlinedButton(
+                    onPressed: () => _openCta(item.ctaUrl),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFC6A76A),
+                      side: const BorderSide(color: Color(0xFFC6A76A)),
+                    ),
+                    child: Text(item.ctaText),
+                  ),
+                ],
               ],
             ),
           ),
@@ -171,4 +288,16 @@ class _ServicesSectionState extends State<ServicesSection> {
       ),
     );
   }
+}
+
+class _ServiceCategoryView {
+  const _ServiceCategoryView({
+    required this.title,
+    required this.subtitle,
+    required this.items,
+  });
+
+  final String title;
+  final String subtitle;
+  final List<WebContentItem> items;
 }

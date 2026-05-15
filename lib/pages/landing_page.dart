@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../features/store/controllers/store_cart_controller.dart';
 import '../features/store/services/store_checkout_service.dart';
+import '../features/store/orders_page.dart';
 import '../widgets/navbar.dart';
 import '../widgets/hero_section.dart';
 import '../widgets/animated_section.dart';
@@ -79,12 +80,13 @@ class _LandingPageState extends State<LandingPage> {
 
       if (result.paymentStatus == 'paid' || result.status == 'paid') {
         StoreCartController.instance.clear();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Pago confirmado. Tu orden ya quedo registrada.')),
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const OrdersPage()),
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Stripe regreso con estado ${result.paymentStatus}.')),
+          SnackBar(content: Text('Stripe regresó con estado ${result.paymentStatus}.')),
         );
       }
     } catch (_) {

@@ -446,6 +446,15 @@ class _ClientDetailPanel extends StatefulWidget {
 }
 
 class _ClientDetailPanelState extends State<_ClientDetailPanel> {
+  static const Set<String> _visitedStatuses = <String>{
+    'attended',
+    'completed',
+    'paid',
+    'awaiting_payment',
+    'checked_in',
+    'in_progress',
+  };
+
   List<Map<String, dynamic>> _history = [];
   bool   _loadingHistory = true;
   int    _totalVisits    = 0;
@@ -480,8 +489,9 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
 
       if (!mounted) return;
       final visits = data
-          .where((b) => (b['status'] as String? ?? '') == 'completed' ||
-              (b['status'] as String? ?? '') == 'attended')
+          .where((b) => _visitedStatuses.contains(
+                ((b['status'] as String?) ?? '').trim().toLowerCase(),
+              ))
           .length;
       final last = data.isNotEmpty
           ? _fmtDate(data.first['booking_date'] as String? ?? '')
@@ -1088,6 +1098,11 @@ class _HistoryRow extends StatelessWidget {
     'waiting':   Color(0xFF52C41A),
     'cancelled': Color(0xFFB32D2D),
     'completed': Color(0xFF888888),
+    'paid': Color(0xFF52C41A),
+    'awaiting_payment': Color(0xFFE0A800),
+    'checked_in': Color(0xFF5B8FF9),
+    'in_progress': Color(0xFF7B61FF),
+    'rescheduled': Color(0xFF91A7FF),
   };
   static const _statusLabel = {
     'scheduled': 'Reservada',
@@ -1098,6 +1113,11 @@ class _HistoryRow extends StatelessWidget {
     'waiting':   'En espera',
     'cancelled': 'Cancelada',
     'completed': 'Completada',
+    'paid': 'Pagada',
+    'awaiting_payment': 'Pendiente de cobro',
+    'checked_in': 'Check-in',
+    'in_progress': 'En progreso',
+    'rescheduled': 'Reagendada',
   };
 
   String _fmtDate(String iso) {

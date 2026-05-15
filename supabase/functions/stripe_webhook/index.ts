@@ -3,9 +3,9 @@ import {
   createAdminClient,
   fulfillOrder,
   jsonResponse,
+  loadStripeWebhookSecret,
   markOrderAsPaid,
   markOrderWithStatus,
-  requireEnv,
   verifyStripeSignature,
 } from "../_shared/stripe_checkout.ts"
 
@@ -21,7 +21,7 @@ serve(async (req) => {
 
     const signature = req.headers.get("stripe-signature")
     const payload = await req.text()
-    const webhookSecret = requireEnv("STRIPE_WEBHOOK_SECRET")
+    const webhookSecret = await loadStripeWebhookSecret()
     const validSignature = await verifyStripeSignature(payload, signature, webhookSecret)
 
     if (!validSignature) {

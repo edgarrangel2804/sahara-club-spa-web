@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../pages/reception_login_page.dart';
 import '../features/store/store_page.dart';
+import '../features/store/orders_page.dart';
 
 class Navbar extends StatelessWidget {
   final bool isScrolled;
@@ -58,6 +59,8 @@ class Navbar extends StatelessWidget {
                     _navItem("CONTACTO", 4),
                     const SizedBox(width: 20),
                     _storeButton(context),
+                    const SizedBox(width: 12),
+                    _ordersButton(context),
                     const SizedBox(width: 20),
                     _receptionButton(context),
                   ],
@@ -89,6 +92,17 @@ class Navbar extends StatelessWidget {
         );
       },
       child: const Text("RECEPCIÓN", style: TextStyle(fontSize: 11, letterSpacing: 2, fontWeight: FontWeight.bold)),
+    );
+  }
+
+  Widget _ordersButton(BuildContext context) {
+    return IconButton(
+      tooltip: 'Mis compras',
+      icon: const Icon(Icons.receipt_long_outlined, color: Color(0xFFC6A76A), size: 20),
+      onPressed: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const OrdersPage()),
+      ),
     );
   }
 
