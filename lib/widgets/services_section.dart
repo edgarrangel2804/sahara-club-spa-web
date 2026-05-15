@@ -84,51 +84,59 @@ class _ServicesSectionState extends State<ServicesSection> {
       future: _future,
       builder: (context, snapshot) {
         final categories = snapshot.data ?? const <_ServiceCategoryView>[];
-        return Container(
-          padding: const EdgeInsets.symmetric(vertical: 120, horizontal: 80),
-          color: const Color(0xFF0B0B0B),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Rituales & Experiencias',
-                style: TextStyle(
-                  fontSize: 48,
-                  color: Color(0xFFE8DCC8),
-                  fontFamily: 'Playfair',
-                ),
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final isMobile = constraints.maxWidth < 768;
+            return Container(
+              padding: EdgeInsets.symmetric(
+                vertical: isMobile ? 64 : 120,
+                horizontal: isMobile ? 24 : 80,
               ),
-              const SizedBox(height: 20),
-              const Text(
-                'Selecciona una categoria para explorar nuestros servicios, productos y experiencias disponibles en la web.',
-                style: TextStyle(
-                  fontSize: 18,
-                  color: Colors.white70,
-                  fontWeight: FontWeight.w300,
-                ),
+              color: const Color(0xFF0B0B0B),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Rituales & Experiencias',
+                    style: TextStyle(
+                      fontSize: isMobile ? 36 : 48,
+                      color: const Color(0xFFE8DCC8),
+                      fontFamily: 'Playfair',
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    'Selecciona una categoria para explorar nuestros servicios, productos y experiencias disponibles en la web.',
+                    style: TextStyle(
+                      fontSize: isMobile ? 15 : 18,
+                      color: Colors.white70,
+                      fontWeight: FontWeight.w300,
+                    ),
+                  ),
+                  const SizedBox(height: 60),
+                  if (snapshot.connectionState == ConnectionState.waiting &&
+                      categories.isEmpty)
+                    const Center(child: CircularProgressIndicator())
+                  else
+                    ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: categories.length,
+                      itemBuilder: (context, index) {
+                        final category = categories[index];
+                        return _buildCategoryTile(category, isMobile);
+                      },
+                    ),
+                ],
               ),
-              const SizedBox(height: 60),
-              if (snapshot.connectionState == ConnectionState.waiting &&
-                  categories.isEmpty)
-                const Center(child: CircularProgressIndicator())
-              else
-                ListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: categories.length,
-                  itemBuilder: (context, index) {
-                    final category = categories[index];
-                    return _buildCategoryTile(category);
-                  },
-                ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
   }
 
-  Widget _buildCategoryTile(_ServiceCategoryView category) {
+  Widget _buildCategoryTile(_ServiceCategoryView category, bool isMobile) {
     return Container(
       margin: const EdgeInsets.only(bottom: 20),
       decoration: BoxDecoration(
@@ -148,8 +156,8 @@ class _ServicesSectionState extends State<ServicesSection> {
           tilePadding: const EdgeInsets.symmetric(vertical: 20, horizontal: 0),
           title: Text(
             category.title.toUpperCase(),
-            style: const TextStyle(
-              fontSize: 24,
+            style: TextStyle(
+              fontSize: isMobile ? 18 : 24,
               color: Colors.white,
               fontFamily: 'Playfair',
               letterSpacing: 2,
@@ -171,7 +179,7 @@ class _ServicesSectionState extends State<ServicesSection> {
                     ),
                   ),
                   const SizedBox(height: 40),
-                  ...category.items.map((service) => _buildServiceItem(service)),
+                  ...category.items.map((service) => _buildServiceItem(service, isMobile)),
                 ],
               ),
             ),
@@ -181,8 +189,8 @@ class _ServicesSectionState extends State<ServicesSection> {
     );
   }
 
-  Widget _buildServiceItem(WebContentItem item) {
-    return Container(
+  Widget _buildServiceItem(WebContentItem item, bool isMobile) {
+    final content = Container(
       margin: const EdgeInsets.only(bottom: 30),
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -190,102 +198,130 @@ class _ServicesSectionState extends State<ServicesSection> {
         borderRadius: BorderRadius.circular(0),
         border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            flex: 3,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (item.subtitle.trim().isNotEmpty)
-                  Text(
-                    item.subtitle.toUpperCase(),
-                    style: GoogleFonts.inter(
-                      color: const Color(0xFFC6A76A),
-                      fontSize: 10,
-                      letterSpacing: 2,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                if (item.subtitle.trim().isNotEmpty) const SizedBox(height: 8),
-                Text(
-                  item.title,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    color: Colors.white,
-                    fontFamily: 'Playfair',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  item.shortDescription.isNotEmpty
-                      ? item.shortDescription
-                      : item.longDescription,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Colors.white70,
-                    height: 1.6,
-                    fontWeight: FontWeight.w300,
-                  ),
-                ),
-              ],
+      child: isMobile
+          ? _buildServiceItemMobile(item)
+          : _buildServiceItemDesktop(item),
+    );
+    return content;
+  }
+
+  Widget _buildServiceItemDesktop(WebContentItem item) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          flex: 3,
+          child: _buildServiceInfo(item),
+        ),
+        const SizedBox(width: 40),
+        Expanded(
+          flex: 1,
+          child: _buildServiceDetails(item),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildServiceItemMobile(WebContentItem item) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildServiceInfo(item),
+        const SizedBox(height: 24),
+        Container(height: 0.5, color: Colors.white12),
+        const SizedBox(height: 20),
+        _buildServiceDetails(item),
+      ],
+    );
+  }
+
+  Widget _buildServiceInfo(WebContentItem item) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (item.subtitle.trim().isNotEmpty)
+          Text(
+            item.subtitle.toUpperCase(),
+            style: GoogleFonts.inter(
+              color: const Color(0xFFC6A76A),
+              fontSize: 10,
+              letterSpacing: 2,
+              fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(width: 40),
-          Expanded(
-            flex: 1,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'DETALLES',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFFC6A76A),
-                    letterSpacing: 2,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                if (item.longDescription.isNotEmpty)
-                  Text(
-                    item.longDescription,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: Colors.white,
-                      height: 1.5,
-                    ),
-                  ),
-                if (item.priceLabel.isNotEmpty) ...[
-                  const SizedBox(height: 14),
-                  Text(
-                    item.promoPriceLabel.isNotEmpty
-                        ? '${item.promoPriceLabel} · antes ${item.priceLabel}'
-                        : item.priceLabel,
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      color: const Color(0xFFE8DCC8),
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-                if (item.ctaText.trim().isNotEmpty && item.ctaUrl.trim().isNotEmpty) ...[
-                  const SizedBox(height: 14),
-                  OutlinedButton(
-                    onPressed: () => _openCta(item.ctaUrl),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFFC6A76A),
-                      side: const BorderSide(color: Color(0xFFC6A76A)),
-                    ),
-                    child: Text(item.ctaText),
-                  ),
-                ],
-              ],
+        if (item.subtitle.trim().isNotEmpty) const SizedBox(height: 8),
+        Text(
+          item.title,
+          style: const TextStyle(
+            fontSize: 20,
+            color: Colors.white,
+            fontFamily: 'Playfair',
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          item.shortDescription.isNotEmpty
+              ? item.shortDescription
+              : item.longDescription,
+          style: const TextStyle(
+            fontSize: 14,
+            color: Colors.white70,
+            height: 1.6,
+            fontWeight: FontWeight.w300,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildServiceDetails(WebContentItem item) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'DETALLES',
+          style: TextStyle(
+            fontSize: 12,
+            color: Color(0xFFC6A76A),
+            letterSpacing: 2,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (item.longDescription.isNotEmpty)
+          Text(
+            item.longDescription,
+            style: const TextStyle(
+              fontSize: 14,
+              color: Colors.white,
+              height: 1.5,
+            ),
+          ),
+        if (item.priceLabel.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          Text(
+            item.promoPriceLabel.isNotEmpty
+                ? '${item.promoPriceLabel} · antes ${item.priceLabel}'
+                : item.priceLabel,
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              color: const Color(0xFFE8DCC8),
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
-      ),
+        if (item.ctaText.trim().isNotEmpty && item.ctaUrl.trim().isNotEmpty) ...[
+          const SizedBox(height: 14),
+          OutlinedButton(
+            onPressed: () => _openCta(item.ctaUrl),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFFC6A76A),
+              side: const BorderSide(color: Color(0xFFC6A76A)),
+            ),
+            child: Text(item.ctaText),
+          ),
+        ],
+      ],
     );
   }
 }

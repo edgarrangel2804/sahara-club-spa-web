@@ -4,7 +4,7 @@ import '../pages/reception_login_page.dart';
 import '../features/store/store_page.dart';
 import '../features/store/orders_page.dart';
 
-class Navbar extends StatelessWidget {
+class Navbar extends StatefulWidget {
   final bool isScrolled;
   final Function(int) onTap;
 
@@ -15,41 +15,80 @@ class Navbar extends StatelessWidget {
   });
 
   @override
+  State<Navbar> createState() => _NavbarState();
+}
+
+class _NavbarState extends State<Navbar> {
+  bool _menuOpen = false;
+
+  void _closeMenu() => setState(() => _menuOpen = false);
+
+  @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.of(context).size.width < 768;
+
     return Positioned(
       top: 0,
       left: 0,
       right: 0,
-      child: ClipRRect(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 300),
-            padding: const EdgeInsets.symmetric(horizontal: 80, vertical: 20),
-            decoration: BoxDecoration(
-              color: isScrolled
-                  ? Colors.black.withValues(alpha: 0.6)
-                  : Colors.transparent,
-              border: Border(
-                bottom: BorderSide(
-                  color: isScrolled ? Colors.white10 : Colors.transparent,
-                  width: 0.5,
-                ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildBar(context, isMobile),
+          if (isMobile && _menuOpen) _buildMobileMenu(context),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBar(BuildContext context, bool isMobile) {
+    return ClipRRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
+          padding: EdgeInsets.symmetric(
+            horizontal: isMobile ? 20 : 80,
+            vertical: isMobile ? 14 : 20,
+          ),
+          decoration: BoxDecoration(
+            color: widget.isScrolled || (isMobile && _menuOpen)
+                ? Colors.black.withValues(alpha: 0.85)
+                : Colors.transparent,
+            border: Border(
+              bottom: BorderSide(
+                color: widget.isScrolled ? Colors.white10 : Colors.transparent,
+                width: 0.5,
               ),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  "SAHARA CLUB",
-                  style: TextStyle(
-                    color: Color(0xFFC6A76A),
-                    fontSize: 20,
-                    letterSpacing: 4,
-                    fontFamily: 'Playfair',
-                    fontWeight: FontWeight.bold,
-                  ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                "SAHARA CLUB",
+                style: TextStyle(
+                  color: Color(0xFFC6A76A),
+                  fontSize: 18,
+                  letterSpacing: 4,
+                  fontFamily: 'Playfair',
+                  fontWeight: FontWeight.bold,
                 ),
+              ),
+              if (isMobile)
+                GestureDetector(
+                  onTap: () => setState(() => _menuOpen = !_menuOpen),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    child: Icon(
+                      _menuOpen ? Icons.close : Icons.menu,
+                      key: ValueKey(_menuOpen),
+                      color: const Color(0xFFC6A76A),
+                      size: 24,
+                    ),
+                  ),
+                )
+              else
                 Row(
                   children: [
                     _navItem("HOME", 0),
@@ -65,8 +104,65 @@ class Navbar extends StatelessWidget {
                     _receptionButton(context),
                   ],
                 ),
-              ],
-            ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMobileMenu(BuildContext context) {
+    return ClipRRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          width: double.infinity,
+          color: Colors.black.withValues(alpha: 0.93),
+          padding: const EdgeInsets.fromLTRB(28, 8, 28, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _mobileNavItem("HOME", 0),
+              _mobileNavItem("SERVICIOS", 1),
+              _mobileNavItem("EXPERIENCIA", 2),
+              _mobileNavItem("NOTICIAS", 3),
+              _mobileNavItem("CONTACTO", 4),
+              const SizedBox(height: 16),
+              Container(height: 0.5, color: Colors.white12),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: _storeMobileButton(context),
+                  ),
+                  const SizedBox(width: 12),
+                  _ordersMobileButton(context),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _receptionMobileButton(context),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _mobileNavItem(String text, int index) {
+    return GestureDetector(
+      onTap: () {
+        widget.onTap(index);
+        _closeMenu();
+      },
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 13),
+        child: Text(
+          text,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 12,
+            letterSpacing: 3,
           ),
         ),
       ),
@@ -74,7 +170,7 @@ class Navbar extends StatelessWidget {
   }
 
   Widget _navItem(String text, int index) {
-    return _NavbarItem(text: text, index: index, onTap: onTap);
+    return _NavbarItem(text: text, index: index, onTap: widget.onTap);
   }
 
   Widget _receptionButton(BuildContext context) {
@@ -85,13 +181,39 @@ class Navbar extends StatelessWidget {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
         padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 18),
       ),
-      onPressed: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const ReceptionLoginPage()),
-        );
-      },
-      child: const Text("RECEPCIÓN", style: TextStyle(fontSize: 11, letterSpacing: 2, fontWeight: FontWeight.bold)),
+      onPressed: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const ReceptionLoginPage()),
+      ),
+      child: const Text(
+        "RECEPCIÓN",
+        style: TextStyle(fontSize: 11, letterSpacing: 2, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
+  Widget _receptionMobileButton(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFFC6A76A),
+          foregroundColor: Colors.black,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
+          padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 14),
+        ),
+        onPressed: () {
+          _closeMenu();
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const ReceptionLoginPage()),
+          );
+        },
+        child: const Text(
+          "RECEPCIÓN",
+          style: TextStyle(fontSize: 11, letterSpacing: 2, fontWeight: FontWeight.bold),
+        ),
+      ),
     );
   }
 
@@ -106,6 +228,20 @@ class Navbar extends StatelessWidget {
     );
   }
 
+  Widget _ordersMobileButton(BuildContext context) {
+    return IconButton(
+      tooltip: 'Mis compras',
+      icon: const Icon(Icons.receipt_long_outlined, color: Color(0xFFC6A76A), size: 22),
+      onPressed: () {
+        _closeMenu();
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const OrdersPage()),
+        );
+      },
+    );
+  }
+
   Widget _storeButton(BuildContext context) {
     return OutlinedButton(
       style: OutlinedButton.styleFrom(
@@ -114,16 +250,38 @@ class Navbar extends StatelessWidget {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
         padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 18),
       ),
+      onPressed: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const StorePage()),
+      ),
+      child: const Text(
+        "TIENDA",
+        style: TextStyle(fontSize: 11, letterSpacing: 2, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
+  Widget _storeMobileButton(BuildContext context) {
+    return OutlinedButton(
+      style: OutlinedButton.styleFrom(
+        side: const BorderSide(color: Color(0xFFC6A76A), width: 1),
+        foregroundColor: const Color(0xFFC6A76A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
+      ),
       onPressed: () {
+        _closeMenu();
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const StorePage()),
         );
       },
-      child: const Text("TIENDA", style: TextStyle(fontSize: 11, letterSpacing: 2, fontWeight: FontWeight.bold)),
+      child: const Text(
+        "TIENDA",
+        style: TextStyle(fontSize: 11, letterSpacing: 2, fontWeight: FontWeight.bold),
+      ),
     );
   }
-
 }
 
 class _NavbarItem extends StatefulWidget {

@@ -6,87 +6,108 @@ class ExperienceSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isMobile = constraints.maxWidth < 768;
+        return Column(
+          children: [
+            _buildPhilosophy(isMobile),
+            _buildPillars(isMobile),
+            _buildQuote(isMobile),
+            _buildImageGrid(isMobile),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildPhilosophy(bool isMobile) {
+    return Container(
+      color: const Color(0xFF141414),
+      padding: EdgeInsets.fromLTRB(
+        isMobile ? 24 : 100,
+        isMobile ? 64 : 120,
+        isMobile ? 24 : 100,
+        isMobile ? 48 : 100,
+      ),
+      child: isMobile
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _philosophyLeft(isMobile),
+                const SizedBox(height: 32),
+                _philosophyRight(),
+              ],
+            )
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(flex: 5, child: _philosophyLeft(isMobile)),
+                const SizedBox(width: 80),
+                Expanded(flex: 4, child: Padding(
+                  padding: const EdgeInsets.only(top: 60),
+                  child: _philosophyRight(),
+                )),
+              ],
+            ),
+    );
+  }
+
+  Widget _philosophyLeft(bool isMobile) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildPhilosophy(),
-        _buildPillars(),
-        _buildQuote(),
-        _buildImageGrid(),
+        Text(
+          'LA EXPERIENCIA SAHARA',
+          style: GoogleFonts.inter(
+            fontSize: 11,
+            color: const Color(0xFFC6A76A),
+            letterSpacing: 4,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 20),
+        Text(
+          'Un espacio que\nrecuerda quién eres',
+          style: GoogleFonts.playfairDisplay(
+            fontSize: isMobile ? 40 : 60,
+            color: const Color(0xFFE8DCC8),
+            fontWeight: FontWeight.w300,
+            height: 1.15,
+          ),
+        ),
       ],
     );
   }
 
-  Widget _buildPhilosophy() {
-    return Container(
-      color: const Color(0xFF141414),
-      padding: const EdgeInsets.fromLTRB(100, 120, 100, 100),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            flex: 5,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'LA EXPERIENCIA SAHARA',
-                  style: GoogleFonts.inter(
-                    fontSize: 11,
-                    color: const Color(0xFFC6A76A),
-                    letterSpacing: 4,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  'Un espacio que\nrecuerda quién eres',
-                  style: GoogleFonts.playfairDisplay(
-                    fontSize: 60,
-                    color: const Color(0xFFE8DCC8),
-                    fontWeight: FontWeight.w300,
-                    height: 1.15,
-                  ),
-                ),
-              ],
-            ),
+  Widget _philosophyRight() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'No somos un spa tradicional. Somos un espacio de encuentro entre el cuerpo, la mente y la presencia.',
+          style: GoogleFonts.inter(
+            fontSize: 18,
+            color: Colors.white70,
+            fontWeight: FontWeight.w300,
+            height: 1.7,
           ),
-          const SizedBox(width: 80),
-          Expanded(
-            flex: 4,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 60),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'No somos un spa tradicional. Somos un espacio de encuentro entre el cuerpo, la mente y la presencia.',
-                    style: GoogleFonts.inter(
-                      fontSize: 18,
-                      color: Colors.white70,
-                      fontWeight: FontWeight.w300,
-                      height: 1.7,
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Cada ritual está diseñado para devolverte a ti. Sin prisas, sin guiones fijos. Solo presencia, contacto y transformación real.',
-                    style: GoogleFonts.inter(
-                      fontSize: 16,
-                      color: Colors.white38,
-                      fontWeight: FontWeight.w300,
-                      height: 1.7,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+        ),
+        const SizedBox(height: 24),
+        Text(
+          'Cada ritual está diseñado para devolverte a ti. Sin prisas, sin guiones fijos. Solo presencia, contacto y transformación real.',
+          style: GoogleFonts.inter(
+            fontSize: 16,
+            color: Colors.white38,
+            fontWeight: FontWeight.w300,
+            height: 1.7,
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
-  Widget _buildPillars() {
+  Widget _buildPillars(bool isMobile) {
     final pillars = [
       _Pillar(
         '01',
@@ -107,19 +128,34 @@ class ExperienceSection extends StatelessWidget {
 
     return Container(
       color: const Color(0xFF141414),
-      padding: const EdgeInsets.fromLTRB(100, 0, 100, 120),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: List.generate(pillars.length, (i) {
-          final p = pillars[i];
-          return Expanded(
-            child: Container(
-              margin: EdgeInsets.only(right: i < pillars.length - 1 ? 48 : 0),
-              child: _buildPillar(p),
-            ),
-          );
-        }),
+      padding: EdgeInsets.fromLTRB(
+        isMobile ? 24 : 100,
+        0,
+        isMobile ? 24 : 100,
+        isMobile ? 64 : 120,
       ),
+      child: isMobile
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: pillars
+                  .map((p) => Padding(
+                        padding: const EdgeInsets.only(bottom: 48),
+                        child: _buildPillar(p),
+                      ))
+                  .toList(),
+            )
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: List.generate(pillars.length, (i) {
+                final p = pillars[i];
+                return Expanded(
+                  child: Container(
+                    margin: EdgeInsets.only(right: i < pillars.length - 1 ? 48 : 0),
+                    child: _buildPillar(p),
+                  ),
+                );
+              }),
+            ),
     );
   }
 
@@ -159,10 +195,13 @@ class ExperienceSection extends StatelessWidget {
     );
   }
 
-  Widget _buildQuote() {
+  Widget _buildQuote(bool isMobile) {
     return Container(
       color: const Color(0xFF0B0B0B),
-      padding: const EdgeInsets.symmetric(vertical: 100, horizontal: 180),
+      padding: EdgeInsets.symmetric(
+        vertical: isMobile ? 64 : 100,
+        horizontal: isMobile ? 32 : 180,
+      ),
       child: Column(
         children: [
           Container(
@@ -175,7 +214,7 @@ class ExperienceSection extends StatelessWidget {
             '"El cuerpo no miente.\nAquí le damos espacio para decir la verdad."',
             textAlign: TextAlign.center,
             style: GoogleFonts.playfairDisplay(
-              fontSize: 38,
+              fontSize: isMobile ? 26 : 38,
               color: const Color(0xFFE8DCC8),
               fontWeight: FontWeight.w300,
               height: 1.5,
@@ -203,7 +242,54 @@ class ExperienceSection extends StatelessWidget {
     );
   }
 
-  Widget _buildImageGrid() {
+  Widget _buildImageGrid(bool isMobile) {
+    if (isMobile) {
+      return Column(
+        children: [
+          AspectRatio(
+            aspectRatio: 4 / 3,
+            child: Image.asset('assets/images/01.png', fit: BoxFit.cover, width: double.infinity),
+          ),
+          const SizedBox(height: 3),
+          Row(
+            children: [
+              Expanded(
+                child: AspectRatio(
+                  aspectRatio: 1,
+                  child: Image.asset('assets/images/02.png', fit: BoxFit.cover),
+                ),
+              ),
+              const SizedBox(width: 3),
+              Expanded(
+                child: AspectRatio(
+                  aspectRatio: 1,
+                  child: Image.asset('assets/images/03.png', fit: BoxFit.cover),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          Row(
+            children: [
+              Expanded(
+                child: AspectRatio(
+                  aspectRatio: 1,
+                  child: Image.asset('assets/images/04.png', fit: BoxFit.cover),
+                ),
+              ),
+              const SizedBox(width: 3),
+              Expanded(
+                child: AspectRatio(
+                  aspectRatio: 1,
+                  child: Image.asset('assets/images/05.png', fit: BoxFit.cover),
+                ),
+              ),
+            ],
+          ),
+        ],
+      );
+    }
+
     return SizedBox(
       height: 520,
       child: Row(

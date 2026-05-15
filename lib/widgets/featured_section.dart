@@ -62,27 +62,35 @@ class _FeaturedSectionState extends State<FeaturedSection> {
       future: _future,
       builder: (context, snapshot) {
         final state = snapshot.data ?? const _FeaturedContentState(cards: <WebContentItem>[]);
-        return Container(
-          color: const Color(0xFF0B0B0B),
-          padding: const EdgeInsets.symmetric(vertical: 120, horizontal: 100),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildHeader(),
-              const SizedBox(height: 72),
-              _buildCards(state.cards),
-              if (state.promo != null) ...[
-                const SizedBox(height: 80),
-                _buildPromoStrip(state.promo!),
-              ],
-            ],
-          ),
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final isMobile = constraints.maxWidth < 768;
+            return Container(
+              color: const Color(0xFF0B0B0B),
+              padding: EdgeInsets.symmetric(
+                vertical: isMobile ? 64 : 120,
+                horizontal: isMobile ? 24 : 100,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildHeader(isMobile),
+                  SizedBox(height: isMobile ? 48 : 72),
+                  _buildCards(state.cards, isMobile),
+                  if (state.promo != null) ...[
+                    SizedBox(height: isMobile ? 48 : 80),
+                    _buildPromoStrip(state.promo!, isMobile),
+                  ],
+                ],
+              ),
+            );
+          },
         );
       },
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildHeader(bool isMobile) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -96,39 +104,65 @@ class _FeaturedSectionState extends State<FeaturedSection> {
           ),
         ),
         const SizedBox(height: 20),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Expanded(
-              child: Text(
+        if (isMobile)
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
                 'Lo que mas\nte va a transformar',
                 style: GoogleFonts.playfairDisplay(
-                  fontSize: 56,
+                  fontSize: 38,
                   color: const Color(0xFFE8DCC8),
                   fontWeight: FontWeight.w300,
                   height: 1.2,
                 ),
               ),
-            ),
-            const SizedBox(width: 60),
-            Expanded(
-              child: Text(
+              const SizedBox(height: 20),
+              Text(
                 'Contenido destacado, promociones vivas y experiencias seleccionadas para mostrar lo mejor de Sahara Club Spa.',
                 style: GoogleFonts.inter(
-                  fontSize: 16,
+                  fontSize: 15,
                   color: Colors.white54,
                   fontWeight: FontWeight.w300,
                   height: 1.7,
                 ),
               ),
-            ),
-          ],
-        ),
+            ],
+          )
+        else
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: Text(
+                  'Lo que mas\nte va a transformar',
+                  style: GoogleFonts.playfairDisplay(
+                    fontSize: 56,
+                    color: const Color(0xFFE8DCC8),
+                    fontWeight: FontWeight.w300,
+                    height: 1.2,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 60),
+              Expanded(
+                child: Text(
+                  'Contenido destacado, promociones vivas y experiencias seleccionadas para mostrar lo mejor de Sahara Club Spa.',
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    color: Colors.white54,
+                    fontWeight: FontWeight.w300,
+                    height: 1.7,
+                  ),
+                ),
+              ),
+            ],
+          ),
       ],
     );
   }
 
-  Widget _buildCards(List<WebContentItem> cards) {
+  Widget _buildCards(List<WebContentItem> cards, bool isMobile) {
     if (cards.isEmpty) {
       return Text(
         'Aun no hay publicaciones destacadas activas.',
@@ -136,6 +170,17 @@ class _FeaturedSectionState extends State<FeaturedSection> {
           fontSize: 15,
           color: Colors.white54,
         ),
+      );
+    }
+
+    if (isMobile) {
+      return Column(
+        children: List.generate(cards.length, (index) {
+          return Padding(
+            padding: EdgeInsets.only(bottom: index < cards.length - 1 ? 28 : 0),
+            child: _buildCard(cards[index]),
+          );
+        }),
       );
     }
 
@@ -278,55 +323,73 @@ class _FeaturedSectionState extends State<FeaturedSection> {
     );
   }
 
-  Widget _buildPromoStrip(WebContentItem promo) {
+  Widget _buildPromoStrip(WebContentItem promo, bool isMobile) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 60),
+      padding: EdgeInsets.symmetric(
+        vertical: isMobile ? 28 : 40,
+        horizontal: isMobile ? 24 : 60,
+      ),
       decoration: BoxDecoration(
         border: Border.all(color: const Color(0xFFC6A76A).withValues(alpha: 0.2)),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Expanded(
-            child: Column(
+      child: isMobile
+          ? Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  promo.title,
-                  style: GoogleFonts.playfairDisplay(
-                    fontSize: 32,
-                    color: const Color(0xFFE8DCC8),
-                    fontWeight: FontWeight.w300,
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  promo.shortDescription.isNotEmpty
-                      ? promo.shortDescription
-                      : promo.longDescription,
-                  style: GoogleFonts.inter(
-                    fontSize: 15,
-                    color: Colors.white54,
-                    fontWeight: FontWeight.w300,
-                  ),
-                ),
+                _promoText(promo),
+                const SizedBox(height: 24),
+                _promoButton(promo),
+              ],
+            )
+          : Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(child: _promoText(promo)),
+                const SizedBox(width: 24),
+                _promoButton(promo),
               ],
             ),
+    );
+  }
+
+  Widget _promoText(WebContentItem promo) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          promo.title,
+          style: GoogleFonts.playfairDisplay(
+            fontSize: 32,
+            color: const Color(0xFFE8DCC8),
+            fontWeight: FontWeight.w300,
+            fontStyle: FontStyle.italic,
           ),
-          const SizedBox(width: 24),
-          _HoverButton(
-            label: promo.ctaText.trim().isNotEmpty
-                ? promo.ctaText.toUpperCase()
-                : 'AGENDA TU CONSULTA',
-            large: true,
-            onTap: promo.ctaUrl.trim().isNotEmpty
-                ? () => _openCta(promo.ctaUrl)
-                : null,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          promo.shortDescription.isNotEmpty
+              ? promo.shortDescription
+              : promo.longDescription,
+          style: GoogleFonts.inter(
+            fontSize: 15,
+            color: Colors.white54,
+            fontWeight: FontWeight.w300,
           ),
-        ],
-      ),
+        ),
+      ],
+    );
+  }
+
+  Widget _promoButton(WebContentItem promo) {
+    return _HoverButton(
+      label: promo.ctaText.trim().isNotEmpty
+          ? promo.ctaText.toUpperCase()
+          : 'AGENDA TU CONSULTA',
+      large: true,
+      onTap: promo.ctaUrl.trim().isNotEmpty
+          ? () => _openCta(promo.ctaUrl)
+          : null,
     );
   }
 }
@@ -352,14 +415,14 @@ class _FeaturedImage extends StatelessWidget {
       return Image.network(
         url,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => Container(color: const Color(0xFF1A1A1A)),
+        errorBuilder: (context, error, stack) => Container(color: const Color(0xFF1A1A1A)),
       );
     }
     if (url.trim().isNotEmpty) {
       return Image.asset(
         url,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => Container(color: const Color(0xFF1A1A1A)),
+        errorBuilder: (context, error, stack) => Container(color: const Color(0xFF1A1A1A)),
       );
     }
     return Container(color: const Color(0xFF1A1A1A));

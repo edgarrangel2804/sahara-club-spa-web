@@ -56,74 +56,83 @@ class _HeroSectionState extends State<HeroSection> {
             : 'RESERVA TU RITUAL';
         final imageUrl = hero?.imageUrl.trim() ?? '';
 
-        return SizedBox(
-          width: double.infinity,
-          height: 850,
-          child: Stack(
-            children: [
-              const Positioned.fill(
-                child: HeroMediaBackground(),
-              ),
-              if (imageUrl.isNotEmpty)
-                Positioned.fill(
-                  child: _HeroOverlayImage(url: imageUrl),
-                ),
-              Positioned.fill(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
-                      colors: [
-                        Colors.black.withValues(alpha: 0.52),
-                        Colors.black.withValues(alpha: 0.18),
-                      ],
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final isMobile = constraints.maxWidth < 768;
+            return SizedBox(
+              width: double.infinity,
+              height: isMobile ? 620 : 850,
+              child: Stack(
+                children: [
+                  const Positioned.fill(
+                    child: HeroMediaBackground(),
+                  ),
+                  if (imageUrl.isNotEmpty)
+                    Positioned.fill(
+                      child: _HeroOverlayImage(url: imageUrl),
+                    ),
+                  Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                          colors: [
+                            Colors.black.withValues(alpha: isMobile ? 0.65 : 0.52),
+                            Colors.black.withValues(alpha: isMobile ? 0.35 : 0.18),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 100),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontSize: 84,
-                        color: Colors.white,
-                        fontFamily: 'Playfair',
-                        fontWeight: FontWeight.w200,
-                        height: 1.1,
-                      ),
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isMobile ? 24 : 100,
                     ),
-                    const SizedBox(height: 20),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w300,
-                        fontStyle: FontStyle.italic,
-                      ),
-                    ),
-                    const SizedBox(height: 56),
-                    Row(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _primaryButton(
-                          label: ctaText,
-                          onTap: hero?.ctaUrl.trim().isNotEmpty == true
-                              ? () => _openCta(hero!.ctaUrl)
-                              : null,
+                        if (isMobile) const SizedBox(height: 60),
+                        Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: isMobile ? 52 : 84,
+                            color: Colors.white,
+                            fontFamily: 'Playfair',
+                            fontWeight: FontWeight.w200,
+                            height: 1.1,
+                          ),
+                        ),
+                        SizedBox(height: isMobile ? 16 : 20),
+                        Text(
+                          subtitle,
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: isMobile ? 16 : 22,
+                            fontWeight: FontWeight.w300,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                        SizedBox(height: isMobile ? 40 : 56),
+                        Row(
+                          children: [
+                            _primaryButton(
+                              label: ctaText,
+                              isMobile: isMobile,
+                              onTap: hero?.ctaUrl.trim().isNotEmpty == true
+                                  ? () => _openCta(hero!.ctaUrl)
+                                  : null,
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -131,6 +140,7 @@ class _HeroSectionState extends State<HeroSection> {
 
   Widget _primaryButton({
     required String label,
+    required bool isMobile,
     VoidCallback? onTap,
   }) {
     return MouseRegion(
@@ -141,7 +151,10 @@ class _HeroSectionState extends State<HeroSection> {
         onTap: onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 300),
-          padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 24),
+          padding: EdgeInsets.symmetric(
+            horizontal: isMobile ? 32 : 48,
+            vertical: isMobile ? 18 : 24,
+          ),
           decoration: BoxDecoration(
             color: _isHoverPrimary ? const Color(0xFFE8DCC8) : const Color(0xFFC6A76A),
             borderRadius: BorderRadius.circular(0),
@@ -152,7 +165,7 @@ class _HeroSectionState extends State<HeroSection> {
               color: Colors.black,
               fontWeight: FontWeight.bold,
               letterSpacing: 2,
-              fontSize: 12,
+              fontSize: isMobile ? 11 : 12,
             ),
           ),
         ),
@@ -172,13 +185,13 @@ class _HeroOverlayImage extends StatelessWidget {
       return Image.network(
         url,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+        errorBuilder: (context, error, stack) => const SizedBox.shrink(),
       );
     }
     return Image.asset(
       url,
       fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      errorBuilder: (context, error, stack) => const SizedBox.shrink(),
     );
   }
 }

@@ -47,40 +47,59 @@ class _ContactSectionState extends State<ContactSection> {
       future: _future,
       builder: (context, snapshot) {
         final data = snapshot.data ?? _ContactSectionViewData.fallback();
-        return Container(
-          color: const Color(0xFF141414),
-          child: Column(
-            children: [
-              _buildMain(data),
-              _buildBottomStrip(data),
-            ],
-          ),
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final isMobile = constraints.maxWidth < 768;
+            return Container(
+              color: const Color(0xFF141414),
+              child: Column(
+                children: [
+                  _buildMain(data, isMobile),
+                  _buildBottomStrip(data, isMobile),
+                ],
+              ),
+            );
+          },
         );
       },
     );
   }
 
-  Widget _buildMain(_ContactSectionViewData data) {
+  Widget _buildMain(_ContactSectionViewData data, bool isMobile) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(100, 120, 100, 80),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            flex: 5,
-            child: _buildContactInfo(data),
-          ),
-          const SizedBox(width: 100),
-          Expanded(
-            flex: 4,
-            child: _buildSchedule(data),
-          ),
-        ],
+      padding: EdgeInsets.fromLTRB(
+        isMobile ? 24 : 100,
+        isMobile ? 64 : 120,
+        isMobile ? 24 : 100,
+        isMobile ? 48 : 80,
       ),
+      child: isMobile
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildContactInfo(data, isMobile),
+                const SizedBox(height: 56),
+                _buildSchedule(data, isMobile),
+              ],
+            )
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  flex: 5,
+                  child: _buildContactInfo(data, isMobile),
+                ),
+                const SizedBox(width: 100),
+                Expanded(
+                  flex: 4,
+                  child: _buildSchedule(data, isMobile),
+                ),
+              ],
+            ),
     );
   }
 
-  Widget _buildContactInfo(_ContactSectionViewData data) {
+  Widget _buildContactInfo(_ContactSectionViewData data, bool isMobile) {
     final item = data.contactItem;
     final profile = data.profile;
     final sectionTag = item?.subtitle.isNotEmpty == true
@@ -111,7 +130,7 @@ class _ContactSectionState extends State<ContactSection> {
         Text(
           title,
           style: GoogleFonts.playfairDisplay(
-            fontSize: 60,
+            fontSize: isMobile ? 44 : 60,
             color: const Color(0xFFE8DCC8),
             fontWeight: FontWeight.w300,
           ),
@@ -144,22 +163,40 @@ class _ContactSectionState extends State<ContactSection> {
           profile.email.isNotEmpty ? profile.email : 'hola@saharaclubspa.mx',
         ),
         const SizedBox(height: 56),
-        Row(
-          children: [
-            _ActionButton(
-              label: 'WHATSAPP',
-              icon: Icons.chat_bubble_outline_rounded,
-              filled: false,
-              url: _buildWhatsAppUrl(profile.whatsapp),
-            ),
-            const SizedBox(width: 20),
-            _ActionButton(
-              label: reserveText.toUpperCase(),
-              filled: true,
-              url: reserveUrl,
-            ),
-          ],
-        ),
+        isMobile
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _ActionButton(
+                    label: 'WHATSAPP',
+                    icon: Icons.chat_bubble_outline_rounded,
+                    filled: false,
+                    url: _buildWhatsAppUrl(profile.whatsapp),
+                  ),
+                  const SizedBox(height: 12),
+                  _ActionButton(
+                    label: reserveText.toUpperCase(),
+                    filled: true,
+                    url: reserveUrl,
+                  ),
+                ],
+              )
+            : Row(
+                children: [
+                  _ActionButton(
+                    label: 'WHATSAPP',
+                    icon: Icons.chat_bubble_outline_rounded,
+                    filled: false,
+                    url: _buildWhatsAppUrl(profile.whatsapp),
+                  ),
+                  const SizedBox(width: 20),
+                  _ActionButton(
+                    label: reserveText.toUpperCase(),
+                    filled: true,
+                    url: reserveUrl,
+                  ),
+                ],
+              ),
       ],
     );
   }
@@ -183,7 +220,7 @@ class _ContactSectionState extends State<ContactSection> {
     );
   }
 
-  Widget _buildSchedule(_ContactSectionViewData data) {
+  Widget _buildSchedule(_ContactSectionViewData data, bool isMobile) {
     final scheduleItems = data.scheduleItems;
     final note = data.note ??
         'Las citas se asignan con confirmación del equipo. Te contactamos en menos de 2 horas.';
@@ -191,7 +228,7 @@ class _ContactSectionState extends State<ContactSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 100),
+        if (!isMobile) const SizedBox(height: 100),
         Text(
           'HORARIOS',
           style: GoogleFonts.inter(
@@ -279,7 +316,7 @@ class _ContactSectionState extends State<ContactSection> {
   Widget _divider() =>
       Container(height: 0.5, color: Colors.white.withValues(alpha: 0.07));
 
-  Widget _buildBottomStrip(_ContactSectionViewData data) {
+  Widget _buildBottomStrip(_ContactSectionViewData data, bool isMobile) {
     final note = data.contactItem?.longDescription.isNotEmpty == true
         ? data.contactItem!.longDescription
         : 'Cada visita a Sahara Club es confidencial, sin juicios, sin prisa.';
@@ -287,7 +324,10 @@ class _ContactSectionState extends State<ContactSection> {
     return Container(
       width: double.infinity,
       color: const Color(0xFF0A0A0A),
-      padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 100),
+      padding: EdgeInsets.symmetric(
+        vertical: 32,
+        horizontal: isMobile ? 24 : 100,
+      ),
       child: Row(
         children: [
           const Icon(Icons.spa_outlined, color: Color(0xFFC6A76A), size: 16),

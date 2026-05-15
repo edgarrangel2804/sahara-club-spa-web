@@ -51,158 +51,174 @@ class _FooterState extends State<Footer> {
       future: _future,
       builder: (context, snapshot) {
         final data = snapshot.data ?? _FooterViewData.fallback();
-        return Container(
-          color: Colors.black,
-          child: Column(
-            children: [
-              _buildMain(data),
-              _buildDivider(),
-              _buildBottom(data),
-            ],
-          ),
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final isMobile = constraints.maxWidth < 768;
+            return Container(
+              color: Colors.black,
+              child: Column(
+                children: [
+                  _buildMain(data, isMobile),
+                  _buildDivider(isMobile),
+                  _buildBottom(data, isMobile),
+                ],
+              ),
+            );
+          },
         );
       },
     );
   }
 
-  Widget _buildMain(_FooterViewData data) {
+  Widget _buildMain(_FooterViewData data, bool isMobile) {
     final brandItem = data.brandItem;
     final navItems = data.navigationItems;
     final serviceItems = data.serviceItems;
     final profile = data.profile;
+
+    final brandCol = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          profile.name.isNotEmpty ? profile.name.toUpperCase() : 'SAHARA CLUB',
+          style: GoogleFonts.playfairDisplay(
+            fontSize: 22,
+            color: const Color(0xFFC6A76A),
+            letterSpacing: 4,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          brandItem?.subtitle.isNotEmpty == true
+              ? brandItem!.subtitle.toUpperCase()
+              : 'SPA & BIENESTAR',
+          style: GoogleFonts.inter(
+            fontSize: 10,
+            color: Colors.white24,
+            letterSpacing: 3,
+          ),
+        ),
+        const SizedBox(height: 28),
+        Text(
+          brandItem?.shortDescription.isNotEmpty == true
+              ? brandItem!.shortDescription
+              : 'Este es tu momento.\nTu cuerpo recuerda\ncómo descansar.',
+          style: GoogleFonts.playfairDisplay(
+            fontSize: 20,
+            color: Colors.white38,
+            fontWeight: FontWeight.w300,
+            height: 1.6,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+        const SizedBox(height: 36),
+        Row(
+          children: [
+            _SocialIcon(
+              icon: Icons.camera_alt_outlined,
+              label: 'Instagram',
+              url: 'https://www.instagram.com/saharaclubmx/',
+            ),
+            const SizedBox(width: 16),
+            _SocialIcon(
+              icon: Icons.facebook_rounded,
+              label: 'Facebook',
+              url: 'https://www.facebook.com/SaharaClub/',
+            ),
+            const SizedBox(width: 16),
+            _SocialIcon(
+              icon: Icons.chat_bubble_outline_rounded,
+              label: 'WhatsApp',
+              url: _whatsAppUrl(profile.whatsapp),
+            ),
+          ],
+        ),
+      ],
+    );
+
+    final navCol = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _footerHeading('NAVEGACIÓN'),
+        const SizedBox(height: 24),
+        ...(navItems.isEmpty
+            ? _defaultNavigation()
+            : navItems.map((item) => _footerLink(item.title, url: item.ctaUrl))),
+      ],
+    );
+
+    final servicesCol = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _footerHeading('SERVICIOS'),
+        const SizedBox(height: 24),
+        ...(serviceItems.isEmpty
+            ? _defaultServices()
+            : serviceItems.map((item) => _footerLink(item.title, url: item.ctaUrl))),
+      ],
+    );
+
+    final contactCol = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _footerHeading('CONTACTO'),
+        const SizedBox(height: 24),
+        _footerText(
+          profile.address.isNotEmpty
+              ? profile.address
+              : 'Ensenada, Baja California',
+        ),
+        const SizedBox(height: 10),
+        _footerText(
+          profile.phone.isNotEmpty ? profile.phone : '+52 (646) 123-4567',
+        ),
+        const SizedBox(height: 10),
+        _footerText(
+          profile.email.isNotEmpty
+              ? profile.email
+              : 'hola@saharaclubspa.mx',
+        ),
+        const SizedBox(height: 24),
+        ...data.scheduleLines.map(_footerText),
+      ],
+    );
+
+    if (isMobile) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(24, 60, 24, 48),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            brandCol,
+            const SizedBox(height: 48),
+            Container(height: 0.5, color: Colors.white.withValues(alpha: 0.07)),
+            const SizedBox(height: 40),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: navCol),
+                const SizedBox(width: 32),
+                Expanded(child: servicesCol),
+              ],
+            ),
+            const SizedBox(height: 40),
+            contactCol,
+          ],
+        ),
+      );
+    }
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(100, 80, 100, 64),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            flex: 3,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  profile.name.isNotEmpty ? profile.name.toUpperCase() : 'SAHARA CLUB',
-                  style: GoogleFonts.playfairDisplay(
-                    fontSize: 22,
-                    color: const Color(0xFFC6A76A),
-                    letterSpacing: 4,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  brandItem?.subtitle.isNotEmpty == true
-                      ? brandItem!.subtitle.toUpperCase()
-                      : 'SPA & BIENESTAR',
-                  style: GoogleFonts.inter(
-                    fontSize: 10,
-                    color: Colors.white24,
-                    letterSpacing: 3,
-                  ),
-                ),
-                const SizedBox(height: 28),
-                Text(
-                  brandItem?.shortDescription.isNotEmpty == true
-                      ? brandItem!.shortDescription
-                      : 'Este es tu momento.\nTu cuerpo recuerda\ncómo descansar.',
-                  style: GoogleFonts.playfairDisplay(
-                    fontSize: 20,
-                    color: Colors.white38,
-                    fontWeight: FontWeight.w300,
-                    height: 1.6,
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-                const SizedBox(height: 36),
-                Row(
-                  children: [
-                    _SocialIcon(
-                      icon: Icons.camera_alt_outlined,
-                      label: 'Instagram',
-                      url: 'https://www.instagram.com/saharaclubmx/',
-                    ),
-                    const SizedBox(width: 16),
-                    _SocialIcon(
-                      icon: Icons.facebook_rounded,
-                      label: 'Facebook',
-                      url: 'https://www.facebook.com/SaharaClub/',
-                    ),
-                    const SizedBox(width: 16),
-                    _SocialIcon(
-                      icon: Icons.chat_bubble_outline_rounded,
-                      label: 'WhatsApp',
-                      url: _whatsAppUrl(profile.whatsapp),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
+          Expanded(flex: 3, child: brandCol),
           const SizedBox(width: 60),
-          Expanded(
-            flex: 2,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _footerHeading('NAVEGACIÓN'),
-                const SizedBox(height: 24),
-                ...(navItems.isEmpty
-                    ? _defaultNavigation()
-                    : navItems.map(
-                        (item) => _footerLink(
-                          item.title,
-                          url: item.ctaUrl,
-                        ),
-                      )),
-              ],
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _footerHeading('SERVICIOS'),
-                const SizedBox(height: 24),
-                ...(serviceItems.isEmpty
-                    ? _defaultServices()
-                    : serviceItems.map(
-                        (item) => _footerLink(
-                          item.title,
-                          url: item.ctaUrl,
-                        ),
-                      )),
-              ],
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _footerHeading('CONTACTO'),
-                const SizedBox(height: 24),
-                _footerText(
-                  profile.address.isNotEmpty
-                      ? profile.address
-                      : 'Ensenada, Baja California',
-                ),
-                const SizedBox(height: 10),
-                _footerText(
-                  profile.phone.isNotEmpty ? profile.phone : '+52 (646) 123-4567',
-                ),
-                const SizedBox(height: 10),
-                _footerText(
-                  profile.email.isNotEmpty
-                      ? profile.email
-                      : 'hola@saharaclubspa.mx',
-                ),
-                const SizedBox(height: 24),
-                ...data.scheduleLines.map(_footerText),
-              ],
-            ),
-          ),
+          Expanded(flex: 2, child: navCol),
+          Expanded(flex: 2, child: servicesCol),
+          Expanded(flex: 2, child: contactCol),
         ],
       ),
     );
@@ -239,15 +255,15 @@ class _FooterState extends State<Footer> {
     );
   }
 
-  Widget _buildDivider() {
+  Widget _buildDivider(bool isMobile) {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 100),
+      margin: EdgeInsets.symmetric(horizontal: isMobile ? 24 : 100),
       height: 0.5,
       color: Colors.white.withValues(alpha: 0.07),
     );
   }
 
-  Widget _buildBottom(_FooterViewData data) {
+  Widget _buildBottom(_FooterViewData data, bool isMobile) {
     final legalItem = data.legalItem;
     final copyright =
         legalItem?.shortDescription.isNotEmpty == true
@@ -257,6 +273,34 @@ class _FooterState extends State<Footer> {
         legalItem?.longDescription.isNotEmpty == true
             ? legalItem!.longDescription
             : 'ENSENADA, BAJA CALIFORNIA · MÉXICO';
+
+    if (isMobile) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              copyright.toUpperCase(),
+              style: GoogleFonts.inter(
+                fontSize: 10,
+                color: Colors.white.withValues(alpha: 0.18),
+                letterSpacing: 1,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              location.toUpperCase(),
+              style: GoogleFonts.inter(
+                fontSize: 10,
+                color: Colors.white.withValues(alpha: 0.18),
+                letterSpacing: 1,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 100),
