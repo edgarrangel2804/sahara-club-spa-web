@@ -16,6 +16,9 @@ class SaharaTheme {
   static const Color beige = blancoAlmendra;
   static const Color black = Color(0xFF0B0B0B); // Mantenemos el negro real para el landing de lujo
   static const Color burgundy = Color(0xFF4A0E0E); // Necesario para el landing de lujo
+  static const Color primary = black;
+  static const Color surface = Colors.white;
+  static const Color background = blancoAlmendra;
 
   static const LinearGradient darkGradient = LinearGradient(
     colors: [black, burgundy],

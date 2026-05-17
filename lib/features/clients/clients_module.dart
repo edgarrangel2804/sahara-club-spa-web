@@ -446,18 +446,10 @@ class _ClientDetailPanel extends StatefulWidget {
 }
 
 class _ClientDetailPanelState extends State<_ClientDetailPanel> {
-  static const Set<String> _visitedStatuses = <String>{
-    'attended',
-    'completed',
-    'paid',
-    'awaiting_payment',
-    'checked_in',
-    'in_progress',
-  };
-
   List<Map<String, dynamic>> _history = [];
   bool   _loadingHistory = true;
   int    _totalVisits    = 0;
+  int    _totalReservas  = 0;
   String _lastVisit      = '—';
 
   @override
@@ -475,6 +467,38 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
   Future<void> _loadHistory() async {
     setState(() => _loadingHistory = true);
     try {
+      // Paso 1: Buscar el profile ID del auth por nombre o email
+      // (para capturar reservas creadas con client_id en lugar de client_record_id)
+      String? profileId;
+      try {
+        // Intentar primero por email si existe
+        if (widget.client.email.isNotEmpty) {
+          final byEmail = await Supabase.instance.client
+              .from('profiles')
+              .select('id')
+              .eq('email', widget.client.email)
+              .maybeSingle();
+          profileId = byEmail?['id'] as String?;
+        }
+        // Fallback: buscar por nombre exacto
+        if (profileId == null && widget.client.fullName.isNotEmpty) {
+          final byName = await Supabase.instance.client
+              .from('profiles')
+              .select('id')
+              .eq('full_name', widget.client.fullName)
+              .maybeSingle();
+          profileId = byName?['id'] as String?;
+        }
+      } catch (_) {
+        // Si falla la búsqueda del perfil, continuar sin él
+      }
+
+      // Paso 2: Construir filtro OR: client_record_id O client_id (perfil)
+      final orFilter = profileId != null
+          ? 'client_record_id.eq.${widget.client.id},client_id.eq.$profileId'
+          : 'client_record_id.eq.${widget.client.id}';
+
+      // Paso 3: Traer todas las reservas del cliente por ambos vínculos
       final data = await Supabase.instance.client
           .from('bookings')
           .select('''
@@ -485,21 +509,21 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
           .eq('client_record_id', widget.client.id)
           .order('booking_date', ascending: false)
           .order('booking_time', ascending: false)
-          .limit(20) as List;
+          .limit(100) as List;
+
+      // Fecha de la reserva más reciente (primera de la lista ordenada DESC)
+      String lastVisitStr = '—';
+      if (data.isNotEmpty) {
+        final firstDate = data.first['booking_date'] as String? ?? '';
+        if (firstDate.isNotEmpty) lastVisitStr = _fmtDate(firstDate);
+      }
 
       if (!mounted) return;
-      final visits = data
-          .where((b) => _visitedStatuses.contains(
-                ((b['status'] as String?) ?? '').trim().toLowerCase(),
-              ))
-          .length;
-      final last = data.isNotEmpty
-          ? _fmtDate(data.first['booking_date'] as String? ?? '')
-          : '—';
       setState(() {
-        _history        = data.cast<Map<String, dynamic>>();
-        _totalVisits    = visits;
-        _lastVisit      = last;
+        _history       = data.cast<Map<String, dynamic>>();
+        _totalVisits   = data.length;  // total citas
+        _totalReservas = data.length;  // total reservas (mismo origen)
+        _lastVisit     = lastVisitStr;
         _loadingHistory = false;
       });
     } catch (e) {
@@ -615,14 +639,14 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
             Row(children: [
               Expanded(child: _StatCard(
                 icon:  Icons.event_available_outlined,
-                label: 'Total visitas',
+                label: 'Total citas',
                 value: '$_totalVisits',
                 color: SaharaTheme.gold,
               )),
               const SizedBox(width: 12),
               Expanded(child: _StatCard(
                 icon:  Icons.history_outlined,
-                label: 'Última visita',
+                label: 'Última cita',
                 value: _lastVisit,
                 color: const Color(0xFF5B8FF9),
               )),
@@ -630,7 +654,7 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
               Expanded(child: _StatCard(
                 icon:  Icons.list_alt_outlined,
                 label: 'Total reservas',
-                value: '${_history.length}',
+                value: '$_totalReservas',
                 color: const Color(0xFF52C41A),
               )),
             ]),

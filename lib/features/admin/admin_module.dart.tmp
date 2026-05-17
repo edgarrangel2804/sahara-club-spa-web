@@ -1,0 +1,199 @@
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            Container(
+              height: 56,
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+                border: Border(bottom: BorderSide(color: Color(0xFFECE9E4))),
+              ),
+              child: Row(
+                children: [
+                  Text(
+                    isEdit ? 'Editar personal' : 'Nuevo personal',
+                    style: GoogleFonts.inter(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(
+                      Icons.close,
+                      size: 18,
+                      color: Colors.black38,
+                    ),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            // Body
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  children: [
+                    _FormCard(
+                      children: [
+                        _FieldLabel('Nombre completo *'),
+                        const SizedBox(height: 6),
+                        _Field(ctrl: _name, hint: 'Ej: Juan Perez'),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    _FormCard(
+                      children: [
+                        _FieldLabel('Rol'),
+                        const SizedBox(height: 6),
+                        DropdownButtonFormField<String>(
+                          value: _role,
+                          dropdownColor: Colors.white,
+                          style: GoogleFonts.inter(
+                            color: Colors.black87,
+                            fontSize: 13,
+                          ),
+                          decoration: InputDecoration(
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderSide: const BorderSide(
+                                color: Color(0xFFDDD9D3),
+                              ),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderSide: const BorderSide(
+                                color: SaharaTheme.gold,
+                              ),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            filled: true,
+                            fillColor: Colors.white,
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'therapist',
+                              child: Text('Terapeuta'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'admin',
+                              child: Text('Administrador'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'reception',
+                              child: Text('Recepcion'),
+                            ),
+                          ],
+                          onChanged: (v) => setState(() => _role = v!),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // Footer
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(
+                  bottom: Radius.circular(12),
+                ),
+                border: Border(top: BorderSide(color: Color(0xFFECE9E4))),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: Text(
+                      'Cancelar',
+                      style: GoogleFonts.inter(
+                        color: Colors.black54,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  ElevatedButton.icon(
+                    onPressed: _saving
+                        ? null
+                        : () async {
+                            if (_name.text.trim().isEmpty) return;
+                            setState(() => _saving = true);
+                            try {
+                              final data = {
+                                'full_name': _name.text.trim(),
+                                'role': _role,
+                              };
+                              if (widget.staff == null) {
+                                await Supabase.instance.client
+                                    .from('staff')
+                                    .insert(data);
+                              } else {
+                                await Supabase.instance.client
+                                    .from('staff')
+                                    .update(data)
+                                    .eq('id', widget.staff!.id);
+                              }
+                              widget.onSaved();
+                              if (mounted) {
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Personal guardado correctamente',
+                                    ),
+                                    backgroundColor: SaharaTheme.gold,
+                                  ),
+                                );
+                              }
+                            } finally {
+                              if (mounted) setState(() => _saving = false);
+                            }
+                          },
+                    icon: _saving
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.black,
+                            ),
+                          )
+                        : const Icon(Icons.check, size: 16),
+                    label: Text(
+                      isEdit ? 'Guardar cambios' : 'Crear personal',
+                      style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: SaharaTheme.gold,
+                      foregroundColor: Colors.black,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 12,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
