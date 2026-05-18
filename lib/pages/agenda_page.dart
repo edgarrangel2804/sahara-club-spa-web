@@ -20,11 +20,11 @@ import '../features/reportes/reportes_module.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
-const _kStartHour = 9;
-const _kEndHour = 19;
 const _kHourHeight = 64.0;
 const _kTimeColWidth = 64.0;
 const _kSidebarWidth = 224.0;
+const _kDefaultCalendarStartMinute = 0;
+const _kDefaultCalendarEndMinute = (24 * 60) - 1;
 
 // ── Spanish month/day names ───────────────────────────────────────────────────
 const _kMonths = [
@@ -219,6 +219,160 @@ DateTime _mondayOf(DateTime d) =>
 bool _sameDay(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
 
+class _AgendaCalendarHours {
+  const _AgendaCalendarHours({
+    required this.startMinute,
+    required this.endMinuteInclusive,
+  });
+
+  const _AgendaCalendarHours.fullDay()
+    : startMinute = _kDefaultCalendarStartMinute,
+      endMinuteInclusive = _kDefaultCalendarEndMinute;
+
+  final int startMinute;
+  final int endMinuteInclusive;
+
+  int get lastSlotMinute {
+    final normalizedEnd = endMinuteInclusive.clamp(0, _kDefaultCalendarEndMinute);
+    final snapped = (normalizedEnd ~/ 15) * 15;
+    return snapped.clamp(startMinute, _kDefaultCalendarEndMinute);
+  }
+
+  int get displayEndMinuteExclusive {
+    final slotEnd = (lastSlotMinute + 15).clamp(startMinute + 15, 24 * 60);
+    return max(slotEnd, startMinute + 60);
+  }
+
+  double get gridHeight =>
+      (displayEndMinuteExclusive - startMinute) * (_kHourHeight / 60);
+
+  int get totalDisplayMinutes => displayEndMinuteExclusive - startMinute;
+
+  List<int> get hourLabelMinutes {
+    final totalHours = max(1, (totalDisplayMinutes / 60).ceil());
+    return List<int>.generate(
+      totalHours,
+      (index) => startMinute + (index * 60),
+    );
+  }
+
+  List<int> get selectableHours {
+    final firstHour = startMinute ~/ 60;
+    final lastHour = lastSlotMinute ~/ 60;
+    return List<int>.generate(
+      max(1, (lastHour - firstHour) + 1),
+      (index) => firstHour + index,
+    );
+  }
+
+  List<int> selectableMinutesForHour(int hour) {
+    final baseMinute = hour * 60;
+    final values = [0, 15, 30, 45]
+        .where((minute) => containsMinute(baseMinute + minute))
+        .toList();
+    return values.isEmpty ? const [0] : values;
+  }
+
+  bool containsMinute(int minute) =>
+      minute >= startMinute && minute <= lastSlotMinute;
+
+  _AgendaCalendarHours expandToFit(List<_Booking> bookings) {
+    if (bookings.isEmpty) return this;
+
+    var expandedStart = startMinute;
+    var expandedEnd = endMinuteInclusive;
+
+    for (final booking in bookings) {
+      final bookingStart = booking.startMinute.clamp(0, _kDefaultCalendarEndMinute);
+      final bookingEnd = booking.endMinute.clamp(0, 24 * 60);
+      if (bookingStart < expandedStart) {
+        expandedStart = max(0, (bookingStart ~/ 60) * 60);
+      }
+      if (bookingEnd > expandedEnd) {
+        expandedEnd = min(
+          _kDefaultCalendarEndMinute,
+          (((bookingEnd + 14) ~/ 15) * 15) - 1,
+        );
+      }
+    }
+
+    return _AgendaCalendarHours(
+      startMinute: expandedStart,
+      endMinuteInclusive: max(expandedStart, expandedEnd),
+    );
+  }
+
+  _AgendaCalendarHours normalized() {
+    final normalizedStart = startMinute.clamp(0, _kDefaultCalendarEndMinute);
+    final normalizedEnd = endMinuteInclusive.clamp(
+      normalizedStart,
+      _kDefaultCalendarEndMinute,
+    );
+    return _AgendaCalendarHours(
+      startMinute: normalizedStart,
+      endMinuteInclusive: normalizedEnd,
+    );
+  }
+
+  static _AgendaCalendarHours fromMap(Map<String, dynamic>? row) {
+    if (row == null) {
+      return const _AgendaCalendarHours.fullDay();
+    }
+
+    final startMinute = _parseCalendarMinute(
+      row['calendar_start_hour'],
+      fallbackMinute: _kDefaultCalendarStartMinute,
+    );
+    final endMinute = _parseCalendarMinute(
+      row['calendar_end_hour'],
+      fallbackMinute: _kDefaultCalendarEndMinute,
+    );
+
+    if (endMinute < startMinute) {
+      return const _AgendaCalendarHours.fullDay();
+    }
+
+    return _AgendaCalendarHours(
+      startMinute: startMinute,
+      endMinuteInclusive: endMinute,
+    ).normalized();
+  }
+}
+
+int _parseCalendarMinute(dynamic raw, {required int fallbackMinute}) {
+  if (raw == null) return fallbackMinute;
+  if (raw is num) {
+    final value = raw.toInt();
+    if (value >= 0 && value <= 24) return (value * 60).clamp(0, 24 * 60 - 1);
+    return value.clamp(0, 24 * 60 - 1);
+  }
+
+  final text = raw.toString().trim();
+  if (text.isEmpty) return fallbackMinute;
+
+  final number = int.tryParse(text);
+  if (number != null) {
+    if (number >= 0 && number <= 24) return (number * 60).clamp(0, 24 * 60 - 1);
+    return number.clamp(0, 24 * 60 - 1);
+  }
+
+  final parts = text.split(':');
+  if (parts.length >= 2) {
+    final hour = int.tryParse(parts[0]) ?? 0;
+    final minute = int.tryParse(parts[1]) ?? 0;
+    return ((hour * 60) + minute).clamp(0, 24 * 60 - 1);
+  }
+
+  return fallbackMinute;
+}
+
+String _minuteLabel24(int minute) {
+  final normalized = minute % (24 * 60);
+  final hour = normalized ~/ 60;
+  final mins = normalized % 60;
+  return '${hour.toString().padLeft(2, '0')}:${mins.toString().padLeft(2, '0')}';
+}
+
 String _yyyyMMdd(DateTime d) =>
     '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
@@ -244,6 +398,7 @@ class _AgendaPageState extends State<AgendaPage> {
   List<_Therapist> _therapists = [];
   List<Map<String, dynamic>> _branches = [];
   String? _selectedBranchId;
+  _AgendaCalendarHours _calendarHours = const _AgendaCalendarHours.fullDay();
 
   DateTime _now = DateTime.now();
   late Timer _timer;
@@ -282,7 +437,10 @@ class _AgendaPageState extends State<AgendaPage> {
     _monthStart = DateTime(DateTime.now().year, DateTime.now().month);
     _loadCurrentRole();
     _loadTherapists();
-    _loadBranches().then((_) => _loadBookings());
+    _loadBranches().then((_) async {
+      await _loadCalendarSettings();
+      await _loadBookings();
+    });
     _subscribeToBookingsRealtime();
     _subscribeToMessagesRealtime();
     _startMessagesPolling();
@@ -311,6 +469,8 @@ class _AgendaPageState extends State<AgendaPage> {
   }
 
   DateTime get _weekEnd => _weekStart.add(const Duration(days: 6));
+  _AgendaCalendarHours get _visibleCalendarHours =>
+      _calendarHours.expandToFit(_bookings);
 
   DateTime get _rangeStart {
     if (_viewMode == 'day')
@@ -887,9 +1047,10 @@ class _AgendaPageState extends State<AgendaPage> {
                                 selectedBranchId: _selectedBranchId,
                                 statusFilter: _statusFilter,
                                 weekStart: _weekStart,
-                                onBranch: (v) {
+                                onBranch: (v) async {
                                   setState(() => _selectedBranchId = v);
-                                  _loadBookings();
+                                  await _loadCalendarSettings();
+                                  await _loadBookings();
                                 },
                                 onTherapist: (v) {
                                   setState(() => _therapistId = v);
@@ -939,6 +1100,8 @@ class _AgendaPageState extends State<AgendaPage> {
                                             )
                                           : _viewMode == 'week'
                                           ? _WeekGrid(
+                                              calendarHours:
+                                                  _visibleCalendarHours,
                                               weekStart: _weekStart,
                                               bookings: _bookings,
                                               now: _now,
@@ -948,6 +1111,8 @@ class _AgendaPageState extends State<AgendaPage> {
                                             )
                                           : _viewMode == 'day'
                                           ? _DayGrid(
+                                              calendarHours:
+                                                  _visibleCalendarHours,
                                               day: _selectedDay,
                                               bookings: _bookings,
                                               now: _now,
@@ -1008,6 +1173,7 @@ class _AgendaPageState extends State<AgendaPage> {
     showDialog(
       context: ctx,
       builder: (_) => _NewBookingDialog(
+        calendarHours: _visibleCalendarHours,
         therapists: _therapists,
         branches: _branches,
         initialTherapistId: _therapistId,
@@ -1026,6 +1192,7 @@ class _AgendaPageState extends State<AgendaPage> {
     showDialog(
       context: ctx,
       builder: (_) => _NewBookingDialog(
+        calendarHours: _visibleCalendarHours,
         therapists: _therapists,
         branches: _branches,
         initialTherapistId: _therapistId,
@@ -1142,6 +1309,43 @@ class _AgendaPageState extends State<AgendaPage> {
       case 'pending':
       default:
         return 'pending';
+    }
+  }
+
+  Future<void> _loadCalendarSettings() async {
+    try {
+      dynamic query = Supabase.instance.client
+          .from('business_settings')
+          .select('calendar_start_hour, calendar_end_hour');
+
+      final branchId = kEnableMultiBranch ? _selectedBranchId : kDefaultBranchId;
+      if (branchId != null && branchId.isNotEmpty) {
+        query = query.eq('branch_id', branchId);
+      }
+
+      final rows = await query.limit(1);
+
+      Map<String, dynamic>? row;
+      if (rows is List && rows.isNotEmpty) {
+        row = Map<String, dynamic>.from(rows.first as Map);
+      }
+
+      if (mounted) {
+        setState(() {
+          _calendarHours = _AgendaCalendarHours.fromMap(row);
+        });
+      } else {
+        _calendarHours = _AgendaCalendarHours.fromMap(row);
+      }
+    } catch (error) {
+      debugPrint('loadCalendarSettings fallback: $error');
+      if (mounted) {
+        setState(() {
+          _calendarHours = const _AgendaCalendarHours.fullDay();
+        });
+      } else {
+        _calendarHours = const _AgendaCalendarHours.fullDay();
+      }
     }
   }
 
@@ -2672,6 +2876,7 @@ Future<bool?> _confirmReschedule(
 // ═════════════════════════════════════════════════════════════════════════════
 class _WeekGrid extends StatefulWidget {
   const _WeekGrid({
+    required this.calendarHours,
     required this.weekStart,
     required this.bookings,
     required this.now,
@@ -2680,6 +2885,7 @@ class _WeekGrid extends StatefulWidget {
     required this.onSlotTap,
   });
 
+  final _AgendaCalendarHours calendarHours;
   final DateTime weekStart;
   final List<_Booking> bookings;
   final DateTime now;
@@ -2697,15 +2903,43 @@ class _WeekGridState extends State<_WeekGrid> {
   Offset? _hoverLocal;
   double _dayWidth = 0;
   final _gridKey = GlobalKey();
+  final ScrollController _scrollController = ScrollController();
+  bool _didInitialScroll = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToPreferredHour());
+  }
+
+  @override
+  void didUpdateWidget(covariant _WeekGrid oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final hoursChanged =
+        oldWidget.calendarHours.startMinute != widget.calendarHours.startMinute ||
+        oldWidget.calendarHours.endMinuteInclusive !=
+            widget.calendarHours.endMinuteInclusive;
+    final weekChanged = !_sameDay(oldWidget.weekStart, widget.weekStart);
+    if (hoursChanged || weekChanged) {
+      _didInitialScroll = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToPreferredHour());
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   (int, int)? _slotFromLocal(Offset local) {
     if (_dayWidth <= 0 || local.dx < 0 || local.dy < 0) return null;
     final dayIdx = (local.dx / _dayWidth).floor().clamp(0, 6);
-    final rawMin = (local.dy / _kHourHeight * 60).round() + _kStartHour * 60;
+    final rawMin =
+        (local.dy / _kHourHeight * 60).round() + widget.calendarHours.startMinute;
     final snapped = (rawMin / 15).round() * 15;
-    if (snapped < _kStartHour * 60 || snapped > _kEndHour * 60 - 15)
-      return null;
+    if (!widget.calendarHours.containsMinute(snapped)) return null;
     return (dayIdx, snapped);
   }
 
@@ -2715,9 +2949,34 @@ class _WeekGridState extends State<_WeekGrid> {
   }
 
   String _minuteLabel(int minute) {
-    final h = minute ~/ 60;
-    final m = minute % 60;
-    return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
+    return _minuteLabel24(minute);
+  }
+
+  double _topForMinute(int minute) =>
+      (minute - widget.calendarHours.startMinute) * (_kHourHeight / 60);
+
+  void _jumpToPreferredHour() {
+    if (_didInitialScroll || !_scrollController.hasClients) return;
+    final nowMinute = widget.now.hour * 60 + widget.now.minute;
+    final todayIdx = DateTime(
+      widget.now.year,
+      widget.now.month,
+      widget.now.day,
+    ).difference(widget.weekStart).inDays;
+    final focusMinute = (todayIdx >= 0 && todayIdx < 7)
+        ? nowMinute
+        : max(widget.calendarHours.startMinute, 8 * 60);
+    final clampedMinute = focusMinute.clamp(
+      widget.calendarHours.startMinute,
+      widget.calendarHours.lastSlotMinute,
+    ).toInt();
+    final target = max(
+      0.0,
+      _topForMinute(clampedMinute) - (_kHourHeight * 1.5),
+    );
+    final maxExtent = _scrollController.position.maxScrollExtent;
+    _scrollController.jumpTo(target.clamp(0.0, maxExtent).toDouble());
+    _didInitialScroll = true;
   }
 
   // ── Build ──────────────────────────────────────────────────────────────────
@@ -2732,10 +2991,11 @@ class _WeekGridState extends State<_WeekGrid> {
           child: Container(
             color: Colors.white,
             child: SingleChildScrollView(
+              controller: _scrollController,
               child: LayoutBuilder(
                 builder: (ctx, constraints) {
                   _dayWidth = (constraints.maxWidth - _kTimeColWidth) / 7;
-                  final gridHeight = (_kEndHour - _kStartHour) * _kHourHeight;
+                  final gridHeight = widget.calendarHours.gridHeight;
                   return Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -2815,7 +3075,7 @@ class _WeekGridState extends State<_WeekGrid> {
       width: _kTimeColWidth,
       height: gridHeight,
       child: Column(
-        children: List.generate(_kEndHour - _kStartHour, (i) {
+        children: widget.calendarHours.hourLabelMinutes.map((minute) {
           return SizedBox(
             height: _kHourHeight,
             child: Align(
@@ -2823,7 +3083,7 @@ class _WeekGridState extends State<_WeekGrid> {
               child: Padding(
                 padding: const EdgeInsets.only(right: 10, top: 4),
                 child: Text(
-                  '${(_kStartHour + i).toString().padLeft(2, '0')}:00',
+                  _minuteLabel(minute),
                   style: GoogleFonts.inter(
                     color: Colors.grey,
                     fontSize: 11,
@@ -2833,7 +3093,7 @@ class _WeekGridState extends State<_WeekGrid> {
               ),
             ),
           );
-        }),
+        }).toList(),
       ),
     );
   }
@@ -2851,9 +3111,10 @@ class _WeekGridState extends State<_WeekGrid> {
           CustomPaint(
             size: Size(_dayWidth * 7, gridHeight),
             painter: _GridPainter(
+              startMinute: widget.calendarHours.startMinute,
+              endMinuteExclusive: widget.calendarHours.displayEndMinuteExclusive,
               dayWidth: _dayWidth,
               hourHeight: _kHourHeight,
-              hours: _kEndHour - _kStartHour,
               today: today,
               weekStart: widget.weekStart,
             ),
@@ -2950,7 +3211,7 @@ class _WeekGridState extends State<_WeekGrid> {
     final slot = _slotFromLocal(_hoverLocal!);
     if (slot == null) return const SizedBox.shrink();
     final (dayIdx, minute) = slot;
-    final top = (minute - _kStartHour * 60) * (_kHourHeight / 60);
+    final top = _topForMinute(minute);
     return Positioned(
       top: top,
       left: dayIdx * _dayWidth,
@@ -2986,7 +3247,7 @@ class _WeekGridState extends State<_WeekGrid> {
     final slot = _slotFromLocal(_dragLocal!);
     if (slot == null) return const SizedBox.shrink();
     final (dayIdx, minute) = slot;
-    final top = (minute - _kStartHour * 60) * (_kHourHeight / 60);
+    final top = _topForMinute(minute);
     final height = (_dragging!.durationMinutes * _kHourHeight / 60).clamp(
       22.0,
       double.infinity,
@@ -3038,8 +3299,8 @@ class _WeekGridState extends State<_WeekGrid> {
     final dayIdx = today.difference(widget.weekStart).inDays;
     if (dayIdx < 0 || dayIdx > 6) return const SizedBox.shrink();
     final minutes = widget.now.hour * 60 + widget.now.minute;
-    final topOffset = (minutes - _kStartHour * 60) * (_kHourHeight / 60);
-    if (topOffset < 0 || topOffset > (_kEndHour - _kStartHour) * _kHourHeight) {
+    final topOffset = _topForMinute(minutes);
+    if (topOffset < 0 || topOffset > widget.calendarHours.gridHeight) {
       return const SizedBox.shrink();
     }
     return Positioned(
@@ -3074,12 +3335,14 @@ class _WeekGridState extends State<_WeekGrid> {
     return widget.bookings.map((b) {
       final dayIdx = b.date.difference(widget.weekStart).inDays;
       if (dayIdx < 0 || dayIdx > 6) return const SizedBox.shrink();
-      final top = (b.startMinute - _kStartHour * 60) * (_kHourHeight / 60);
+      final top = _topForMinute(b.startMinute);
       final height = (b.durationMinutes * _kHourHeight / 60).clamp(
         22.0,
         double.infinity,
       );
-      if (top < 0) return const SizedBox.shrink();
+      if (top < 0 || top > widget.calendarHours.gridHeight) {
+        return const SizedBox.shrink();
+      }
 
       return Positioned(
         top: top + 1,
@@ -3123,6 +3386,7 @@ class _WeekGridState extends State<_WeekGrid> {
 // ═════════════════════════════════════════════════════════════════════════════
 class _DayGrid extends StatefulWidget {
   const _DayGrid({
+    required this.calendarHours,
     required this.day,
     required this.bookings,
     required this.now,
@@ -3130,6 +3394,7 @@ class _DayGrid extends StatefulWidget {
     required this.onReschedule,
     required this.onSlotTap,
   });
+  final _AgendaCalendarHours calendarHours;
   final DateTime day;
   final List<_Booking> bookings;
   final DateTime now;
@@ -3147,13 +3412,41 @@ class _DayGridState extends State<_DayGrid> {
   Offset? _hoverLocal;
   double _colWidth = 0;
   final _gridKey = GlobalKey();
+  final ScrollController _scrollController = ScrollController();
+  bool _didInitialScroll = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToPreferredHour());
+  }
+
+  @override
+  void didUpdateWidget(covariant _DayGrid oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final hoursChanged =
+        oldWidget.calendarHours.startMinute != widget.calendarHours.startMinute ||
+        oldWidget.calendarHours.endMinuteInclusive !=
+            widget.calendarHours.endMinuteInclusive;
+    final dayChanged = !_sameDay(oldWidget.day, widget.day);
+    if (hoursChanged || dayChanged) {
+      _didInitialScroll = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToPreferredHour());
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   int? _slotMinute(Offset local) {
     if (_colWidth <= 0 || local.dy < 0) return null;
-    final rawMin = (local.dy / _kHourHeight * 60).round() + _kStartHour * 60;
+    final rawMin =
+        (local.dy / _kHourHeight * 60).round() + widget.calendarHours.startMinute;
     final snapped = (rawMin / 15).round() * 15;
-    if (snapped < _kStartHour * 60 || snapped > _kEndHour * 60 - 15)
-      return null;
+    if (!widget.calendarHours.containsMinute(snapped)) return null;
     return snapped;
   }
 
@@ -3162,8 +3455,29 @@ class _DayGridState extends State<_DayGrid> {
     return box?.globalToLocal(global);
   }
 
-  String _minuteLabel(int m) =>
-      '${(m ~/ 60).toString().padLeft(2, '0')}:${(m % 60).toString().padLeft(2, '0')}';
+  String _minuteLabel(int m) => _minuteLabel24(m);
+
+  double _topForMinute(int minute) =>
+      (minute - widget.calendarHours.startMinute) * (_kHourHeight / 60);
+
+  void _jumpToPreferredHour() {
+    if (_didInitialScroll || !_scrollController.hasClients) return;
+    final nowMinute = widget.now.hour * 60 + widget.now.minute;
+    final focusMinute = _sameDay(widget.day, widget.now)
+        ? nowMinute
+        : max(widget.calendarHours.startMinute, 8 * 60);
+    final clampedMinute = focusMinute.clamp(
+      widget.calendarHours.startMinute,
+      widget.calendarHours.lastSlotMinute,
+    ).toInt();
+    final target = max(
+      0.0,
+      _topForMinute(clampedMinute) - (_kHourHeight * 1.5),
+    );
+    final maxExtent = _scrollController.position.maxScrollExtent;
+    _scrollController.jumpTo(target.clamp(0.0, maxExtent).toDouble());
+    _didInitialScroll = true;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3223,10 +3537,11 @@ class _DayGridState extends State<_DayGrid> {
           child: Container(
             color: Colors.white,
             child: SingleChildScrollView(
+              controller: _scrollController,
               child: LayoutBuilder(
                 builder: (ctx, constraints) {
                   _colWidth = constraints.maxWidth - _kTimeColWidth;
-                  final gridHeight = (_kEndHour - _kStartHour) * _kHourHeight;
+                  final gridHeight = widget.calendarHours.gridHeight;
                   return Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -3235,29 +3550,30 @@ class _DayGridState extends State<_DayGrid> {
                         width: _kTimeColWidth,
                         height: gridHeight,
                         child: Column(
-                          children: List.generate(
-                            _kEndHour - _kStartHour,
-                            (i) => SizedBox(
-                              height: _kHourHeight,
-                              child: Align(
-                                alignment: Alignment.topRight,
-                                child: Padding(
-                                  padding: const EdgeInsets.only(
-                                    right: 10,
-                                    top: 4,
-                                  ),
-                                  child: Text(
-                                    '${(_kStartHour + i).toString().padLeft(2, '0')}:00',
-                                    style: GoogleFonts.inter(
-                                      color: Colors.grey,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w500,
+                          children: [
+                            for (final minute
+                                in widget.calendarHours.hourLabelMinutes)
+                              SizedBox(
+                                height: _kHourHeight,
+                                child: Align(
+                                  alignment: Alignment.topRight,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(
+                                      right: 10,
+                                      top: 4,
+                                    ),
+                                    child: Text(
+                                      _minuteLabel(minute),
+                                      style: GoogleFonts.inter(
+                                        color: Colors.grey,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w500,
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                          ),
+                          ],
                         ),
                       ),
                       // Grid area
@@ -3272,8 +3588,10 @@ class _DayGridState extends State<_DayGrid> {
                             CustomPaint(
                               size: Size(_colWidth, gridHeight),
                               painter: _DayPainter(
+                                startMinute: widget.calendarHours.startMinute,
+                                endMinuteExclusive:
+                                    widget.calendarHours.displayEndMinuteExclusive,
                                 hourHeight: _kHourHeight,
-                                hours: _kEndHour - _kStartHour,
                                 isToday: isToday,
                               ),
                             ),
@@ -3368,7 +3686,7 @@ class _DayGridState extends State<_DayGrid> {
   Widget _buildHover() {
     final m = _slotMinute(_hoverLocal!);
     if (m == null) return const SizedBox.shrink();
-    final top = (m - _kStartHour * 60) * (_kHourHeight / 60);
+    final top = _topForMinute(m);
     return Positioned(
       top: top,
       left: 0,
@@ -3402,7 +3720,7 @@ class _DayGridState extends State<_DayGrid> {
   Widget _buildGhost() {
     final m = _slotMinute(_dragLocal!);
     if (m == null) return const SizedBox.shrink();
-    final top = (m - _kStartHour * 60) * (_kHourHeight / 60);
+    final top = _topForMinute(m);
     final height = (_dragging!.durationMinutes * _kHourHeight / 60).clamp(
       22.0,
       double.infinity,
@@ -3451,8 +3769,8 @@ class _DayGridState extends State<_DayGrid> {
 
   Widget _buildIndicator() {
     final mins = widget.now.hour * 60 + widget.now.minute;
-    final top = (mins - _kStartHour * 60) * (_kHourHeight / 60);
-    if (top < 0 || top > (_kEndHour - _kStartHour) * _kHourHeight)
+    final top = _topForMinute(mins);
+    if (top < 0 || top > widget.calendarHours.gridHeight)
       return const SizedBox.shrink();
     return Positioned(
       top: top - 1,
@@ -3483,12 +3801,14 @@ class _DayGridState extends State<_DayGrid> {
 
   List<Widget> _buildCards(BuildContext ctx) {
     return widget.bookings.where((b) => _sameDay(b.date, widget.day)).map((b) {
-      final top = (b.startMinute - _kStartHour * 60) * (_kHourHeight / 60);
+      final top = _topForMinute(b.startMinute);
       final height = (b.durationMinutes * _kHourHeight / 60).clamp(
         22.0,
         double.infinity,
       );
-      if (top < 0) return const SizedBox.shrink();
+      if (top < 0 || top > widget.calendarHours.gridHeight) {
+        return const SizedBox.shrink();
+      }
       return Positioned(
         top: top + 1,
         left: 1,
@@ -3528,12 +3848,14 @@ class _DayGridState extends State<_DayGrid> {
 
 class _DayPainter extends CustomPainter {
   const _DayPainter({
+    required this.startMinute,
+    required this.endMinuteExclusive,
     required this.hourHeight,
-    required this.hours,
     required this.isToday,
   });
+  final int startMinute;
+  final int endMinuteExclusive;
   final double hourHeight;
-  final int hours;
   final bool isToday;
 
   @override
@@ -3547,7 +3869,8 @@ class _DayPainter extends CustomPainter {
     final hLine = Paint()
       ..color = SaharaTheme.gold.withValues(alpha: 0.37)
       ..strokeWidth = 0.5;
-    for (int h = 0; h <= hours; h++) {
+    final totalHours = max(1, ((endMinuteExclusive - startMinute) / 60).ceil());
+    for (int h = 0; h <= totalHours; h++) {
       canvas.drawLine(
         Offset(0, h * hourHeight),
         Offset(size.width, h * hourHeight),
@@ -3557,7 +3880,10 @@ class _DayPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_DayPainter old) => old.isToday != isToday;
+  bool shouldRepaint(_DayPainter old) =>
+      old.isToday != isToday ||
+      old.startMinute != startMinute ||
+      old.endMinuteExclusive != endMinuteExclusive;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -3773,16 +4099,18 @@ class _MonthGrid extends StatelessWidget {
 // ── Grid painter ──────────────────────────────────────────────────────────────
 class _GridPainter extends CustomPainter {
   const _GridPainter({
+    required this.startMinute,
+    required this.endMinuteExclusive,
     required this.dayWidth,
     required this.hourHeight,
-    required this.hours,
     required this.today,
     required this.weekStart,
   });
 
+  final int startMinute;
+  final int endMinuteExclusive;
   final double dayWidth;
   final double hourHeight;
-  final int hours;
   final DateTime today;
   final DateTime weekStart;
 
@@ -3815,7 +4143,8 @@ class _GridPainter extends CustomPainter {
     }
 
     // Horizontal hour lines
-    for (int h = 0; h <= hours; h++) {
+    final totalHours = max(1, ((endMinuteExclusive - startMinute) / 60).ceil());
+    for (int h = 0; h <= totalHours; h++) {
       final y = h * hourHeight;
       canvas.drawLine(Offset(0, y), Offset(size.width, y), hLine);
     }
@@ -3832,7 +4161,10 @@ class _GridPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_GridPainter old) =>
-      old.today != today || old.weekStart != weekStart;
+      old.today != today ||
+      old.weekStart != weekStart ||
+      old.startMinute != startMinute ||
+      old.endMinuteExclusive != endMinuteExclusive;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -3937,6 +4269,9 @@ class _BookingDetailDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final b = booking;
+    final hasAssignedTherapist =
+        b.therapistId.trim().isNotEmpty &&
+        b.therapistName.trim().toLowerCase() != 'sin asignar';
     return Dialog(
       backgroundColor: Colors.white,
       shape: RoundedRectangleBorder(
@@ -3996,7 +4331,11 @@ class _BookingDetailDialog extends StatelessWidget {
               // Details
               _DetailRow(icon: Icons.schedule, text: '${b.timeLabel} - ${b.endTimeLabel}'),
               _DetailRow(icon: Icons.timer, text: '${b.durationMinutes} min'),
-              _DetailRow(icon: Icons.person, text: b.therapistName),
+              _DetailRow(
+                icon: Icons.person,
+                text: hasAssignedTherapist ? b.therapistName : 'Sin asignar',
+                color: hasAssignedTherapist ? null : const Color(0xFFC68A17),
+              ),
               if ((b.clientPhone ?? '').isNotEmpty)
                 _DetailRow(icon: Icons.phone_outlined, text: b.clientPhone!),
               if (b.notes.trim().isNotEmpty)
@@ -4069,6 +4408,15 @@ class _BookingDetailDialog extends StatelessWidget {
                       onEdit();
                     },
                   ),
+                  if (!hasAssignedTherapist)
+                    _DialogBtn(
+                      label: 'Asignar terapeuta',
+                      color: const Color(0xFF6A54E0),
+                      onTap: () {
+                        Navigator.pop(context);
+                        onEdit();
+                      },
+                    ),
                   _DialogBtn(
                     label: 'Historial',
                     color: const Color(0xFF4A4A4A),
@@ -4644,6 +4992,7 @@ class _DialogBtn extends StatelessWidget {
 // ═════════════════════════════════════════════════════════════════════════════
 class _NewBookingDialog extends StatefulWidget {
   const _NewBookingDialog({
+    required this.calendarHours,
     required this.therapists,
     required this.branches,
     required this.onSaved,
@@ -4653,6 +5002,7 @@ class _NewBookingDialog extends StatefulWidget {
     this.initialTime,
     this.editBooking,
   });
+  final _AgendaCalendarHours calendarHours;
   final List<_Therapist> therapists;
   final List<Map<String, dynamic>> branches;
   final VoidCallback onSaved;
@@ -4720,6 +5070,11 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
 
   String get _selectedServiceName => _selectedService?['name'] as String? ?? '';
 
+  List<int> get _availableHours => widget.calendarHours.selectableHours;
+
+  List<int> get _availableMinutes =>
+      widget.calendarHours.selectableMinutesForHour(_hour);
+
   static const _statusMeta = {
     'scheduled': ('Reservado', Color(0xFF5B8FF9)),
     'checked_in': ('Check-in', Color(0xFF2088D8)),
@@ -4742,7 +5097,12 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
     _date = widget.editBooking?.date ?? widget.initialDate ?? DateTime.now();
     _hour = widget.editBooking?.startMinute != null ? (widget.editBooking!.startMinute ~/ 60) : (widget.initialTime?.hour ?? 10);
     _minute = widget.editBooking?.startMinute != null ? (widget.editBooking!.startMinute % 60) : (widget.initialTime?.minute ?? 0);
-    _therapistId = widget.editBooking?.therapistId ?? widget.initialTherapistId;
+    final initialTherapistId =
+        widget.editBooking?.therapistId ?? widget.initialTherapistId;
+    _therapistId =
+        (initialTherapistId == null || initialTherapistId.trim().isEmpty)
+        ? null
+        : initialTherapistId;
     _sucursalId = kEnableMultiBranch
         ? (widget.editBooking?.sucursalId ?? widget.initialBranchId)
         : kDefaultBranchId;
@@ -4751,9 +5111,10 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
     
     if (widget.editBooking != null) {
       _clientCtrl.text = widget.editBooking!.clientName;
-      _clientId        = widget.editBooking!.clientId;
+      _clientId        = widget.editBooking!.clientRecordId;
       _notesCtrl.text  = widget.editBooking!.notes;
     }
+    _normalizeSelectedTime();
     _loadServices();
   }
 
@@ -4763,6 +5124,22 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
     _clientFocus.dispose();
     _notesCtrl.dispose();
     super.dispose();
+  }
+
+  void _normalizeSelectedTime() {
+    final hours = _availableHours;
+    if (hours.isEmpty) {
+      _hour = 0;
+      _minute = 0;
+      return;
+    }
+    if (!hours.contains(_hour)) {
+      _hour = hours.first;
+    }
+    final minutes = _availableMinutes;
+    if (!minutes.contains(_minute)) {
+      _minute = minutes.first;
+    }
   }
 
   Future<void> _loadServices() async {
@@ -4938,20 +5315,26 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
     setState(() => _saving = true);
     try {
       // Resolve client ID: use cached selection, else lookup by name
-      String? finalClientId = _clientId;
+      final profileClientId =
+          widget.editBooking?.profileClientId?.trim().isNotEmpty == true
+          ? widget.editBooking!.profileClientId!.trim()
+          : null;
+      String? finalClientId = _clientId?.trim();
       if (finalClientId == null || finalClientId.isEmpty) {
         finalClientId = await _bookingSyncService.findClientRecordIdByName(
           _clientCtrl.text.trim(),
         );
-        if (finalClientId == null)
+        if ((finalClientId == null || finalClientId.isEmpty) &&
+            (profileClientId == null || profileClientId.isEmpty)) {
           throw Exception('Cliente no encontrado. Verifica el nombre.');
+        }
       }
 
       final timeStr =
           '${_hour.toString().padLeft(2, '0')}:${_minute.toString().padLeft(2, '0')}:00';
       final draft = BookingUpsertData(
         bookingId: widget.editBooking?.id,
-        clientProfileId: widget.editBooking?.profileClientId,
+        clientProfileId: profileClientId,
         clientRecordId: finalClientId,
         clientName: _clientCtrl.text.trim(),
         therapistId: _therapistId ?? '',
@@ -5192,12 +5575,16 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
                                     children: [
                                       _TimeDropdown(
                                         value: _hour,
-                                        items: List.generate(
-                                          _kEndHour - _kStartHour + 1,
-                                          (i) => _kStartHour + i,
-                                        ),
-                                        onChanged: (v) =>
-                                            setState(() => _hour = v),
+                                        items: _availableHours,
+                                        onChanged: (v) => setState(() {
+                                          _hour = v;
+                                          final validMinutes =
+                                              widget.calendarHours
+                                                  .selectableMinutesForHour(v);
+                                          if (!validMinutes.contains(_minute)) {
+                                            _minute = validMinutes.first;
+                                          }
+                                        }),
                                       ),
                                       Padding(
                                         padding: const EdgeInsets.symmetric(
@@ -5214,7 +5601,7 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
                                       ),
                                       _TimeDropdown(
                                         value: _minute,
-                                        items: const [0, 15, 30, 45],
+                                        items: _availableMinutes,
                                         label: (v) =>
                                             v.toString().padLeft(2, '0'),
                                         onChanged: (v) =>

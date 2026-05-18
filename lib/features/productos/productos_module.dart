@@ -265,12 +265,13 @@ class _ProductosModuleState extends State<ProductosModule> {
     Map<String, dynamic> payload,
   ) async {
     final supportsRichSchema = await _detectRichProductSchema();
+    final normalizedPayload = _payloadWithLegacyTypeFields(payload);
     if (supportsRichSchema) {
-      await Supabase.instance.client.from('products').insert(payload);
+      await Supabase.instance.client.from('products').insert(normalizedPayload);
     } else {
       await Supabase.instance.client
           .from('products')
-          .insert(_legacyProductPayload(payload));
+          .insert(_legacyProductPayload(normalizedPayload));
     }
   }
 
@@ -279,15 +280,16 @@ class _ProductosModuleState extends State<ProductosModule> {
     Map<String, dynamic> payload,
   ) async {
     final supportsRichSchema = await _detectRichProductSchema();
+    final normalizedPayload = _payloadWithLegacyTypeFields(payload);
     if (supportsRichSchema) {
       await Supabase.instance.client
           .from('products')
-          .update(payload)
+          .update(normalizedPayload)
           .eq('id', id);
     } else {
       await Supabase.instance.client
           .from('products')
-          .update(_legacyProductPayload(payload))
+          .update(_legacyProductPayload(normalizedPayload))
           .eq('id', id);
     }
   }
@@ -320,6 +322,19 @@ class _ProductosModuleState extends State<ProductosModule> {
       'category': legacyCategory,
       'type': legacyType,
       'active': payload['active'],
+    };
+  }
+
+  Map<String, dynamic> _payloadWithLegacyTypeFields(Map<String, dynamic> payload) {
+    final normalizedType = _normalizeProductType(
+      payload['product_type']?.toString(),
+      fallbackCategory: payload['category']?.toString(),
+      name: payload['name']?.toString(),
+    );
+    return <String, dynamic>{
+      ...payload,
+      'product_type': normalizedType,
+      'type': _legacyStorageType(normalizedType),
     };
   }
 
@@ -817,6 +832,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
         'price':       double.tryParse(_price.text) ?? 0,
         'stock':       int.tryParse(_stock.text)    ?? 0,
         'category':    _normalizeProductCategory(_category),
+        'type':        _legacyStorageType('physical'),
         'active':      _active,
       };
       if (widget.product == null) {
@@ -1043,6 +1059,7 @@ class _UnifiedProductFormDialogState extends State<_UnifiedProductFormDialog> {
         'stock_quantity': stockValue,
         'category': _categoryForType(normalizedType, _category),
         'product_type': normalizedType,
+        'type': _legacyStorageType(normalizedType),
         'image_url': _imageUrl.text.trim(),
         'digital_file_url':
             normalizedType == 'digital' ? _digitalFileUrl.text.trim() : '',
@@ -1145,12 +1162,13 @@ class _UnifiedProductFormDialogState extends State<_UnifiedProductFormDialog> {
 
   Future<void> _persistProductInsert(Map<String, dynamic> payload) async {
     final supportsRichSchema = await _detectRichProductSchema();
+    final normalizedPayload = _payloadWithLegacyTypeFields(payload);
     if (supportsRichSchema) {
-      await Supabase.instance.client.from('products').insert(payload);
+      await Supabase.instance.client.from('products').insert(normalizedPayload);
     } else {
       await Supabase.instance.client
           .from('products')
-          .insert(_legacyDialogPayload(payload));
+          .insert(_legacyDialogPayload(normalizedPayload));
     }
   }
 
@@ -1159,15 +1177,16 @@ class _UnifiedProductFormDialogState extends State<_UnifiedProductFormDialog> {
     Map<String, dynamic> payload,
   ) async {
     final supportsRichSchema = await _detectRichProductSchema();
+    final normalizedPayload = _payloadWithLegacyTypeFields(payload);
     if (supportsRichSchema) {
       await Supabase.instance.client
           .from('products')
-          .update(payload)
+          .update(normalizedPayload)
           .eq('id', productId);
     } else {
       await Supabase.instance.client
           .from('products')
-          .update(_legacyDialogPayload(payload))
+          .update(_legacyDialogPayload(normalizedPayload))
           .eq('id', productId);
     }
   }
@@ -1204,6 +1223,19 @@ class _UnifiedProductFormDialogState extends State<_UnifiedProductFormDialog> {
       'category': legacyCategory,
       'type': legacyType,
       'active': payload['active'],
+    };
+  }
+
+  Map<String, dynamic> _payloadWithLegacyTypeFields(Map<String, dynamic> payload) {
+    final normalizedType = _normalizeProductType(
+      payload['product_type']?.toString(),
+      fallbackCategory: payload['category']?.toString(),
+      name: payload['name']?.toString(),
+    );
+    return <String, dynamic>{
+      ...payload,
+      'product_type': normalizedType,
+      'type': _legacyStorageType(normalizedType),
     };
   }
 

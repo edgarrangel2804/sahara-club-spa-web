@@ -133,6 +133,32 @@ class BookingSyncService {
     return row?['id']?.toString();
   }
 
+  Future<String?> _resolveValidClientRecordId({
+    String? clientRecordId,
+    String? clientName,
+  }) async {
+    final normalizedId = clientRecordId?.trim() ?? '';
+    if (normalizedId.isNotEmpty) {
+      try {
+        final row = await _client
+            .from('clients')
+            .select('id')
+            .eq('id', normalizedId)
+            .maybeSingle();
+        if (row != null) {
+          return row['id']?.toString() ?? normalizedId;
+        }
+      } catch (_) {
+        // If validation against clients fails, fall through to name lookup.
+      }
+    }
+    final normalizedName = clientName?.trim() ?? '';
+    if (normalizedName.isEmpty) {
+      return null;
+    }
+    return findClientRecordIdByName(normalizedName);
+  }
+
   Future<BookingValidationResult> validateBookingDraft(
     BookingUpsertData data,
   ) async {
@@ -242,34 +268,56 @@ class BookingSyncService {
   }
 
   Future<Map<String, dynamic>?> upsertBooking(BookingUpsertData data) async {
-    final validation = await validateBookingDraft(data);
+    final normalizedClientRecordId = await _resolveValidClientRecordId(
+      clientRecordId: data.clientRecordId,
+      clientName: data.clientName,
+    );
+    final normalizedData = BookingUpsertData(
+      bookingId: data.bookingId,
+      clientProfileId: data.clientProfileId?.trim().isEmpty == true
+          ? null
+          : data.clientProfileId?.trim(),
+      clientRecordId: normalizedClientRecordId,
+      clientName: data.clientName,
+      therapistId: data.therapistId,
+      serviceId: data.serviceId,
+      serviceName: data.serviceName,
+      bookingDate: data.bookingDate,
+      bookingTime: data.bookingTime,
+      durationMinutes: data.durationMinutes,
+      status: data.status,
+      notes: data.notes,
+      sourcePlatform: data.sourcePlatform,
+      branchId: data.branchId,
+    );
+    final validation = await validateBookingDraft(normalizedData);
     if (!validation.isValid) {
       throw BookingSyncException(validation.errorMessage ?? 'Reserva invalida.');
     }
 
     final currentUserId = _client.auth.currentUser?.id;
     final payload = {
-      'client_id': data.clientProfileId,
-      'client_record_id': data.clientRecordId,
-      'therapist_id': data.therapistId,
-      'sucursal_id': data.branchId,
-      'service_id': data.serviceId,
-      'booking_date': _yyyyMMdd(data.bookingDate),
-      'booking_time': data.bookingTime,
-      'duration_min': data.durationMinutes,
-      'status': data.status,
-      'client_notes': data.notes.trim(),
-      'service_name': data.serviceName,
-      'source_platform': data.sourcePlatform,
+      'client_id': normalizedData.clientProfileId,
+      'client_record_id': normalizedData.clientRecordId,
+      'therapist_id': normalizedData.therapistId,
+      'sucursal_id': normalizedData.branchId,
+      'service_id': normalizedData.serviceId,
+      'booking_date': _yyyyMMdd(normalizedData.bookingDate),
+      'booking_time': normalizedData.bookingTime,
+      'duration_min': normalizedData.durationMinutes,
+      'status': normalizedData.status,
+      'client_notes': normalizedData.notes.trim(),
+      'service_name': normalizedData.serviceName,
+      'source_platform': normalizedData.sourcePlatform,
       'updated_by': currentUserId,
     };
 
     try {
-      if (data.bookingId != null && data.bookingId!.isNotEmpty) {
+      if (normalizedData.bookingId != null && normalizedData.bookingId!.isNotEmpty) {
         return await _client
             .from('bookings')
             .update(payload)
-            .eq('id', data.bookingId!)
+            .eq('id', normalizedData.bookingId!)
             .select('''
               id, client_id, client_record_id, service_id, sucursal_id, booking_date, booking_time,
               duration_min, status, therapist_id, client_notes, source_platform,

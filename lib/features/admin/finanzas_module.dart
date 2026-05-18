@@ -93,14 +93,44 @@ class _FinanzasModuleState extends State<FinanzasModule> {
       icon: Icons.compare_arrows_rounded,
     ),
     _FinanceSectionMeta(
+      title: 'Caja Chica',
+      subtitle: 'Control de efectivo disponible y movimientos menores.',
+      icon: Icons.account_balance_wallet_outlined,
+    ),
+    _FinanceSectionMeta(
+      title: 'Cuentas por Pagar',
+      subtitle: 'Compromisos pendientes con proveedores, nomina y fijos.',
+      icon: Icons.outbox_rounded,
+    ),
+    _FinanceSectionMeta(
+      title: 'Cuentas por Cobrar',
+      subtitle: 'Cobros pendientes, vencimientos y seguimiento comercial.',
+      icon: Icons.move_to_inbox_rounded,
+    ),
+    _FinanceSectionMeta(
       title: 'Reportes',
-      subtitle: 'Exportaciones y cortes listos para siguientes fases.',
+      subtitle: 'Exportaciones, cortes y consolidado operativo financiero.',
       icon: Icons.bar_chart_rounded,
     ),
     _FinanceSectionMeta(
       title: 'Alertas',
       subtitle: 'Riesgos, pendientes y focos de atencion del negocio.',
       icon: Icons.notifications_active_outlined,
+    ),
+    _FinanceSectionMeta(
+      title: 'Presupuestos',
+      subtitle: 'Planeacion de gasto, control por categoria y desviaciones.',
+      icon: Icons.pie_chart_rounded,
+    ),
+    _FinanceSectionMeta(
+      title: 'Metas',
+      subtitle: 'Objetivos de ingresos, margen, cobranza y productividad.',
+      icon: Icons.flag_rounded,
+    ),
+    _FinanceSectionMeta(
+      title: 'Configuracion Financiera',
+      subtitle: 'Parametros, reglas y salud del modulo financiero.',
+      icon: Icons.settings_rounded,
     ),
   ];
 
@@ -121,6 +151,9 @@ class _FinanzasModuleState extends State<FinanzasModule> {
         _dashboardPayload = payload;
         _loading = false;
       });
+      if (!_detailsLoaded) {
+        _loadDetailedData(refreshDashboard: false, preserveLoadingState: true);
+      }
       return;
     }
 
@@ -2022,6 +2055,264 @@ class _FinanzasModuleState extends State<FinanzasModule> {
     return total / populated.length;
   }
 
+  double get _ingresosHoy => _salesTotalBetween(
+        _todayStart,
+        _todayStart.add(const Duration(days: 1)),
+      );
+
+  double get _gastosHoy => _expensesTotalBetween(
+        _todayStart,
+        _todayStart.add(const Duration(days: 1)),
+      );
+
+  double get _cuentasPorPagarTotales =>
+      _fixedExpenses
+          .where((row) => (row['status']?.toString().toLowerCase() ?? '') != 'pagado')
+          .fold<double>(0, (sum, row) => sum + _amount(row['amount'])) +
+      _pendingSupplierAmount +
+      _pendingPayrollAmount;
+
+  double get _cajaChicaBaseEstimda => 5000;
+
+  List<_DetailedExpenseRow> get _pettyCashMovements {
+    final rows = _detailedExpenses.where((row) {
+      final text =
+          '${row.title} ${row.subtitle} ${row.rawCategory} ${row.paymentMethod}'.toLowerCase();
+      return row.amount <= 1200 ||
+          text.contains('caja chica') ||
+          text.contains('efectivo') ||
+          text.contains('operativ') ||
+          text.contains('limpieza') ||
+          text.contains('insumo');
+    }).toList();
+    rows.sort((a, b) => b.date.compareTo(a.date));
+    return rows.take(20).toList();
+  }
+
+  double get _cajaChicaSalidas =>
+      _pettyCashMovements.fold<double>(0, (sum, row) => sum + row.amount);
+
+  double get _cajaChicaDisponible =>
+      math.max(_cajaChicaBaseEstimda - _cajaChicaSalidas, 0);
+
+  double get _flujoEfectivoActual =>
+      _salesTotalSince(_monthStart) -
+      _expensesTotalBetween(
+        _monthStart,
+        DateTime.now().add(const Duration(days: 1)),
+      );
+
+  double get _crecimientoVsMesAnterior {
+    final previous = _salesTotalBetween(_previousMonthStart, _monthStart);
+    final current = _salesTotalSince(_monthStart);
+    if (previous == 0) return current == 0 ? 0 : 100;
+    return ((current - previous) / previous) * 100;
+  }
+
+  List<_MonthlyPoint> get _netProfitMonthlySeries {
+    final now = DateTime.now();
+    final points = <_MonthlyPoint>[];
+    for (var offset = 5; offset >= 0; offset--) {
+      final monthStart = DateTime(now.year, now.month - offset, 1);
+      final nextMonth = DateTime(monthStart.year, monthStart.month + 1, 1);
+      final ingresos = _salesTotalBetween(monthStart, nextMonth);
+      final egresos = _expensesTotalBetween(monthStart, nextMonth);
+      points.add(
+        _MonthlyPoint(
+          label: DateFormat('MMM', 'es_MX').format(monthStart),
+          value: ingresos - egresos,
+        ),
+      );
+    }
+    return points;
+  }
+
+  List<_MonthlyPoint> get _cashFlowMonthlySeries {
+    final now = DateTime.now();
+    final points = <_MonthlyPoint>[];
+    for (var offset = 5; offset >= 0; offset--) {
+      final monthStart = DateTime(now.year, now.month - offset, 1);
+      final nextMonth = DateTime(monthStart.year, monthStart.month + 1, 1);
+      final ingresos = _salesTotalBetween(monthStart, nextMonth);
+      final egresos = _expensesTotalBetween(monthStart, nextMonth);
+      points.add(
+        _MonthlyPoint(
+          label: DateFormat('MMM', 'es_MX').format(monthStart),
+          value: ingresos - egresos,
+        ),
+      );
+    }
+    return points;
+  }
+
+  List<_CategoryAmount> get _topProvidersBySpend {
+    final totals = <String, double>{};
+    for (final row in _supplierExpenses) {
+      final name = _supplierName(row);
+      totals[name] = (totals[name] ?? 0) + _amount(row['amount']);
+    }
+    final entries = totals.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    return entries
+        .take(5)
+        .map((entry) => _CategoryAmount(entry.key, entry.value))
+        .toList();
+  }
+
+  List<Map<String, dynamic>> get _payableRows {
+    final rows = <Map<String, dynamic>>[];
+    for (final row in _fixedExpenses) {
+      final status = row['status']?.toString().toLowerCase() ?? 'pendiente';
+      if (status == 'pagado') continue;
+      rows.add({
+        'origen': 'Gasto fijo',
+        'concepto': row['description']?.toString().trim().isNotEmpty == true
+            ? row['description'].toString()
+            : _humanizeLabel(row['category']?.toString() ?? 'Gasto fijo'),
+        'responsable': row['name']?.toString().trim().isNotEmpty == true
+            ? row['name'].toString()
+            : 'Sahara Club Spa',
+        'fecha': _fixedDueDate(row),
+        'monto': _amount(row['amount']),
+        'estado': row['status']?.toString() ?? 'pendiente',
+      });
+    }
+    for (final row in _supplierExpenses) {
+      final status = row['status']?.toString().toLowerCase() ?? 'pendiente';
+      if (status == 'pagado') continue;
+      rows.add({
+        'origen': 'Proveedor',
+        'concepto': row['description']?.toString().trim().isNotEmpty == true
+            ? row['description'].toString()
+            : _supplierName(row),
+        'responsable': _supplierName(row),
+        'fecha': _expenseDate(row),
+        'monto': _amount(row['amount']),
+        'estado': row['status']?.toString() ?? 'pendiente',
+      });
+    }
+    for (final row in _payrollEntries) {
+      final status = row['payment_status']?.toString().toLowerCase() ?? 'pendiente';
+      if (status == 'pagado') continue;
+      rows.add({
+        'origen': 'Nomina',
+        'concepto': 'Pago de nomina',
+        'responsable': _staffNameById(row['employee_id']?.toString()),
+        'fecha': _payrollEntryDate(row),
+        'monto': _amount(row['total_pay']),
+        'estado': row['payment_status']?.toString() ?? 'pendiente',
+      });
+    }
+    rows.sort(
+      (a, b) => (a['fecha'] as DateTime).compareTo(b['fecha'] as DateTime),
+    );
+    return rows;
+  }
+
+  List<Map<String, dynamic>> get _receivableRows {
+    final rows = <Map<String, dynamic>>[];
+    for (final booking in _bookings) {
+      final status = booking['status']?.toString().toLowerCase() ?? '';
+      if (status != 'awaiting_payment') continue;
+      final service = _mapValue(booking['service']);
+      final therapist = _mapValue(booking['therapist']);
+      final date = _parseDate(booking['booking_date']) ?? DateTime.now();
+      rows.add({
+        'cliente': 'Cliente agenda',
+        'servicio': _payloadString(service['name'], fallback: 'Servicio'),
+        'terapeuta': _payloadString(therapist['full_name'], fallback: 'Sin terapeuta'),
+        'fecha': date,
+        'monto': _payloadAmount(service['price']),
+        'estado': date.isBefore(_todayStart) ? 'vencido' : 'pendiente',
+      });
+    }
+    rows.sort(
+      (a, b) => (a['fecha'] as DateTime).compareTo(b['fecha'] as DateTime),
+    );
+    return rows;
+  }
+
+  List<_MonthlyPoint> get _payablesMonthlySeries {
+    final now = DateTime.now();
+    final points = <_MonthlyPoint>[];
+    for (var offset = 5; offset >= 0; offset--) {
+      final monthStart = DateTime(now.year, now.month - offset, 1);
+      final nextMonth = DateTime(monthStart.year, monthStart.month + 1, 1);
+      final total = _payableRows.where((row) {
+        final date = row['fecha'] as DateTime;
+        return !date.isBefore(monthStart) && date.isBefore(nextMonth);
+      }).fold<double>(0, (sum, row) => sum + (row['monto'] as double));
+      points.add(
+        _MonthlyPoint(
+          label: DateFormat('MMM', 'es_MX').format(monthStart),
+          value: total,
+        ),
+      );
+    }
+    return points;
+  }
+
+  List<_MonthlyPoint> get _receivablesMonthlySeries {
+    final now = DateTime.now();
+    final points = <_MonthlyPoint>[];
+    for (var offset = 5; offset >= 0; offset--) {
+      final monthStart = DateTime(now.year, now.month - offset, 1);
+      final nextMonth = DateTime(monthStart.year, monthStart.month + 1, 1);
+      final total = _receivableRows.where((row) {
+        final date = row['fecha'] as DateTime;
+        return !date.isBefore(monthStart) && date.isBefore(nextMonth);
+      }).fold<double>(0, (sum, row) => sum + (row['monto'] as double));
+      points.add(
+        _MonthlyPoint(
+          label: DateFormat('MMM', 'es_MX').format(monthStart),
+          value: total,
+        ),
+      );
+    }
+    return points;
+  }
+
+  List<_MonthlyPoint> get _pettyCashMonthlySeries {
+    final now = DateTime.now();
+    final points = <_MonthlyPoint>[];
+    for (var offset = 5; offset >= 0; offset--) {
+      final monthStart = DateTime(now.year, now.month - offset, 1);
+      final nextMonth = DateTime(monthStart.year, monthStart.month + 1, 1);
+      final total = _pettyCashMovements.where((row) {
+        final date = row.date;
+        return !date.isBefore(monthStart) && date.isBefore(nextMonth);
+      }).fold<double>(0, (sum, row) => sum + row.amount);
+      points.add(
+        _MonthlyPoint(
+          label: DateFormat('MMM', 'es_MX').format(monthStart),
+          value: total,
+        ),
+      );
+    }
+    return points;
+  }
+
+  List<_CategoryAmount> get _payablesByOrigin {
+    final map = <String, double>{};
+    for (final row in _payableRows) {
+      final key = row['origen']?.toString() ?? 'Pendiente';
+      map[key] = (map[key] ?? 0) + (row['monto'] as double);
+    }
+    return map.entries
+        .map((entry) => _CategoryAmount(entry.key, entry.value))
+        .toList();
+  }
+
+  List<_CategoryAmount> get _receivablesByStatus {
+    final map = <String, double>{};
+    for (final row in _receivableRows) {
+      final key = _normalizeExpenseStatusLabel(row['estado']?.toString() ?? 'pendiente');
+      map[key] = (map[key] ?? 0) + (row['monto'] as double);
+    }
+    return map.entries
+        .map((entry) => _CategoryAmount(entry.key, entry.value))
+        .toList();
+  }
+
   List<_MetricAlert> get _alerts {
     final alerts = <_MetricAlert>[];
     final pendingPayroll = _pendingPayrollAmount;
@@ -2062,6 +2353,32 @@ class _FinanzasModuleState extends State<FinanzasModule> {
         ),
       );
     }
+    if (_cajaChicaDisponible < 1500) {
+      alerts.add(
+        _MetricAlert(
+          title: 'Caja chica baja',
+          message: 'La caja chica estimada esta en ${_money(_cajaChicaDisponible)} y requiere reposicion.',
+          tone: SaharaTheme.gold,
+          icon: Icons.account_balance_wallet_outlined,
+          stamp: 'Caja',
+        ),
+      );
+    }
+    final unusualExpense = _detailedExpenses.firstWhere(
+      (entry) => entry.amount > (_dailyExpenseAverage * 2.5) && entry.amount > 1500,
+      orElse: () => _DetailedExpenseRow.empty(),
+    );
+    if (!unusualExpense.isEmpty) {
+      alerts.add(
+        _MetricAlert(
+          title: 'Gasto inusual',
+          message: 'Se detecto un egreso fuera de rango en ${unusualExpense.title} por ${_money(unusualExpense.amount)}.',
+          tone: _financeNegative,
+          icon: Icons.report_problem_rounded,
+          stamp: 'Analitica',
+        ),
+      );
+    }
     if (_margenGanancia < 20 && _ingresosTotales > 0) {
       alerts.add(
         _MetricAlert(
@@ -2081,6 +2398,56 @@ class _FinanzasModuleState extends State<FinanzasModule> {
           tone: _financeMuted,
           icon: Icons.event_busy_outlined,
           stamp: 'Hoy',
+        ),
+      );
+    }
+    final ingresosSemana = _salesTotalSince(_weekStart);
+    final ingresosSemanaPrevia = _salesTotalBetween(_previousWeekStart, _weekStart);
+    if (ingresosSemanaPrevia > 0 && ingresosSemana < (ingresosSemanaPrevia * 0.75)) {
+      alerts.add(
+        _MetricAlert(
+          title: 'Caida de ingresos',
+          message: 'La semana actual va ${_percent(((ingresosSemana - ingresosSemanaPrevia) / ingresosSemanaPrevia) * 100)} contra la anterior.',
+          tone: _financeNegative,
+          icon: Icons.trending_down_rounded,
+          stamp: 'Semana',
+        ),
+      );
+    }
+    final overdueReceivables = _receivableRows.where(
+      (row) => (row['estado']?.toString().toLowerCase() ?? '') == 'vencido',
+    );
+    if (overdueReceivables.isNotEmpty) {
+      final total = overdueReceivables.fold<double>(
+        0,
+        (sum, row) => sum + (row['monto'] as double),
+      );
+      alerts.add(
+        _MetricAlert(
+          title: 'Cuenta por cobrar vencida',
+          message: 'Hay ${overdueReceivables.length} cobros vencidos por ${_money(total)}.',
+          tone: _financeBlue,
+          icon: Icons.move_to_inbox_rounded,
+          stamp: 'Cobranza',
+        ),
+      );
+    }
+    final overduePayables = _payableRows.where((row) {
+      final status = row['estado']?.toString().toLowerCase() ?? '';
+      return status == 'vencido';
+    });
+    if (overduePayables.isNotEmpty) {
+      final total = overduePayables.fold<double>(
+        0,
+        (sum, row) => sum + (row['monto'] as double),
+      );
+      alerts.add(
+        _MetricAlert(
+          title: 'Cuenta por pagar vencida',
+          message: 'Quedan ${overduePayables.length} pagos vencidos por ${_money(total)}.',
+          tone: _financeNegative,
+          icon: Icons.outbox_rounded,
+          stamp: 'Pagos',
         ),
       );
     }
@@ -2582,6 +2949,18 @@ class _FinanzasModuleState extends State<FinanzasModule> {
         builder: (_) => _PayrollDialog(staff: _staff),
       );
       if (created == true) _load();
+      return;
+    }
+    if (_selectedSection == 8) {
+      _showFinanceSnack('Usa los movimientos detectados o integra el flujo de caja chica en la siguiente fase.');
+      return;
+    }
+    if (_selectedSection == 9 || _selectedSection == 10) {
+      _showFinanceSnack('Este atajo queda listo para conectarse al flujo de cobranza/pagos del negocio.');
+      return;
+    }
+    if (_selectedSection == 13 || _selectedSection == 14 || _selectedSection == 15) {
+      _showFinanceSnack('La captura guiada de esta seccion queda lista para la siguiente fase.');
     }
   }
 
@@ -2853,6 +3232,138 @@ class _FinanzasModuleState extends State<FinanzasModule> {
           rows: rows,
         );
         return;
+      case 8:
+        await _copyCsvExport(
+          filename: 'finanzas_caja_chica',
+          headers: const ['fecha', 'concepto', 'responsable', 'monto', 'estado'],
+          rows: _pettyCashMovements
+              .map(
+                (row) => [
+                  DateFormat('yyyy-MM-dd').format(row.date),
+                  row.title,
+                  row.responsible,
+                  row.amount.toStringAsFixed(2),
+                  row.status,
+                ],
+              )
+              .toList(),
+        );
+        return;
+      case 9:
+        await _copyCsvExport(
+          filename: 'finanzas_cuentas_por_pagar',
+          headers: const ['origen', 'concepto', 'responsable', 'fecha', 'monto', 'estado'],
+          rows: _payableRows
+              .map(
+                (row) => [
+                  row['origen']?.toString() ?? '',
+                  row['concepto']?.toString() ?? '',
+                  row['responsable']?.toString() ?? '',
+                  DateFormat('yyyy-MM-dd').format(row['fecha'] as DateTime),
+                  (row['monto'] as double).toStringAsFixed(2),
+                  row['estado']?.toString() ?? '',
+                ],
+              )
+              .toList(),
+        );
+        return;
+      case 10:
+        await _copyCsvExport(
+          filename: 'finanzas_cuentas_por_cobrar',
+          headers: const ['cliente', 'servicio', 'terapeuta', 'fecha', 'monto', 'estado'],
+          rows: _receivableRows
+              .map(
+                (row) => [
+                  row['cliente']?.toString() ?? '',
+                  row['servicio']?.toString() ?? '',
+                  row['terapeuta']?.toString() ?? '',
+                  DateFormat('yyyy-MM-dd').format(row['fecha'] as DateTime),
+                  (row['monto'] as double).toStringAsFixed(2),
+                  row['estado']?.toString() ?? '',
+                ],
+              )
+              .toList(),
+        );
+        return;
+      case 11:
+        await _copyCsvExport(
+          filename: 'finanzas_reportes',
+          headers: const ['reporte', 'formato', 'estado'],
+          rows: const [
+            ['Ventas del dia', 'CSV/PDF', 'listo'],
+            ['Corte de caja', 'CSV/PDF', 'listo'],
+            ['Nomina', 'CSV/PDF', 'listo'],
+            ['Gastos', 'CSV/PDF', 'listo'],
+            ['Utilidad mensual', 'CSV', 'revision'],
+            ['Rendimiento por terapeuta', 'CSV/PDF', 'listo'],
+          ],
+        );
+        return;
+      case 12:
+        await _copyCsvExport(
+          filename: 'finanzas_alertas',
+          headers: const ['alerta', 'detalle', 'marca', 'estado'],
+          rows: _alerts
+              .map((alert) => [alert.title, alert.message, alert.stamp, _alertToneLabel(alert)])
+              .toList(),
+        );
+        return;
+      case 13:
+        await _copyCsvExport(
+          filename: 'finanzas_presupuestos',
+          headers: const ['categoria', 'actual', 'presupuesto', 'desviacion', 'estado'],
+          rows: [
+            [
+              'Ingresos',
+              _salesTotalSince(_monthStart).toStringAsFixed(2),
+              (_salesTotalSince(_monthStart) * 1.15).toStringAsFixed(2),
+              ((_salesTotalSince(_monthStart) * 1.15) - _salesTotalSince(_monthStart)).toStringAsFixed(2),
+              _salesTotalSince(_monthStart) >= (_salesTotalSince(_monthStart) * .9) ? 'en curso' : 'alerta',
+            ],
+            [
+              'Gastos Fijos',
+              _fixedExpensesTotal.toStringAsFixed(2),
+              (_fixedExpensesTotal * 1.05).toStringAsFixed(2),
+              ((_fixedExpensesTotal * 1.05) - _fixedExpensesTotal).toStringAsFixed(2),
+              'controlado',
+            ],
+          ],
+        );
+        return;
+      case 14:
+        await _copyCsvExport(
+          filename: 'finanzas_metas',
+          headers: const ['meta', 'actual', 'objetivo', 'avance', 'estado'],
+          rows: [
+            [
+              'Ingresos del mes',
+              _salesTotalSince(_monthStart).toStringAsFixed(2),
+              (_salesTotalSince(_monthStart) * 1.20).toStringAsFixed(2),
+              '83.3%',
+              'en curso',
+            ],
+            [
+              'Margen',
+              _margenGanancia.toStringAsFixed(2),
+              '55.0',
+              ((_margenGanancia / 55) * 100).toStringAsFixed(2),
+              _margenGanancia >= 45 ? 'saludable' : 'riesgo',
+            ],
+          ],
+        );
+        return;
+      case 15:
+        await _copyCsvExport(
+          filename: 'finanzas_configuracion',
+          headers: const ['parametro', 'valor', 'tipo', 'estado'],
+          rows: const [
+            ['Metodos de pago activos', '4', 'catalogo', 'activo'],
+            ['Alertas inteligentes', '8 reglas', 'automatizacion', 'activo'],
+            ['Moneda base', 'MXN', 'general', 'activo'],
+            ['Sucursal financiera', 'Matriz', 'alcance', 'activo'],
+          ],
+        );
+        return;
       default:
         _showFinanceSnack('La exportacion de esta vista se conecta en la siguiente fase.');
     }
@@ -2885,6 +3396,18 @@ class _FinanzasModuleState extends State<FinanzasModule> {
         return 'Nuevo proveedor';
       case 5:
         return 'Nuevo pago de nomina';
+      case 8:
+        return 'Nuevo movimiento';
+      case 9:
+        return 'Nueva cuenta por pagar';
+      case 10:
+        return 'Nueva cuenta por cobrar';
+      case 13:
+        return 'Nuevo presupuesto';
+      case 14:
+        return 'Nueva meta';
+      case 15:
+        return 'Nuevo ajuste';
       default:
         return null;
     }
@@ -2954,12 +3477,165 @@ class _FinanzasModuleState extends State<FinanzasModule> {
         _performanceBranchBreakdownFromPayload;
     final performanceRowsPayload = _performanceRowsFromPayload;
     final performanceSummaryRows = _performanceSummaryRowsFromPayload;
+    final currentMonthExpenses = _expensesTotalBetween(
+      _monthStart,
+      DateTime.now().add(const Duration(days: 1)),
+    );
+    final dashboardTopProviders = _topProvidersBySpend;
+    final pettyCashBreakdown = [
+      _CategoryAmount('Caja chica usada', _cajaChicaSalidas),
+      _CategoryAmount('Caja chica disponible', _cajaChicaDisponible),
+    ];
+    final pettyCashRows = _pettyCashMovements
+        .map(
+          (row) => [
+            DateFormat('d MMM', 'es_MX').format(row.date),
+            row.title,
+            row.responsible,
+            _money(row.amount),
+            row.status,
+          ],
+        )
+        .toList();
+    final payablesRows = _payableRows
+        .map(
+          (row) => [
+            row['origen']?.toString() ?? 'Pendiente',
+            row['concepto']?.toString() ?? 'Sin concepto',
+            row['responsable']?.toString() ?? 'Responsable',
+            _formattedDate(row['fecha'] as DateTime),
+            _money(row['monto'] as double),
+            row['estado']?.toString() ?? 'pendiente',
+          ],
+        )
+        .toList();
+    final receivablesRows = _receivableRows
+        .map(
+          (row) => [
+            row['cliente']?.toString() ?? 'Cliente agenda',
+            row['servicio']?.toString() ?? 'Servicio',
+            row['terapeuta']?.toString() ?? 'Sin terapeuta',
+            _formattedDate(row['fecha'] as DateTime),
+            _money(row['monto'] as double),
+            row['estado']?.toString() ?? 'pendiente',
+          ],
+        )
+        .toList();
+    final reportRows = const [
+      ['Ventas del dia', 'CSV/PDF', 'listo'],
+      ['Corte de caja', 'CSV/PDF', 'listo'],
+      ['Nomina', 'CSV/PDF', 'listo'],
+      ['Gastos', 'CSV/PDF', 'listo'],
+      ['Utilidad mensual', 'CSV', 'revision'],
+      ['Rendimiento por terapeuta', 'CSV/PDF', 'listo'],
+      ['Cobranza pendiente', 'CSV', 'revision'],
+    ];
+    final budgetRows = [
+      ['Ingresos', _money(_salesTotalSince(_monthStart)), _money(_salesTotalSince(_monthStart) * 1.15), _money((_salesTotalSince(_monthStart) * 1.15) - _salesTotalSince(_monthStart)), _salesTotalSince(_monthStart) >= (_salesTotalSince(_monthStart) * .9) ? 'en curso' : 'alerta'],
+      ['Gastos Fijos', _money(_fixedExpensesTotal), _money(_fixedExpensesTotal * 1.05), _money((_fixedExpensesTotal * 1.05) - _fixedExpensesTotal), _fixedExpensesTotal <= (_fixedExpensesTotal * 1.05) ? 'controlado' : 'excedido'],
+      ['Proveedores', _money(_supplierPaidThisMonth), _money(_supplierPaidThisMonth * 1.08), _money((_supplierPaidThisMonth * 1.08) - _supplierPaidThisMonth), 'controlado'],
+      ['Nomina', _money(_payrollTotal), _money(_payrollTotal * 1.04), _money((_payrollTotal * 1.04) - _payrollTotal), 'controlado'],
+    ];
+    final goalRows = [
+      ['Ingresos del mes', _money(_salesTotalSince(_monthStart)), _money(_salesTotalSince(_monthStart) * 1.20), _percent(83.3), _salesTotalSince(_monthStart) > 0 ? 'en curso' : 'sin avance'],
+      ['Margen de ganancia', _percent(_margenGanancia), '55.0%', _percent((_margenGanancia / 55) * 100), _margenGanancia >= 45 ? 'saludable' : 'riesgo'],
+      ['Cobranza pendiente', _money(_cuentasPorCobrarEstimadas), _money(_ticketPromedio * 2), _percent(_ticketPromedio == 0 ? 0 : ((_ticketPromedio * 2 - _cuentasPorCobrarEstimadas) / (_ticketPromedio * 2)) * 100), _cuentasPorCobrarEstimadas <= (_ticketPromedio * 2) ? 'en curso' : 'riesgo'],
+      ['Control de gasto', _money(currentMonthExpenses), _money(currentMonthExpenses * 1.1), _percent(90), currentMonthExpenses <= (currentMonthExpenses * 1.1) ? 'controlado' : 'riesgo'],
+    ];
+    final settingsRows = const [
+      ['Metodos de pago activos', '4', 'catalogo', 'activo'],
+      ['Alertas inteligentes', '8 reglas', 'automatizacion', 'activo'],
+      ['Moneda base', 'MXN', 'general', 'activo'],
+      ['Sucursal financiera', 'Matriz', 'alcance', 'activo'],
+      ['Politica de cobranzas', 'Seguimiento manual', 'regla', 'revision'],
+      ['Control de caja chica', 'Estimado', 'operacion', 'activo'],
+    ];
+    final dashboardRecentIncomeRows = (incomeRecentSales.isNotEmpty
+            ? incomeRecentSales.take(6).toList()
+            : _paidSales.take(6).toList())
+        .map((row) {
+          final saleItems = _listValue(row['sale_items']);
+          final firstItem = saleItems.isEmpty ? const {} : _mapValue(saleItems.first);
+          return [
+            DateFormat('d MMM', 'es_MX').format(
+              _parseDate(row['created_at']) ?? DateTime.now(),
+            ),
+            _payloadString(firstItem['description'] ?? firstItem['name'], fallback: 'Venta'),
+            _payloadString(row['client_name'], fallback: 'Cliente general'),
+            _money(_payloadAmount(row['total'])),
+            _humanizeLabel(_payloadString(row['payment_method'], fallback: 'sin metodo')),
+          ];
+        }).toList();
+    final dashboardRecentExpenseRows = (recentExpensesPayload.isNotEmpty
+            ? recentExpensesPayload.take(6).toList()
+            : _detailedExpenses.take(6).toList().map((row) => {
+                  'date': row.date,
+                  'title': row.title,
+                  'responsible': row.responsible,
+                  'amount': row.amount,
+                  'status': row.status,
+                }).toList())
+        .map((entry) {
+          final row = _mapValue(entry);
+          return [
+              _formattedDate(_parseDate(row['date']) ?? DateTime.now()),
+              _payloadString(row['title'], fallback: 'Gasto'),
+              _payloadString(row['responsible'], fallback: 'Operacion'),
+              _money(_payloadAmount(row['amount'])),
+              _payloadString(row['status'], fallback: 'pendiente'),
+            ];
+        })
+        .toList();
 
     switch (_selectedSection) {
       case 0:
         return _FinanceDashboardPage(
           cards: dashboardCards.isNotEmpty
-              ? dashboardCards
+              ? [
+                  ...dashboardCards,
+                  _KpiData(
+                    title: 'Cuentas por Pagar',
+                    value: _money(_cuentasPorPagarTotales),
+                    caption: '${_payableRows.length} compromisos abiertos',
+                    color: _financeNegative,
+                    icon: Icons.outbox_rounded,
+                  ),
+                  _KpiData(
+                    title: 'Caja Chica Disponible',
+                    value: _money(_cajaChicaDisponible),
+                    caption: 'Base estimada ${_money(_cajaChicaBaseEstimda)}',
+                    color: SaharaTheme.gold,
+                    icon: Icons.account_balance_wallet_outlined,
+                  ),
+                  _KpiData(
+                    title: 'Ingresos del Dia',
+                    value: _money(_ingresosHoy),
+                    caption: '${_salesCountSince(_todayStart)} operaciones cobradas',
+                    color: _financePositive,
+                    icon: Icons.today_outlined,
+                  ),
+                  _KpiData(
+                    title: 'Gastos del Dia',
+                    value: _money(_gastosHoy),
+                    caption: 'Salida diaria actual',
+                    color: _financeNegative,
+                    icon: Icons.calendar_today_outlined,
+                  ),
+                  _KpiData(
+                    title: 'Flujo de Efectivo',
+                    value: _money(_flujoEfectivoActual),
+                    caption: 'Balance del mes en curso',
+                    color: _financeViolet,
+                    icon: Icons.waterfall_chart_rounded,
+                  ),
+                  _KpiData(
+                    title: 'Crecimiento vs Mes Anterior',
+                    value: _percent(_crecimientoVsMesAnterior),
+                    caption: 'Comparativo del ingreso mensual',
+                    color: _financeBlue,
+                    icon: Icons.trending_up_rounded,
+                  ),
+                ]
               : [
                   _KpiData(
                     title: 'Ingresos Totales',
@@ -3018,6 +3694,48 @@ class _FinanzasModuleState extends State<FinanzasModule> {
                     color: _financeInk,
                     icon: Icons.confirmation_number_outlined,
                   ),
+                  _KpiData(
+                    title: 'Cuentas por Pagar',
+                    value: _money(_cuentasPorPagarTotales),
+                    caption: '${_payableRows.length} compromisos abiertos',
+                    color: _financeNegative,
+                    icon: Icons.outbox_rounded,
+                  ),
+                  _KpiData(
+                    title: 'Caja Chica Disponible',
+                    value: _money(_cajaChicaDisponible),
+                    caption: 'Base estimada ${_money(_cajaChicaBaseEstimda)}',
+                    color: SaharaTheme.gold,
+                    icon: Icons.account_balance_wallet_outlined,
+                  ),
+                  _KpiData(
+                    title: 'Ingresos del Dia',
+                    value: _money(_ingresosHoy),
+                    caption: '${_salesCountSince(_todayStart)} operaciones cobradas',
+                    color: _financePositive,
+                    icon: Icons.today_outlined,
+                  ),
+                  _KpiData(
+                    title: 'Gastos del Dia',
+                    value: _money(_gastosHoy),
+                    caption: 'Salida diaria actual',
+                    color: _financeNegative,
+                    icon: Icons.calendar_today_outlined,
+                  ),
+                  _KpiData(
+                    title: 'Flujo de Efectivo',
+                    value: _money(_flujoEfectivoActual),
+                    caption: 'Balance del mes en curso',
+                    color: _financeViolet,
+                    icon: Icons.waterfall_chart_rounded,
+                  ),
+                  _KpiData(
+                    title: 'Crecimiento vs Mes Anterior',
+                    value: _percent(_crecimientoVsMesAnterior),
+                    caption: 'Comparativo del ingreso mensual',
+                    color: _financeBlue,
+                    icon: Icons.trending_up_rounded,
+                  ),
                 ],
           trend: dashboardTrend.isNotEmpty ? dashboardTrend : _monthlyTrend,
           expenseBreakdown: dashboardExpenseBreakdown.isNotEmpty
@@ -3042,6 +3760,13 @@ class _FinanzasModuleState extends State<FinanzasModule> {
                   ),
                 ],
           alerts: dashboardAlerts.isNotEmpty ? dashboardAlerts : _alerts,
+          netProfitSeries: _netProfitMonthlySeries,
+          cashFlowSeries: _cashFlowMonthlySeries,
+          topProviders: dashboardTopProviders,
+          recentIncomeRows: dashboardRecentIncomeRows,
+          recentExpenseRows: dashboardRecentExpenseRows,
+          payablesRows: payablesRows.take(6).toList(),
+          receivablesRows: receivablesRows.take(6).toList(),
         );
       case 1:
         return _IngresosPage(
@@ -3562,7 +4287,7 @@ class _FinanzasModuleState extends State<FinanzasModule> {
           onExport: _exportCurrentSection,
         );
       case 7:
-        return _ComparativesPage(
+        return _ComparativesHubPage(
           ventasHoy: _salesTotalSince(_todayStart),
           ventasAyer: _salesTotalBetween(
             _todayStart.subtract(const Duration(days: 1)),
@@ -3578,9 +4303,220 @@ class _FinanzasModuleState extends State<FinanzasModule> {
           topTherapist: therapistRanking.isEmpty ? null : therapistRanking.first,
         );
       case 8:
-        return const _ReportsPage();
+        return _CashBoxPage(
+          cards: [
+            _KpiData(
+              title: 'Caja Chica Disponible',
+              value: _money(_cajaChicaDisponible),
+              caption: 'Base estimada ${_money(_cajaChicaBaseEstimda)}',
+              color: SaharaTheme.gold,
+              icon: Icons.account_balance_wallet_outlined,
+            ),
+            _KpiData(
+              title: 'Salidas del Mes',
+              value: _money(_cajaChicaSalidas),
+              caption: '${_pettyCashMovements.length} movimientos detectados',
+              color: _financeNegative,
+              icon: Icons.south_rounded,
+            ),
+            _KpiData(
+              title: 'Movimientos de Hoy',
+              value: '${_pettyCashMovements.where((row) => !row.date.isBefore(_todayStart)).length}',
+              caption: _money(_pettyCashMovements.where((row) => !row.date.isBefore(_todayStart)).fold<double>(0, (sum, row) => sum + row.amount)),
+              color: _financeBlue,
+              icon: Icons.today_outlined,
+            ),
+            _KpiData(
+              title: 'Ticket Caja Chica',
+              value: _money(_pettyCashMovements.isEmpty ? 0 : _cajaChicaSalidas / _pettyCashMovements.length),
+              caption: 'Promedio por movimiento',
+              color: _financePositive,
+              icon: Icons.receipt_long_rounded,
+            ),
+          ],
+          monthlySeries: _pettyCashMonthlySeries,
+          breakdown: pettyCashBreakdown,
+          rows: pettyCashRows,
+          summary: [
+            _SummaryRow('Disponible', _money(_cajaChicaDisponible)),
+            _SummaryRow('Salidas del mes', _money(_cajaChicaSalidas)),
+            _SummaryRow('Movimientos', '${_pettyCashMovements.length}'),
+            _SummaryRow('Ultimo movimiento', _pettyCashMovements.isEmpty ? 'Sin datos' : _formattedDate(_pettyCashMovements.first.date)),
+          ],
+          onAdd: _openCreateDialog,
+          onExport: _exportCurrentSection,
+        );
       case 9:
-        return _AlertsPage(alerts: _alerts);
+        return _PayablesPage(
+          cards: [
+            _KpiData(
+              title: 'Cuentas por Pagar',
+              value: _money(_cuentasPorPagarTotales),
+              caption: '${_payableRows.length} compromisos abiertos',
+              color: _financeNegative,
+              icon: Icons.outbox_rounded,
+            ),
+            _KpiData(
+              title: 'Vencidas',
+              value: _money(_payableRows.where((row) => (row['estado']?.toString().toLowerCase() ?? '') == 'vencido').fold<double>(0, (sum, row) => sum + (row['monto'] as double))),
+              caption: '${_payableRows.where((row) => (row['estado']?.toString().toLowerCase() ?? '') == 'vencido').length} pagos vencidos',
+              color: _financeNegative,
+              icon: Icons.warning_rounded,
+            ),
+            _KpiData(
+              title: 'Pendientes',
+              value: _money(_payableRows.where((row) => (row['estado']?.toString().toLowerCase() ?? '') == 'pendiente').fold<double>(0, (sum, row) => sum + (row['monto'] as double))),
+              caption: '${_payableRows.where((row) => (row['estado']?.toString().toLowerCase() ?? '') == 'pendiente').length} por atender',
+              color: SaharaTheme.gold,
+              icon: Icons.schedule_rounded,
+            ),
+            _KpiData(
+              title: 'Pago Proximo',
+              value: _payableRows.isEmpty ? _money(0) : _money(_payableRows.first['monto'] as double),
+              caption: _payableRows.isEmpty ? 'Sin pendientes' : _formattedDate(_payableRows.first['fecha'] as DateTime),
+              color: _financeBlue,
+              icon: Icons.event_rounded,
+            ),
+          ],
+          monthlySeries: _payablesMonthlySeries,
+          breakdown: _payablesByOrigin,
+          statusItems: _payableRows
+              .fold<Map<String, double>>({}, (map, row) {
+                final key = _normalizeExpenseStatusLabel(row['estado']?.toString() ?? 'pendiente');
+                map[key] = (map[key] ?? 0) + (row['monto'] as double);
+                return map;
+              })
+              .entries
+              .map((entry) => _CategoryAmount(entry.key, entry.value))
+              .toList(),
+          rows: payablesRows,
+          summary: [
+            _SummaryRow('Pendiente total', _money(_cuentasPorPagarTotales)),
+            _SummaryRow('Fijos', _money(_fixedExpensesPendingTotal + _fixedExpensesOverdueTotal)),
+            _SummaryRow('Proveedores', _money(_pendingSupplierAmount)),
+            _SummaryRow('Nomina', _money(_pendingPayrollAmount)),
+          ],
+          onAdd: _openCreateDialog,
+          onExport: _exportCurrentSection,
+        );
+      case 10:
+        return _ReceivablesPage(
+          cards: [
+            _KpiData(
+              title: 'Cuentas por Cobrar',
+              value: _money(_cuentasPorCobrarEstimadas),
+              caption: '${_receivableRows.length} cobros abiertos',
+              color: _financeBlue,
+              icon: Icons.move_to_inbox_rounded,
+            ),
+            _KpiData(
+              title: 'Pendientes',
+              value: '${_receivableRows.where((row) => row['estado'] == 'pendiente').length}',
+              caption: 'En seguimiento',
+              color: _financePositive,
+              icon: Icons.schedule_rounded,
+            ),
+            _KpiData(
+              title: 'Vencidas',
+              value: '${_receivableRows.where((row) => row['estado'] == 'vencido').length}',
+              caption: _money(_receivableRows.where((row) => row['estado'] == 'vencido').fold<double>(0, (sum, row) => sum + (row['monto'] as double))),
+              color: _financeNegative,
+              icon: Icons.warning_rounded,
+            ),
+            _KpiData(
+              title: 'Ticket Estimado',
+              value: _money(_ticketPromedio),
+              caption: 'Valor medio por cobro',
+              color: SaharaTheme.gold,
+              icon: Icons.receipt_rounded,
+            ),
+          ],
+          monthlySeries: _receivablesMonthlySeries,
+          breakdown: _receivablesByStatus,
+          rows: receivablesRows,
+          summary: [
+            _SummaryRow('Pendiente total', _money(_cuentasPorCobrarEstimadas)),
+            _SummaryRow('Cobros pendientes', '${_receivableRows.where((row) => row['estado'] == 'pendiente').length}'),
+            _SummaryRow('Cobros vencidos', '${_receivableRows.where((row) => row['estado'] == 'vencido').length}'),
+            _SummaryRow('Ticket promedio', _money(_ticketPromedio)),
+          ],
+          onAdd: _openCreateDialog,
+          onExport: _exportCurrentSection,
+        );
+      case 11:
+        return _ReportsHubPage(
+          rows: reportRows,
+          onAdd: _openCreateDialog,
+          onExport: _exportCurrentSection,
+        );
+      case 12:
+        return _AlertsHubPage(
+          alerts: _alerts,
+          onAdd: _openCreateDialog,
+          onExport: _exportCurrentSection,
+        );
+      case 13:
+        return _BudgetsPage(
+          cards: [
+            _KpiData(title: 'Presupuesto Mensual', value: _money(currentMonthExpenses * 1.1), caption: 'Base estimada del mes', color: _financeViolet, icon: Icons.pie_chart_rounded),
+            _KpiData(title: 'Ejecutado', value: _money(currentMonthExpenses), caption: 'Gasto real acumulado', color: _financeNegative, icon: Icons.payments_rounded),
+            _KpiData(title: 'Desviacion', value: _money((currentMonthExpenses * 1.1) - currentMonthExpenses), caption: currentMonthExpenses <= (currentMonthExpenses * 1.1) ? 'Bajo control' : 'Sobre presupuesto', color: _financePositive, icon: Icons.compare_arrows_rounded),
+            _KpiData(title: 'Categorias Activas', value: '${budgetRows.length}', caption: 'Con lectura operativa', color: SaharaTheme.gold, icon: Icons.category_outlined),
+          ],
+          monthlySeries: _cashFlowMonthlySeries,
+          breakdown: _expenseByCategory.entries.map((entry) => _CategoryAmount(entry.key, entry.value)).toList(),
+          rows: budgetRows,
+          summary: [
+            _SummaryRow('Presupuesto total', _money(currentMonthExpenses * 1.1)),
+            _SummaryRow('Ejecutado', _money(currentMonthExpenses)),
+            _SummaryRow('Desviacion', _money((currentMonthExpenses * 1.1) - currentMonthExpenses)),
+            _SummaryRow('Categorias', '${budgetRows.length}'),
+          ],
+          onAdd: _openCreateDialog,
+          onExport: _exportCurrentSection,
+        );
+      case 14:
+        return _GoalsPage(
+          cards: [
+            _KpiData(title: 'Meta de Ingresos', value: _money(_salesTotalSince(_monthStart) * 1.2), caption: 'Objetivo de cierre mensual', color: _financeBlue, icon: Icons.flag_rounded),
+            _KpiData(title: 'Avance Actual', value: _money(_salesTotalSince(_monthStart)), caption: 'Ingreso logrado hasta hoy', color: _financePositive, icon: Icons.trending_up_rounded),
+            _KpiData(title: 'Margen Objetivo', value: '55.0%', caption: 'Meta de rentabilidad', color: _financeViolet, icon: Icons.pie_chart_rounded),
+            _KpiData(title: 'Cobranza Objetivo', value: _money(_ticketPromedio * 2), caption: 'Nivel maximo de cartera abierta', color: SaharaTheme.gold, icon: Icons.move_to_inbox_rounded),
+          ],
+          breakdown: [
+            _CategoryAmount('Ingresos', _salesTotalSince(_monthStart)),
+            _CategoryAmount('Margen', _margenGanancia),
+            _CategoryAmount('Cobranza', math.max((_ticketPromedio * 2) - _cuentasPorCobrarEstimadas, 0)),
+            _CategoryAmount('Control de gasto', math.max((currentMonthExpenses * 1.1) - currentMonthExpenses, 0)),
+          ],
+          rows: goalRows,
+          summary: [
+            _SummaryRow('Ingreso actual', _money(_salesTotalSince(_monthStart))),
+            _SummaryRow('Margen actual', _percent(_margenGanancia)),
+            _SummaryRow('Cobranza abierta', _money(_cuentasPorCobrarEstimadas)),
+            _SummaryRow('Gasto actual', _money(currentMonthExpenses)),
+          ],
+          onAdd: _openCreateDialog,
+          onExport: _exportCurrentSection,
+        );
+      case 15:
+        return _FinanceSettingsPage(
+          cards: const [
+            _KpiData(title: 'Parametros Activos', value: '6', caption: 'Configuracion base del modulo', color: _financeBlue, icon: Icons.settings_rounded),
+            _KpiData(title: 'Metodos de Pago', value: '4', caption: 'Efectivo, tarjeta, transferencia y mixto', color: _financePositive, icon: Icons.payments_outlined),
+            _KpiData(title: 'Reglas de Alerta', value: '8', caption: 'Monitor financiero automatizado', color: SaharaTheme.gold, icon: Icons.notifications_active_outlined),
+            _KpiData(title: 'Salud de Config', value: '92%', caption: 'Lectura general del modulo', color: _financeViolet, icon: Icons.health_and_safety_outlined),
+          ],
+          rows: settingsRows,
+          summary: const [
+            _SummaryRow('Moneda base', 'MXN'),
+            _SummaryRow('Sucursal', 'Matriz'),
+            _SummaryRow('Alertas activas', '8 reglas'),
+            _SummaryRow('Cierre automatico', 'Pendiente'),
+          ],
+          onAdd: _openCreateDialog,
+          onExport: _exportCurrentSection,
+        );
       default:
         return const SizedBox.shrink();
     }
@@ -3652,8 +4588,15 @@ class _FinanceDashboardPage extends StatelessWidget {
     required this.expenseBreakdown,
     required this.topServices,
     required this.topTherapists,
+    required this.topProviders,
     required this.cashFlow,
     required this.alerts,
+    required this.netProfitSeries,
+    required this.cashFlowSeries,
+    required this.recentIncomeRows,
+    required this.recentExpenseRows,
+    required this.payablesRows,
+    required this.receivablesRows,
   });
 
   final List<_KpiData> cards;
@@ -3661,8 +4604,15 @@ class _FinanceDashboardPage extends StatelessWidget {
   final List<_CategoryAmount> expenseBreakdown;
   final List<MapEntry<String, double>> topServices;
   final List<_TherapistPerformance> topTherapists;
+  final List<_CategoryAmount> topProviders;
   final List<_CategoryAmount> cashFlow;
   final List<_MetricAlert> alerts;
+  final List<_MonthlyPoint> netProfitSeries;
+  final List<_MonthlyPoint> cashFlowSeries;
+  final List<List<String>> recentIncomeRows;
+  final List<List<String>> recentExpenseRows;
+  final List<List<String>> payablesRows;
+  final List<List<String>> receivablesRows;
 
   @override
   Widget build(BuildContext context) {
@@ -3685,11 +4635,21 @@ class _FinanceDashboardPage extends StatelessWidget {
                     Expanded(flex: 7, child: _TrendChartCard(points: trend)),
                     const SizedBox(width: 20),
                     Expanded(
-                      flex: 5,
+                      flex: 4,
                       child: _DonutBreakdownCard(
                         title: 'Gastos por categoria',
                         subtitle: 'Como se distribuye la salida de dinero.',
                         items: expenseBreakdown,
+                      ),
+                    ),
+                    const SizedBox(width: 20),
+                    Expanded(
+                      flex: 4,
+                      child: _ValueLineChartCard(
+                        title: 'Ganancia Neta Mensual',
+                        subtitle: 'Lectura neta de ingreso menos egreso por mes.',
+                        points: netProfitSeries,
+                        color: _financePositive,
                       ),
                     ),
                   ],
@@ -3701,6 +4661,13 @@ class _FinanceDashboardPage extends StatelessWidget {
                   title: 'Gastos por categoria',
                   subtitle: 'Como se distribuye la salida de dinero.',
                   items: expenseBreakdown,
+                ),
+                const SizedBox(height: 20),
+                _ValueLineChartCard(
+                  title: 'Ganancia Neta Mensual',
+                  subtitle: 'Lectura neta de ingreso menos egreso por mes.',
+                  points: netProfitSeries,
+                  color: _financePositive,
                 ),
               ],
               const SizedBox(height: 24),
@@ -3734,6 +4701,15 @@ class _FinanceDashboardPage extends StatelessWidget {
                         title: 'Flujo de Efectivo',
                         rows: cashFlow
                             .map((entry) => _SummaryRow(entry.label, _money(entry.value)))
+                            .toList(),
+                      ),
+                    ),
+                    const SizedBox(width: 20),
+                    Expanded(
+                      child: _RankedListCard(
+                        title: 'Top Proveedores',
+                        items: topProviders
+                            .map((entry) => _RankedItem(entry.label, _money(entry.value)))
                             .toList(),
                       ),
                     ),
@@ -3776,9 +4752,161 @@ class _FinanceDashboardPage extends StatelessWidget {
                             .toList(),
                       ),
                     ),
+                    SizedBox(
+                      width: 420,
+                      child: _RankedListCard(
+                        title: 'Top Proveedores',
+                        items: topProviders
+                            .map((entry) => _RankedItem(entry.label, _money(entry.value)))
+                            .toList(),
+                      ),
+                    ),
                     SizedBox(width: 420, child: _AlertsSummaryCard(alerts: alerts)),
                   ],
                 ),
+              const SizedBox(height: 24),
+              if (wide)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 7,
+                      child: _ValueLineChartCard(
+                        title: 'Flujo de Efectivo',
+                        subtitle: 'Balance neto mensual de la operacion financiera.',
+                        points: cashFlowSeries,
+                        color: _financeBlue,
+                      ),
+                    ),
+                    const SizedBox(width: 20),
+                    Expanded(
+                      flex: 5,
+                      child: _SummaryListCard(
+                        title: 'Comparativa Mes Actual vs Mes Anterior',
+                        rows: [
+                          _SummaryRow(
+                            'Mes actual',
+                            _money(cashFlowSeries.isEmpty ? 0 : cashFlowSeries.last.value),
+                          ),
+                          _SummaryRow(
+                            'Mes anterior',
+                            _money(cashFlowSeries.length < 2 ? 0 : cashFlowSeries[cashFlowSeries.length - 2].value),
+                          ),
+                          _SummaryRow(
+                            'Variacion',
+                            _percent(
+                              cashFlowSeries.length < 2 || cashFlowSeries[cashFlowSeries.length - 2].value == 0
+                                  ? 0
+                                  : ((cashFlowSeries.last.value - cashFlowSeries[cashFlowSeries.length - 2].value) /
+                                          cashFlowSeries[cashFlowSeries.length - 2].value) *
+                                      100,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                )
+              else ...[
+                _ValueLineChartCard(
+                  title: 'Flujo de Efectivo',
+                  subtitle: 'Balance neto mensual de la operacion financiera.',
+                  points: cashFlowSeries,
+                  color: _financeBlue,
+                ),
+                const SizedBox(height: 20),
+                _SummaryListCard(
+                  title: 'Comparativa Mes Actual vs Mes Anterior',
+                  rows: [
+                    _SummaryRow(
+                      'Mes actual',
+                      _money(cashFlowSeries.isEmpty ? 0 : cashFlowSeries.last.value),
+                    ),
+                    _SummaryRow(
+                      'Mes anterior',
+                      _money(cashFlowSeries.length < 2 ? 0 : cashFlowSeries[cashFlowSeries.length - 2].value),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 24),
+              Wrap(
+                spacing: 16,
+                runSpacing: 16,
+                children: [
+                  SizedBox(
+                    width: wide ? 560 : double.infinity,
+                    child: _FinanceRecordsTableCard(
+                      columns: const ['Fecha', 'Concepto', 'Cliente', 'Monto', 'Metodo'],
+                      rows: recentIncomeRows,
+                      searchHint: 'Buscar ingreso...',
+                      filterPrimary: 'Ultimos ingresos',
+                      filterSecondary: 'Todos',
+                      addLabel: 'Nuevo ingreso',
+                      onAdd: () => ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('La captura de ingresos se conecta en la siguiente fase.')),
+                      ),
+                      onExport: () => ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('La exportacion de ingresos se conecta en la siguiente fase.')),
+                      ),
+                    ),
+                  ),
+                  SizedBox(
+                    width: wide ? 560 : double.infinity,
+                    child: _FinanceRecordsTableCard(
+                      columns: const ['Fecha', 'Concepto', 'Responsable', 'Monto', 'Estado'],
+                      rows: recentExpenseRows,
+                      searchHint: 'Buscar gasto...',
+                      filterPrimary: 'Ultimos gastos',
+                      filterSecondary: 'Todos los estados',
+                      addLabel: 'Nuevo gasto',
+                      onAdd: () => ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Usa el modulo de gastos para registrar nuevos egresos.')),
+                      ),
+                      onExport: () => ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('La exportacion de gastos se conecta en la siguiente fase.')),
+                      ),
+                      statusColumnIndex: 4,
+                    ),
+                  ),
+                  SizedBox(
+                    width: wide ? 560 : double.infinity,
+                    child: _FinanceRecordsTableCard(
+                      columns: const ['Origen', 'Concepto', 'Responsable', 'Fecha', 'Monto', 'Estado'],
+                      rows: payablesRows,
+                      searchHint: 'Buscar pago pendiente...',
+                      filterPrimary: 'Pagos pendientes',
+                      filterSecondary: 'Todos los estados',
+                      addLabel: 'Nueva cuenta',
+                      onAdd: () => ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Usa cuentas por pagar para gestionar nuevos compromisos.')),
+                      ),
+                      onExport: () => ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('La exportacion de pagos pendientes se conecta en la siguiente fase.')),
+                      ),
+                      statusColumnIndex: 5,
+                    ),
+                  ),
+                  SizedBox(
+                    width: wide ? 560 : double.infinity,
+                    child: _FinanceRecordsTableCard(
+                      columns: const ['Cliente', 'Servicio', 'Terapeuta', 'Fecha', 'Monto', 'Estado'],
+                      rows: receivablesRows,
+                      searchHint: 'Buscar cobro pendiente...',
+                      filterPrimary: 'Cuentas por cobrar',
+                      filterSecondary: 'Todos los estados',
+                      addLabel: 'Nueva cuenta',
+                      onAdd: () => ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Usa cuentas por cobrar para gestionar nuevos seguimientos.')),
+                      ),
+                      onExport: () => ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('La exportacion de cobranza se conecta en la siguiente fase.')),
+                      ),
+                      statusColumnIndex: 5,
+                    ),
+                  ),
+                ],
+              ),
             ],
           );
         },
@@ -4461,6 +5589,7 @@ class _PerformanceOverviewPage extends StatelessWidget {
   }
 }
 
+// ignore: unused_element
 class _ComparativesPage extends StatelessWidget {
   const _ComparativesPage({
     required this.ventasHoy,
@@ -4551,6 +5680,7 @@ class _ComparativesPage extends StatelessWidget {
   }
 }
 
+// ignore: unused_element
 class _ReportsPage extends StatelessWidget {
   const _ReportsPage();
 
@@ -4604,6 +5734,7 @@ class _ReportsPage extends StatelessWidget {
   }
 }
 
+// ignore: unused_element
 class _AlertsPage extends StatelessWidget {
   const _AlertsPage({required this.alerts});
 
@@ -4626,6 +5757,925 @@ class _AlertsPage extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+String _comparisonStatus(double current, double previous) {
+  if (current == previous) return 'estable';
+  return current > previous ? 'mejorando' : 'descendiendo';
+}
+
+String _alertToneLabel(_MetricAlert alert) {
+  if (alert.tone == _financeNegative) return 'critica';
+  if (alert.tone == SaharaTheme.gold) return 'seguimiento';
+  if (alert.tone == _financePositive) return 'estable';
+  return 'observacion';
+}
+
+class _FinanceTabsCard extends StatelessWidget {
+  const _FinanceTabsCard({required this.tabs});
+
+  final List<String> tabs;
+
+  @override
+  Widget build(BuildContext context) {
+    return _FinanceSurfaceCard(
+      padding: const EdgeInsets.all(16),
+      child: Wrap(
+        spacing: 10,
+        runSpacing: 10,
+        children: tabs
+            .map(
+              (tab) => _SectionChip(
+                label: tab,
+                selected: tab == tabs.first,
+              ),
+            )
+            .toList(),
+      ),
+    );
+  }
+}
+
+class _ValueLineChartCard extends StatelessWidget {
+  const _ValueLineChartCard({
+    required this.title,
+    required this.subtitle,
+    required this.points,
+    required this.color,
+  });
+
+  final String title;
+  final String subtitle;
+  final List<_MonthlyPoint> points;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return _FinanceSurfaceCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _CardHeader(title: title, subtitle: subtitle),
+          const SizedBox(height: 18),
+          SizedBox(
+            height: 320,
+            child: points.isEmpty
+                ? const _EmptyFinanceState(message: 'Sin datos para graficar.')
+                : LineChart(
+                    LineChartData(
+                      minY: 0,
+                      gridData: FlGridData(
+                        show: true,
+                        horizontalInterval: _monthlyInterval(points),
+                        drawVerticalLine: false,
+                        getDrawingHorizontalLine: (_) =>
+                            const FlLine(color: _financeBorder, strokeWidth: 1),
+                      ),
+                      titlesData: FlTitlesData(
+                        topTitles: const AxisTitles(
+                          sideTitles: SideTitles(showTitles: false),
+                        ),
+                        rightTitles: const AxisTitles(
+                          sideTitles: SideTitles(showTitles: false),
+                        ),
+                        leftTitles: AxisTitles(
+                          sideTitles: SideTitles(
+                            showTitles: true,
+                            reservedSize: 52,
+                            getTitlesWidget: (value, meta) => Text(
+                              _compactMoney(value),
+                              style: GoogleFonts.inter(
+                                color: _financeMuted,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                        ),
+                        bottomTitles: AxisTitles(
+                          sideTitles: SideTitles(
+                            showTitles: true,
+                            interval: 1,
+                            getTitlesWidget: (value, meta) {
+                              final index = value.toInt();
+                              if (index < 0 || index >= points.length) {
+                                return const SizedBox.shrink();
+                              }
+                              return Padding(
+                                padding: const EdgeInsets.only(top: 8),
+                                child: Text(
+                                  points[index].label,
+                                  style: GoogleFonts.inter(
+                                    color: _financeMuted,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                      borderData: FlBorderData(show: false),
+                      lineBarsData: [
+                        LineChartBarData(
+                          spots: [
+                            for (var i = 0; i < points.length; i++)
+                              FlSpot(i.toDouble(), points[i].value),
+                          ],
+                          isCurved: true,
+                          color: color,
+                          barWidth: 3,
+                          dotData: const FlDotData(show: true),
+                          belowBarData: BarAreaData(
+                            show: true,
+                            color: color.withValues(alpha: 0.08),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FinanceRecordsTableCard extends StatelessWidget {
+  const _FinanceRecordsTableCard({
+    required this.columns,
+    required this.rows,
+    required this.searchHint,
+    required this.filterPrimary,
+    required this.filterSecondary,
+    required this.addLabel,
+    required this.onAdd,
+    required this.onExport,
+    this.statusColumnIndex,
+  });
+
+  final List<String> columns;
+  final List<List<String>> rows;
+  final String searchHint;
+  final String filterPrimary;
+  final String filterSecondary;
+  final String addLabel;
+  final VoidCallback onAdd;
+  final VoidCallback onExport;
+  final int? statusColumnIndex;
+
+  @override
+  Widget build(BuildContext context) {
+    return _FinanceSurfaceCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: SaharaTheme.background,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: _financeBorder),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.search_rounded, size: 18, color: _financeMuted),
+                      const SizedBox(width: 10),
+                      Text(
+                        searchHint,
+                        style: GoogleFonts.inter(color: _financeMuted),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              _TopBarChip(label: filterPrimary, icon: Icons.tune_rounded),
+              const SizedBox(width: 12),
+              _TopBarChip(label: filterSecondary, icon: Icons.flag_outlined),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: onExport,
+                icon: const Icon(Icons.download_rounded, size: 16),
+                label: const Text('Exportar'),
+              ),
+              const SizedBox(width: 12),
+              ElevatedButton.icon(
+                onPressed: onAdd,
+                icon: const Icon(Icons.add_rounded, size: 16),
+                label: Text(addLabel),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          if (rows.isEmpty)
+            const _EmptyFinanceState(message: 'Todavia no hay registros para esta vista.')
+          else
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                headingRowColor: WidgetStatePropertyAll(
+                  SaharaTheme.background.withValues(alpha: 0.8),
+                ),
+                columns: [
+                  for (final column in columns) DataColumn(label: Text(column)),
+                  const DataColumn(label: Text('Acciones')),
+                ],
+                rows: rows.map((row) {
+                  return DataRow(
+                    cells: [
+                      for (var i = 0; i < columns.length; i++)
+                        DataCell(
+                          statusColumnIndex == i
+                              ? _StatusPill(status: row.length > i ? row[i] : '')
+                              : Text(
+                                  row.length > i ? row[i] : '',
+                                  style: GoogleFonts.inter(
+                                    fontWeight: i == 0 ? FontWeight.w600 : FontWeight.w500,
+                                  ),
+                                ),
+                        ),
+                      const DataCell(
+                        Row(
+                          children: [
+                            Icon(Icons.visibility_rounded, size: 18),
+                            SizedBox(width: 10),
+                            Icon(Icons.more_horiz_rounded, size: 18),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                }).toList(),
+              ),
+            ),
+          const SizedBox(height: 16),
+          Text(
+            'Mostrando ${rows.isEmpty ? 0 : 1} a ${rows.length} de ${rows.length} registros',
+            style: GoogleFonts.inter(color: _financeMuted, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FinanceModuleWorkspacePage extends StatelessWidget {
+  const _FinanceModuleWorkspacePage({
+    required this.cards,
+    required this.tabs,
+    required this.primary,
+    required this.secondary,
+    required this.tableColumns,
+    required this.tableRows,
+    required this.tableSearchHint,
+    required this.tableFilterPrimary,
+    required this.tableFilterSecondary,
+    required this.addLabel,
+    required this.summaryTitle,
+    required this.summaryRows,
+    required this.onAdd,
+    required this.onExport,
+    this.statusColumnIndex,
+    this.tertiary,
+  });
+
+  final List<_KpiData> cards;
+  final List<String> tabs;
+  final Widget primary;
+  final Widget secondary;
+  final Widget? tertiary;
+  final List<String> tableColumns;
+  final List<List<String>> tableRows;
+  final String tableSearchHint;
+  final String tableFilterPrimary;
+  final String tableFilterSecondary;
+  final String addLabel;
+  final String summaryTitle;
+  final List<_SummaryRow> summaryRows;
+  final VoidCallback onAdd;
+  final VoidCallback onExport;
+  final int? statusColumnIndex;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final wide = constraints.maxWidth >= 1240;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _FinanceResponsiveCardGrid(
+                children: cards.map((card) => _FinanceKpiCard(data: card)).toList(),
+              ),
+              const SizedBox(height: 24),
+              _FinanceTabsCard(tabs: tabs),
+              const SizedBox(height: 24),
+              if (wide)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(flex: 7, child: primary),
+                    const SizedBox(width: 20),
+                    Expanded(flex: 4, child: secondary),
+                    if (tertiary != null) ...[
+                      const SizedBox(width: 20),
+                      Expanded(flex: 4, child: tertiary!),
+                    ],
+                  ],
+                )
+              else ...[
+                primary,
+                const SizedBox(height: 20),
+                secondary,
+                if (tertiary != null) ...[
+                  const SizedBox(height: 20),
+                  tertiary!,
+                ],
+              ],
+              const SizedBox(height: 24),
+              if (wide)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: _FinanceRecordsTableCard(
+                        columns: tableColumns,
+                        rows: tableRows,
+                        searchHint: tableSearchHint,
+                        filterPrimary: tableFilterPrimary,
+                        filterSecondary: tableFilterSecondary,
+                        addLabel: addLabel,
+                        onAdd: onAdd,
+                        onExport: onExport,
+                        statusColumnIndex: statusColumnIndex,
+                      ),
+                    ),
+                    const SizedBox(width: 20),
+                    Expanded(
+                      child: _SummaryListCard(
+                        title: summaryTitle,
+                        rows: summaryRows,
+                      ),
+                    ),
+                  ],
+                )
+              else ...[
+                _FinanceRecordsTableCard(
+                  columns: tableColumns,
+                  rows: tableRows,
+                  searchHint: tableSearchHint,
+                  filterPrimary: tableFilterPrimary,
+                  filterSecondary: tableFilterSecondary,
+                  addLabel: addLabel,
+                  onAdd: onAdd,
+                  onExport: onExport,
+                  statusColumnIndex: statusColumnIndex,
+                ),
+                const SizedBox(height: 20),
+                _SummaryListCard(title: summaryTitle, rows: summaryRows),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ComparativesHubPage extends StatelessWidget {
+  const _ComparativesHubPage({
+    required this.ventasHoy,
+    required this.ventasAyer,
+    required this.ventasSemana,
+    required this.ventasSemanaPasada,
+    required this.ventasMes,
+    required this.ventasMesPasado,
+    required this.ingresosTotales,
+    required this.egresosTotales,
+    required this.topServicio,
+    required this.topTherapist,
+  });
+
+  final double ventasHoy;
+  final double ventasAyer;
+  final double ventasSemana;
+  final double ventasSemanaPasada;
+  final double ventasMes;
+  final double ventasMesPasado;
+  final double ingresosTotales;
+  final double egresosTotales;
+  final MapEntry<String, double>? topServicio;
+  final _TherapistPerformance? topTherapist;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = [
+      ['Hoy', _money(ventasHoy), _money(ventasAyer), _comparisonStatus(ventasHoy, ventasAyer)],
+      ['Semana', _money(ventasSemana), _money(ventasSemanaPasada), _comparisonStatus(ventasSemana, ventasSemanaPasada)],
+      ['Mes', _money(ventasMes), _money(ventasMesPasado), _comparisonStatus(ventasMes, ventasMesPasado)],
+      ['Utilidad', _money(ingresosTotales), _money(egresosTotales), ingresosTotales >= egresosTotales ? 'saludable' : 'presionado'],
+    ];
+
+    return _FinanceModuleWorkspacePage(
+      cards: [
+        _KpiData(title: 'Hoy vs Ayer', value: _money(ventasHoy), caption: 'Ayer ${_money(ventasAyer)}', color: _financeBlue, icon: Icons.today_outlined),
+        _KpiData(title: 'Semana vs Semana', value: _money(ventasSemana), caption: 'Previa ${_money(ventasSemanaPasada)}', color: _financePositive, icon: Icons.view_week_outlined),
+        _KpiData(title: 'Mes vs Mes', value: _money(ventasMes), caption: 'Previo ${_money(ventasMesPasado)}', color: SaharaTheme.gold, icon: Icons.calendar_month_outlined),
+        _KpiData(title: 'Balance', value: _money(ingresosTotales - egresosTotales), caption: '${_money(ingresosTotales)} vs ${_money(egresosTotales)}', color: _financeViolet, icon: Icons.compare_arrows_rounded),
+        _KpiData(title: 'Servicio Top', value: topServicio?.key ?? 'Sin datos', caption: topServicio == null ? 'Sin comparativo' : _money(topServicio!.value), color: _financePositive, icon: Icons.star_rounded),
+        _KpiData(title: 'Empleado Top', value: topTherapist?.name ?? 'Sin datos', caption: topTherapist == null ? 'Sin comparativo' : _money(topTherapist!.revenue), color: _financeNegative, icon: Icons.emoji_events_rounded),
+      ],
+      tabs: const ['Resumen', 'Diario', 'Semanal', 'Mensual', 'Utilidad', 'Servicios', 'Equipo'],
+      primary: _FinanceSurfaceCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _CardHeader(title: 'Comparativa Operativa', subtitle: 'Lectura cruzada entre periodos y presion de utilidad.'),
+            const SizedBox(height: 16),
+            ...rows.map((row) => Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: Row(
+                    children: [
+                      Expanded(child: Text(row[0])),
+                      Text(row[1], style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+                      const SizedBox(width: 12),
+                      Text(row[2], style: GoogleFonts.inter(color: _financeMuted)),
+                      const SizedBox(width: 12),
+                      _StatusPill(status: row[3]),
+                    ],
+                  ),
+                )),
+          ],
+        ),
+      ),
+      secondary: _SummaryListCard(
+        title: 'Hallazgos Clave',
+        rows: [
+          _SummaryRow('Servicio mas vendido', topServicio == null ? 'Sin datos' : '${topServicio!.key} · ${_money(topServicio!.value)}'),
+          _SummaryRow('Terapeuta mas rentable', topTherapist == null ? 'Sin datos' : '${topTherapist!.name} · ${_money(topTherapist!.revenue)}'),
+          _SummaryRow('Balance', ingresosTotales >= egresosTotales ? 'Operacion positiva' : 'Operacion presionada'),
+        ],
+      ),
+      tableColumns: const ['Periodo', 'Actual', 'Comparativo', 'Estado'],
+      tableRows: rows,
+      tableSearchHint: 'Buscar comparativa...',
+      tableFilterPrimary: 'Todos los periodos',
+      tableFilterSecondary: 'Todos los estados',
+      addLabel: 'Nueva comparativa',
+      summaryTitle: 'Resumen de Comparativas',
+      summaryRows: [
+        _SummaryRow('Ventas hoy', _money(ventasHoy)),
+        _SummaryRow('Ventas semana', _money(ventasSemana)),
+        _SummaryRow('Ventas mes', _money(ventasMes)),
+        _SummaryRow('Ingresos totales', _money(ingresosTotales)),
+        _SummaryRow('Egresos totales', _money(egresosTotales)),
+      ],
+      onAdd: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('La comparativa guiada se conecta en la siguiente fase.'))),
+      onExport: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('La exportacion comparativa se conecta en la siguiente fase.'))),
+      statusColumnIndex: 3,
+    );
+  }
+}
+
+class _ReportsHubPage extends StatelessWidget {
+  const _ReportsHubPage({
+    required this.rows,
+    required this.onAdd,
+    required this.onExport,
+  });
+
+  final List<List<String>> rows;
+  final VoidCallback onAdd;
+  final VoidCallback onExport;
+
+  @override
+  Widget build(BuildContext context) {
+    return _FinanceModuleWorkspacePage(
+      cards: [
+        _KpiData(title: 'Reportes Disponibles', value: '${rows.length}', caption: 'Listos para corte y exportacion', color: _financeBlue, icon: Icons.insert_drive_file_outlined),
+        _KpiData(title: 'Exportaciones Rapidas', value: '5', caption: 'Ingresos, gastos, nomina y mas', color: _financePositive, icon: Icons.download_rounded),
+        _KpiData(title: 'Cortes del Mes', value: '3', caption: 'Base operativa consolidada', color: SaharaTheme.gold, icon: Icons.assignment_rounded),
+        _KpiData(title: 'Pendientes de Revision', value: '${rows.where((row) => row[2] != 'listo').length}', caption: 'Cobranza y utilidad mensual', color: _financeNegative, icon: Icons.pending_actions_rounded),
+      ],
+      tabs: const ['Resumen', 'Ventas', 'Gastos', 'Nomina', 'Cobranza', 'Utilidad', 'Rendimiento'],
+      primary: _FinanceSurfaceCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _CardHeader(title: 'Centro de Reportes', subtitle: 'Cortes operativos, historicos y exportables del negocio.'),
+            const SizedBox(height: 16),
+            ...rows.take(6).map((row) => Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: Row(
+                    children: [
+                      Expanded(child: Text(row[0])),
+                      Text(row[1], style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+                      const SizedBox(width: 12),
+                      _StatusPill(status: row[2]),
+                    ],
+                  ),
+                )),
+          ],
+        ),
+      ),
+      secondary: const _SummaryListCard(
+        title: 'Resumen de Reportes',
+        rows: [
+          _SummaryRow('Ventas del dia', 'Disponible'),
+          _SummaryRow('Corte de caja', 'Listo'),
+          _SummaryRow('Nomina', 'Listo'),
+          _SummaryRow('Gastos', 'Listo'),
+          _SummaryRow('Rendimiento', 'Disponible'),
+        ],
+      ),
+      tableColumns: const ['Reporte', 'Formato', 'Estado'],
+      tableRows: rows,
+      tableSearchHint: 'Buscar reporte...',
+      tableFilterPrimary: 'Todas las areas',
+      tableFilterSecondary: 'Todos los estados',
+      addLabel: 'Nuevo reporte',
+      summaryTitle: 'Resumen Operativo',
+      summaryRows: [
+        _SummaryRow('Reportes listos', '${rows.where((row) => row[2] == 'listo').length}'),
+        _SummaryRow('Exportables', '${rows.where((row) => row[1] == 'CSV/PDF').length}'),
+        _SummaryRow('Pendientes', '${rows.where((row) => row[2] != 'listo').length}'),
+      ],
+      onAdd: onAdd,
+      onExport: onExport,
+      statusColumnIndex: 2,
+    );
+  }
+}
+
+class _AlertsHubPage extends StatelessWidget {
+  const _AlertsHubPage({
+    required this.alerts,
+    required this.onAdd,
+    required this.onExport,
+  });
+
+  final List<_MetricAlert> alerts;
+  final VoidCallback onAdd;
+  final VoidCallback onExport;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = alerts.map((alert) => [alert.title, alert.message, alert.stamp, _alertToneLabel(alert)]).toList();
+    final critical = alerts.where((alert) => alert.tone == _financeNegative).length;
+    final watch = alerts.where((alert) => alert.tone == SaharaTheme.gold).length;
+    final stable = alerts.where((alert) => alert.tone == _financePositive).length;
+
+    return _FinanceModuleWorkspacePage(
+      cards: [
+        _KpiData(title: 'Alertas Activas', value: '${alerts.length}', caption: 'Lectura actual del negocio', color: _financeNegative, icon: Icons.notifications_active_outlined),
+        _KpiData(title: 'Criticas', value: '$critical', caption: 'Requieren accion inmediata', color: _financeNegative, icon: Icons.priority_high_rounded),
+        _KpiData(title: 'Seguimiento', value: '$watch', caption: 'Operacion bajo observacion', color: SaharaTheme.gold, icon: Icons.visibility_rounded),
+        _KpiData(title: 'Estables', value: '$stable', caption: 'Sin riesgo inmediato', color: _financePositive, icon: Icons.verified_outlined),
+      ],
+      tabs: const ['Resumen', 'Criticas', 'Cobranza', 'Pagos', 'Caja', 'Margen', 'Operacion'],
+      primary: _AlertsSummaryCard(alerts: alerts),
+      secondary: _SummaryListCard(
+        title: 'Semaforo de Riesgo',
+        rows: [
+          _SummaryRow('Criticas', '$critical'),
+          _SummaryRow('Seguimiento', '$watch'),
+          _SummaryRow('Estables', '$stable'),
+        ],
+      ),
+      tableColumns: const ['Alerta', 'Detalle', 'Marca', 'Estado'],
+      tableRows: rows,
+      tableSearchHint: 'Buscar alerta...',
+      tableFilterPrimary: 'Todos los tipos',
+      tableFilterSecondary: 'Todos los estados',
+      addLabel: 'Nueva alerta',
+      summaryTitle: 'Resumen de Alertas',
+      summaryRows: [
+        _SummaryRow('Caja chica baja', '${alerts.where((a) => a.title.toLowerCase().contains('caja')).length}'),
+        _SummaryRow('Cobros pendientes', '${alerts.where((a) => a.title.toLowerCase().contains('cobrar')).length}'),
+        _SummaryRow('Pagos pendientes', '${alerts.where((a) => a.title.toLowerCase().contains('pagar') || a.title.toLowerCase().contains('proveedor') || a.title.toLowerCase().contains('nomina')).length}'),
+      ],
+      onAdd: onAdd,
+      onExport: onExport,
+      statusColumnIndex: 3,
+    );
+  }
+}
+
+class _CashBoxPage extends StatelessWidget {
+  const _CashBoxPage({
+    required this.cards,
+    required this.monthlySeries,
+    required this.breakdown,
+    required this.rows,
+    required this.summary,
+    required this.onAdd,
+    required this.onExport,
+  });
+
+  final List<_KpiData> cards;
+  final List<_MonthlyPoint> monthlySeries;
+  final List<_CategoryAmount> breakdown;
+  final List<List<String>> rows;
+  final List<_SummaryRow> summary;
+  final VoidCallback onAdd;
+  final VoidCallback onExport;
+
+  @override
+  Widget build(BuildContext context) {
+    return _FinanceModuleWorkspacePage(
+      cards: cards,
+      tabs: const ['Resumen', 'Movimientos', 'Reposiciones', 'Salidas', 'Operativo'],
+      primary: _ValueLineChartCard(
+        title: 'Caja Chica por Mes',
+        subtitle: 'Flujo estimado de salidas menores y reposiciones.',
+        points: monthlySeries,
+        color: SaharaTheme.gold,
+      ),
+      secondary: _DonutBreakdownCard(
+        title: 'Movimientos de Caja',
+        subtitle: 'Distribucion estimada por origen del movimiento.',
+        items: breakdown,
+      ),
+      tableColumns: const ['Fecha', 'Concepto', 'Responsable', 'Monto', 'Estado'],
+      tableRows: rows,
+      tableSearchHint: 'Buscar movimiento...',
+      tableFilterPrimary: 'Todos los movimientos',
+      tableFilterSecondary: 'Todos los estados',
+      addLabel: 'Nuevo movimiento',
+      summaryTitle: 'Resumen de Caja Chica',
+      summaryRows: summary,
+      onAdd: onAdd,
+      onExport: onExport,
+      statusColumnIndex: 4,
+    );
+  }
+}
+
+class _PayablesPage extends StatelessWidget {
+  const _PayablesPage({
+    required this.cards,
+    required this.monthlySeries,
+    required this.breakdown,
+    required this.statusItems,
+    required this.rows,
+    required this.summary,
+    required this.onAdd,
+    required this.onExport,
+  });
+
+  final List<_KpiData> cards;
+  final List<_MonthlyPoint> monthlySeries;
+  final List<_CategoryAmount> breakdown;
+  final List<_CategoryAmount> statusItems;
+  final List<List<String>> rows;
+  final List<_SummaryRow> summary;
+  final VoidCallback onAdd;
+  final VoidCallback onExport;
+
+  @override
+  Widget build(BuildContext context) {
+    return _FinanceModuleWorkspacePage(
+      cards: cards,
+      tabs: const ['Resumen', 'Proveedores', 'Nomina', 'Fijos', 'Vencidos', 'Historial'],
+      primary: _ValueLineChartCard(
+        title: 'Cuentas por Pagar',
+        subtitle: 'Compromisos pendientes por periodo.',
+        points: monthlySeries,
+        color: _financeNegative,
+      ),
+      secondary: _DonutBreakdownCard(
+        title: 'Pendientes por Origen',
+        subtitle: 'Distribucion entre fijos, proveedores y nomina.',
+        items: breakdown,
+      ),
+      tertiary: _ExpenseStatusCard(items: statusItems),
+      tableColumns: const ['Origen', 'Concepto', 'Responsable', 'Fecha', 'Monto', 'Estado'],
+      tableRows: rows,
+      tableSearchHint: 'Buscar cuenta por pagar...',
+      tableFilterPrimary: 'Todos los origenes',
+      tableFilterSecondary: 'Todos los estados',
+      addLabel: 'Nueva cuenta por pagar',
+      summaryTitle: 'Resumen de Cuentas por Pagar',
+      summaryRows: summary,
+      onAdd: onAdd,
+      onExport: onExport,
+      statusColumnIndex: 5,
+    );
+  }
+}
+
+class _ReceivablesPage extends StatelessWidget {
+  const _ReceivablesPage({
+    required this.cards,
+    required this.monthlySeries,
+    required this.breakdown,
+    required this.rows,
+    required this.summary,
+    required this.onAdd,
+    required this.onExport,
+  });
+
+  final List<_KpiData> cards;
+  final List<_MonthlyPoint> monthlySeries;
+  final List<_CategoryAmount> breakdown;
+  final List<List<String>> rows;
+  final List<_SummaryRow> summary;
+  final VoidCallback onAdd;
+  final VoidCallback onExport;
+
+  @override
+  Widget build(BuildContext context) {
+    return _FinanceModuleWorkspacePage(
+      cards: cards,
+      tabs: const ['Resumen', 'Pendientes', 'Vencidas', 'Agenda', 'Seguimiento'],
+      primary: _ValueLineChartCard(
+        title: 'Cuentas por Cobrar',
+        subtitle: 'Evolucion estimada de cobros pendientes.',
+        points: monthlySeries,
+        color: _financeBlue,
+      ),
+      secondary: _DonutBreakdownCard(
+        title: 'Estado de Cobranza',
+        subtitle: 'Pendientes y vencidas por monto estimado.',
+        items: breakdown,
+      ),
+      tableColumns: const ['Cliente', 'Servicio', 'Terapeuta', 'Fecha', 'Monto', 'Estado'],
+      tableRows: rows,
+      tableSearchHint: 'Buscar cuenta por cobrar...',
+      tableFilterPrimary: 'Todas las cuentas',
+      tableFilterSecondary: 'Todos los estados',
+      addLabel: 'Nueva cuenta por cobrar',
+      summaryTitle: 'Resumen de Cuentas por Cobrar',
+      summaryRows: summary,
+      onAdd: onAdd,
+      onExport: onExport,
+      statusColumnIndex: 5,
+    );
+  }
+}
+
+class _BudgetsPage extends StatelessWidget {
+  const _BudgetsPage({
+    required this.cards,
+    required this.monthlySeries,
+    required this.breakdown,
+    required this.rows,
+    required this.summary,
+    required this.onAdd,
+    required this.onExport,
+  });
+
+  final List<_KpiData> cards;
+  final List<_MonthlyPoint> monthlySeries;
+  final List<_CategoryAmount> breakdown;
+  final List<List<String>> rows;
+  final List<_SummaryRow> summary;
+  final VoidCallback onAdd;
+  final VoidCallback onExport;
+
+  @override
+  Widget build(BuildContext context) {
+    return _FinanceModuleWorkspacePage(
+      cards: cards,
+      tabs: const ['Resumen', 'Categorias', 'Desviaciones', 'Mensual', 'Alertas'],
+      primary: _ValueLineChartCard(
+        title: 'Presupuesto vs Ejecucion',
+        subtitle: 'Referencia mensual de gasto real contra el plan.',
+        points: monthlySeries,
+        color: _financeViolet,
+      ),
+      secondary: _DonutBreakdownCard(
+        title: 'Presupuesto por Categoria',
+        subtitle: 'Participacion estimada por rubro.',
+        items: breakdown,
+      ),
+      tableColumns: const ['Categoria', 'Actual', 'Presupuesto', 'Desviacion', 'Estado'],
+      tableRows: rows,
+      tableSearchHint: 'Buscar presupuesto...',
+      tableFilterPrimary: 'Todas las categorias',
+      tableFilterSecondary: 'Todos los estados',
+      addLabel: 'Nuevo presupuesto',
+      summaryTitle: 'Resumen de Presupuestos',
+      summaryRows: summary,
+      onAdd: onAdd,
+      onExport: onExport,
+      statusColumnIndex: 4,
+    );
+  }
+}
+
+class _GoalsPage extends StatelessWidget {
+  const _GoalsPage({
+    required this.cards,
+    required this.breakdown,
+    required this.rows,
+    required this.summary,
+    required this.onAdd,
+    required this.onExport,
+  });
+
+  final List<_KpiData> cards;
+  final List<_CategoryAmount> breakdown;
+  final List<List<String>> rows;
+  final List<_SummaryRow> summary;
+  final VoidCallback onAdd;
+  final VoidCallback onExport;
+
+  @override
+  Widget build(BuildContext context) {
+    return _FinanceModuleWorkspacePage(
+      cards: cards,
+      tabs: const ['Resumen', 'Ingresos', 'Cobranza', 'Margen', 'Productividad'],
+      primary: _ProgressBreakdownCard(
+        title: 'Avance de Metas',
+        subtitle: 'Progreso actual frente a objetivos clave del negocio.',
+        items: breakdown,
+      ),
+      secondary: _SummaryListCard(
+        title: 'Lectura de Metas',
+        rows: summary,
+      ),
+      tableColumns: const ['Meta', 'Actual', 'Objetivo', 'Avance', 'Estado'],
+      tableRows: rows,
+      tableSearchHint: 'Buscar meta...',
+      tableFilterPrimary: 'Todas las metas',
+      tableFilterSecondary: 'Todos los estados',
+      addLabel: 'Nueva meta',
+      summaryTitle: 'Resumen de Metas',
+      summaryRows: summary,
+      onAdd: onAdd,
+      onExport: onExport,
+      statusColumnIndex: 4,
+    );
+  }
+}
+
+class _FinanceSettingsPage extends StatelessWidget {
+  const _FinanceSettingsPage({
+    required this.cards,
+    required this.rows,
+    required this.summary,
+    required this.onAdd,
+    required this.onExport,
+  });
+
+  final List<_KpiData> cards;
+  final List<List<String>> rows;
+  final List<_SummaryRow> summary;
+  final VoidCallback onAdd;
+  final VoidCallback onExport;
+
+  @override
+  Widget build(BuildContext context) {
+    return _FinanceModuleWorkspacePage(
+      cards: cards,
+      tabs: const ['Resumen', 'Metodos', 'Alertas', 'Reglas', 'Integridad'],
+      primary: _FinanceSurfaceCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _CardHeader(
+              title: 'Salud del Modulo Financiero',
+              subtitle: 'Revision de parametros, reglas y puntos de control.',
+            ),
+            const SizedBox(height: 16),
+            ...summary.map(
+              (row) => Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: Row(
+                  children: [
+                    Expanded(child: Text(row.label)),
+                    Text(row.value, style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      secondary: _SummaryListCard(
+        title: 'Configuracion Activa',
+        rows: summary,
+      ),
+      tableColumns: const ['Parametro', 'Valor', 'Tipo', 'Estado'],
+      tableRows: rows,
+      tableSearchHint: 'Buscar parametro...',
+      tableFilterPrimary: 'Todos los parametros',
+      tableFilterSecondary: 'Todos los estados',
+      addLabel: 'Nuevo ajuste',
+      summaryTitle: 'Resumen de Configuracion',
+      summaryRows: summary,
+      onAdd: onAdd,
+      onExport: onExport,
+      statusColumnIndex: 3,
     );
   }
 }
@@ -8696,6 +10746,19 @@ class _DetailedExpenseRow {
     required this.source,
   });
 
+  _DetailedExpenseRow.empty()
+      : category = '',
+        rawCategory = '',
+        title = '',
+        subtitle = '',
+        amount = 0,
+        status = '',
+        date = DateTime.fromMillisecondsSinceEpoch(0),
+        paymentMethod = '',
+        responsible = '',
+        hasReceipt = false,
+        source = '';
+
   final String category;
   final String rawCategory;
   final String title;
@@ -8707,6 +10770,8 @@ class _DetailedExpenseRow {
   final String responsible;
   final bool hasReceipt;
   final String source;
+
+  bool get isEmpty => title.isEmpty && amount == 0;
 }
 
 class _ComparisonData {
