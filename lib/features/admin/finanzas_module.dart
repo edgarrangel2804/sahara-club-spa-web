@@ -20,6 +20,18 @@ const Color _financeNegative = Color(0xFFB96352);
 const Color _financeBlue = Color(0xFF6F7C98);
 const Color _financeViolet = Color(0xFF8B7AA8);
 
+String _financeUuid() {
+  final random = math.Random.secure();
+  final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  String hex(int n) => n.toRadixString(16).padLeft(2, '0');
+  return '${hex(bytes[0])}${hex(bytes[1])}${hex(bytes[2])}${hex(bytes[3])}-'
+      '${hex(bytes[4])}${hex(bytes[5])}-${hex(bytes[6])}${hex(bytes[7])}-'
+      '${hex(bytes[8])}${hex(bytes[9])}-'
+      '${hex(bytes[10])}${hex(bytes[11])}${hex(bytes[12])}${hex(bytes[13])}${hex(bytes[14])}${hex(bytes[15])}';
+}
+
 class FinanzasModule extends StatefulWidget {
   const FinanzasModule({super.key});
 
@@ -30,6 +42,8 @@ class FinanzasModule extends StatefulWidget {
 class _FinanzasModuleState extends State<FinanzasModule> {
   bool _loading = true;
   int _selectedSection = 0;
+  String _selectedBranchLabel = 'Sucursal Matriz';
+  String _selectedScopeLabel = 'Todos';
   Map<String, dynamic>? _dashboardPayload;
   Map<String, dynamic>? _incomePayload;
   Map<String, dynamic>? _expensePayload;
@@ -49,6 +63,7 @@ class _FinanzasModuleState extends State<FinanzasModule> {
   List<Map<String, dynamic>> _fixedExpenses = [];
   List<Map<String, dynamic>> _supplierExpenses = [];
   List<Map<String, dynamic>> _payrollEntries = [];
+  List<Map<String, dynamic>> _cashBoxMovements = [];
   List<Map<String, dynamic>> _staff = [];
 
   static const List<_FinanceSectionMeta> _sections = [
@@ -305,6 +320,7 @@ class _FinanzasModuleState extends State<FinanzasModule> {
       _safeSelect('fixed_expenses'),
       _safeSelect('supplier_expenses'),
       _safeSelect('payroll_entries'),
+      _safeSelect('cash_box_movements'),
       _safeSelect('staff'),
     ]);
 
@@ -316,7 +332,8 @@ class _FinanzasModuleState extends State<FinanzasModule> {
       _fixedExpenses = results[3] as List<Map<String, dynamic>>;
       _supplierExpenses = results[4] as List<Map<String, dynamic>>;
       _payrollEntries = results[5] as List<Map<String, dynamic>>;
-      _staff = results[6] as List<Map<String, dynamic>>;
+      _cashBoxMovements = results[6] as List<Map<String, dynamic>>;
+      _staff = results[7] as List<Map<String, dynamic>>;
       _detailsLoaded = true;
       _loading = false;
     });
@@ -1690,6 +1707,12 @@ class _FinanzasModuleState extends State<FinanzasModule> {
       final key = method == null || method.isEmpty ? 'Pendiente' : _humanizeLabel(method);
       map[key] = (map[key] ?? 0) + _amount(sale['total']);
     }
+    for (final booking in _paidBookingsWithoutSale) {
+      final method = booking['payment_method']?.toString().trim();
+      final key =
+          method == null || method.isEmpty ? 'Sin metodo' : _humanizeLabel(method);
+      map[key] = (map[key] ?? 0) + _bookingIncome(booking);
+    }
     return map;
   }
 
@@ -1717,7 +1740,45 @@ class _FinanzasModuleState extends State<FinanzasModule> {
         }
       }
     }
+    for (final booking in _paidBookingsWithoutSale) {
+      map['Servicios'] = (map['Servicios'] ?? 0) + _bookingIncome(booking);
+    }
     return map;
+  }
+
+  List<Map<String, dynamic>> get _recentIncomeRecords {
+    final rows = <Map<String, dynamic>>[
+      ..._incomeRecentSalesFromPayload,
+      if (_incomeRecentSalesFromPayload.isEmpty) ...[
+        ..._paidSales.map((sale) => Map<String, dynamic>.from(sale)),
+        ..._paidBookingsWithoutSale.map((booking) {
+          final service = _mapValue(booking['service']);
+          final serviceName = _payloadString(service['name'], fallback: 'Servicio agenda');
+          final bookingDate = _parseDate(booking['booking_date']) ?? DateTime.now();
+          return <String, dynamic>{
+            'created_at': bookingDate.toIso8601String(),
+            'client_name': 'Cliente agenda',
+            'payment_method': booking['payment_method']?.toString() ?? 'sin metodo',
+            'total': _bookingIncome(booking),
+            'sale_items': [
+              {
+                'description': serviceName,
+                'name': serviceName,
+                'quantity': 1,
+                'total_price': _bookingIncome(booking),
+                'service_id': booking['service_id'] ?? 'booking',
+              },
+            ],
+          };
+        }),
+      ],
+    ];
+    rows.sort((a, b) {
+      final aDate = _parseDate(a['created_at']) ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bDate = _parseDate(b['created_at']) ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return bDate.compareTo(aDate);
+    });
+    return rows;
   }
 
   Map<String, double> get _servicioRevenue {
@@ -1933,8 +1994,12 @@ class _FinanzasModuleState extends State<FinanzasModule> {
     final now = DateTime.now();
     final daysInView = math.min(now.day, 10);
     return List.generate(daysInView, (index) {
-      final current = DateTime(now.year, now.month, index + 1);
-      final previous = DateTime(now.year, now.month - 1, index + 1);
+      final current = DateTime(
+        now.year,
+        now.month,
+        now.day - (daysInView - 1 - index),
+      );
+      final previous = DateTime(current.year, current.month - 1, current.day);
       return _TrendPoint(
         label: DateFormat('d MMM', 'es_MX').format(current),
         ingresos: _expensesTotalBetween(
@@ -2074,6 +2139,73 @@ class _FinanzasModuleState extends State<FinanzasModule> {
 
   double get _cajaChicaBaseEstimda => 5000;
 
+  bool get _hasCashBoxLedger => _cashBoxMovements.isNotEmpty;
+
+  String _cashBoxMovementType(Map<String, dynamic> row) {
+    final raw = (row['movement_type'] ?? row['type'] ?? row['tipo'])
+        ?.toString()
+        .trim()
+        .toLowerCase();
+    if (raw == 'entrada' || raw == 'deposito' || raw == 'reposicion') {
+      return 'Entrada';
+    }
+    return 'Salida';
+  }
+
+  DateTime _cashBoxMovementDate(Map<String, dynamic> row) {
+    return _parseDate(row['movement_at']) ??
+        _parseDate(row['movement_date']) ??
+        _parseDate(row['created_at']) ??
+        DateTime.now();
+  }
+
+  String _cashBoxMovementResponsible(Map<String, dynamic> row) {
+    final raw = (row['responsible_name'] ??
+            row['responsable'] ??
+            row['responsible'])
+        ?.toString()
+        .trim();
+    return raw == null || raw.isEmpty ? 'Responsable' : raw;
+  }
+
+  String _cashBoxMovementDescription(Map<String, dynamic> row) {
+    final raw = (row['description'] ?? row['concept'] ?? row['title'])
+        ?.toString()
+        .trim();
+    return raw == null || raw.isEmpty ? 'Movimiento de caja' : raw;
+  }
+
+  List<Map<String, dynamic>> get _cashBoxRowsData {
+    if (_hasCashBoxLedger) {
+      final rows = _cashBoxMovements
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList()
+        ..sort(
+          (a, b) => _cashBoxMovementDate(b).compareTo(_cashBoxMovementDate(a)),
+        );
+      return rows;
+    }
+    return _pettyCashMovements
+        .map(
+          (row) => {
+            'movement_at': row.date.toIso8601String(),
+            'description': row.title,
+            'movement_type': 'salida',
+            'amount': row.amount,
+            'responsible_name': row.responsible,
+            'status': row.status,
+          },
+        )
+        .toList();
+  }
+
+  double get _cashBoxEntradasAcumuladas {
+    if (!_hasCashBoxLedger) return _cajaChicaBaseEstimda;
+    return _cashBoxRowsData
+        .where((row) => _cashBoxMovementType(row) == 'Entrada')
+        .fold<double>(0, (sum, row) => sum + _amount(row['amount']));
+  }
+
   List<_DetailedExpenseRow> get _pettyCashMovements {
     final rows = _detailedExpenses.where((row) {
       final text =
@@ -2090,10 +2222,49 @@ class _FinanzasModuleState extends State<FinanzasModule> {
   }
 
   double get _cajaChicaSalidas =>
-      _pettyCashMovements.fold<double>(0, (sum, row) => sum + row.amount);
+      _hasCashBoxLedger
+          ? _cashBoxRowsData
+                .where((row) => _cashBoxMovementType(row) == 'Salida')
+                .fold<double>(0, (sum, row) => sum + _amount(row['amount']))
+          : _pettyCashMovements.fold<double>(0, (sum, row) => sum + row.amount);
 
   double get _cajaChicaDisponible =>
-      math.max(_cajaChicaBaseEstimda - _cajaChicaSalidas, 0);
+      _hasCashBoxLedger
+          ? math.max(_cashBoxEntradasAcumuladas - _cajaChicaSalidas, 0)
+          : math.max(_cajaChicaBaseEstimda - _cajaChicaSalidas, 0);
+
+  double get _cashBoxEntradasHoy => _cashBoxRowsData
+      .where(
+        (row) =>
+            _cashBoxMovementType(row) == 'Entrada' &&
+            !_cashBoxMovementDate(row).isBefore(_todayStart),
+      )
+      .fold<double>(0, (sum, row) => sum + _amount(row['amount']));
+
+  int get _cashBoxEntradasHoyCount => _cashBoxRowsData.where(
+        (row) =>
+            _cashBoxMovementType(row) == 'Entrada' &&
+            !_cashBoxMovementDate(row).isBefore(_todayStart),
+      ).length;
+
+  double get _cashBoxSalidasHoy => _cashBoxRowsData
+      .where(
+        (row) =>
+            _cashBoxMovementType(row) == 'Salida' &&
+            !_cashBoxMovementDate(row).isBefore(_todayStart),
+      )
+      .fold<double>(0, (sum, row) => sum + _amount(row['amount']));
+
+  int get _cashBoxSalidasHoyCount => _cashBoxRowsData.where(
+        (row) =>
+            _cashBoxMovementType(row) == 'Salida' &&
+            !_cashBoxMovementDate(row).isBefore(_todayStart),
+      ).length;
+
+  String get _cashBoxResponsibleLabel =>
+      _cashBoxRowsData.isEmpty
+          ? 'Sin responsable'
+          : _cashBoxMovementResponsible(_cashBoxRowsData.first);
 
   double get _flujoEfectivoActual =>
       _salesTotalSince(_monthStart) -
@@ -2277,10 +2448,15 @@ class _FinanzasModuleState extends State<FinanzasModule> {
     for (var offset = 5; offset >= 0; offset--) {
       final monthStart = DateTime(now.year, now.month - offset, 1);
       final nextMonth = DateTime(monthStart.year, monthStart.month + 1, 1);
-      final total = _pettyCashMovements.where((row) {
-        final date = row.date;
-        return !date.isBefore(monthStart) && date.isBefore(nextMonth);
-      }).fold<double>(0, (sum, row) => sum + row.amount);
+      final total = _hasCashBoxLedger
+          ? _cashBoxRowsData.where((row) {
+              final date = _cashBoxMovementDate(row);
+              return !date.isBefore(monthStart) && date.isBefore(nextMonth);
+            }).fold<double>(0, (sum, row) => sum + _amount(row['amount']))
+          : _pettyCashMovements.where((row) {
+              final date = row.date;
+              return !date.isBefore(monthStart) && date.isBefore(nextMonth);
+            }).fold<double>(0, (sum, row) => sum + row.amount);
       points.add(
         _MonthlyPoint(
           label: DateFormat('MMM', 'es_MX').format(monthStart),
@@ -2952,7 +3128,11 @@ class _FinanzasModuleState extends State<FinanzasModule> {
       return;
     }
     if (_selectedSection == 8) {
-      _showFinanceSnack('Usa los movimientos detectados o integra el flujo de caja chica en la siguiente fase.');
+      final created = await showDialog<bool>(
+        context: context,
+        builder: (_) => _CashBoxMovementDialog(staff: _staff),
+      );
+      if (created == true) _load();
       return;
     }
     if (_selectedSection == 9 || _selectedSection == 10) {
@@ -3056,6 +3236,252 @@ class _FinanzasModuleState extends State<FinanzasModule> {
   void _showFinanceSnack(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _viewPayrollRow(Map<String, dynamic> row) async {
+    final employeeName = row['employee_name']?.toString() ??
+        _staffNameById(row['employee_id']?.toString());
+    final employeeRole = row['employee_role']?.toString() ??
+        _staffRoleById(row['employee_id']?.toString());
+    final periodStart = _parseDate(row['period_start']);
+    final periodEnd = _parseDate(row['period_end']);
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: SaharaTheme.background,
+        title: Text(
+          'Detalle de nomina',
+          style: GoogleFonts.playfairDisplay(
+            color: _financeInk,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildDialogSummaryRow('Empleado', employeeName),
+              _buildDialogSummaryRow('Rol', _humanizeLabel(employeeRole)),
+              _buildDialogSummaryRow('Sueldo base', _money(_amount(row['base_salary']))),
+              _buildDialogSummaryRow('Comisiones', _money(_amount(row['commissions']))),
+              _buildDialogSummaryRow('Bonos', _money(_amount(row['bonuses']))),
+              _buildDialogSummaryRow('Anticipos', _money(_amount(row['deductions']))),
+              _buildDialogSummaryRow('Total', _money(_amount(row['total_pay']))),
+              _buildDialogSummaryRow(
+                'Estado',
+                row['payment_status']?.toString() ?? 'pendiente',
+              ),
+              _buildDialogSummaryRow(
+                'Periodo',
+                '${periodStart == null ? '-' : _formattedDate(periodStart)} a ${periodEnd == null ? '-' : _formattedDate(periodEnd)}',
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDialogSummaryRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 110,
+            child: Text(
+              label,
+              style: GoogleFonts.inter(
+                color: _financeMuted,
+                fontSize: 12,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: GoogleFonts.inter(
+                color: _financeInk,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _editPayrollRow(Map<String, dynamic> row) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (_) => _PayrollDialog(staff: _staff, initialEntry: row),
+    );
+    if (saved == true) {
+      await _load();
+    }
+  }
+
+  Future<void> _markPayrollAsPaid(Map<String, dynamic> row) async {
+    final currentStatus = row['payment_status']?.toString().toLowerCase() ?? 'pendiente';
+    if (currentStatus == 'pagado') {
+      _showFinanceSnack('Este pago de nomina ya esta marcado como pagado.');
+      return;
+    }
+    final rowId = row['id']?.toString();
+    if (rowId == null || rowId.isEmpty) {
+      _showFinanceSnack('No se pudo identificar el registro de nomina.');
+      return;
+    }
+    try {
+      await _client.from('payroll_entries').update({
+        'payment_status': 'pagado',
+        'paid_at': DateTime.now().toIso8601String(),
+      }).eq('id', rowId);
+      if (!mounted) return;
+      _showFinanceSnack('Pago de nomina marcado como pagado.');
+      await _load();
+    } catch (error) {
+      _showFinanceSnack('No se pudo actualizar el pago de nomina: $error');
+    }
+  }
+
+  void _openDashboardIncomeModule() {
+    _handleSectionChange(1);
+  }
+
+  Future<void> _openDashboardExpenseModule() async {
+    await _openExpenseEntryShortcut();
+  }
+
+  void _openDashboardPayablesModule() {
+    _handleSectionChange(9);
+  }
+
+  void _openDashboardReceivablesModule() {
+    _handleSectionChange(10);
+  }
+
+  Future<void> _exportDashboardIncomeRows() async {
+    final rows = ((_incomeRecentSalesFromPayload.isNotEmpty
+                ? _incomeRecentSalesFromPayload.take(6).toList()
+                : _paidSales.take(6).toList()))
+            .map((row) {
+              final saleItems = _listValue(row['sale_items']);
+              final firstItem = saleItems.isEmpty ? const {} : _mapValue(saleItems.first);
+              return [
+                DateFormat('d MMM', 'es_MX').format(
+                  _parseDate(row['created_at']) ?? DateTime.now(),
+                ),
+                _payloadString(
+                  firstItem['description'] ?? firstItem['name'],
+                  fallback: 'Venta',
+                ),
+                _payloadString(row['client_name'], fallback: 'Cliente general'),
+                _money(_payloadAmount(row['total'])),
+                _humanizeLabel(
+                  _payloadString(row['payment_method'], fallback: 'sin metodo'),
+                ),
+              ];
+            }).toList();
+    await _copyCsvExport(
+      filename: 'dashboard_ultimos_ingresos',
+      headers: const ['fecha', 'concepto', 'cliente', 'monto', 'metodo'],
+      rows: rows,
+    );
+  }
+
+  Future<void> _exportDashboardExpenseRows() async {
+    final sourceRows = _recentExpensesFromPayload.isNotEmpty
+            ? _recentExpensesFromPayload
+                .take(6)
+                .map<Map<String, dynamic>>((row) => {
+                      'date': row.date,
+                      'title': row.title,
+                      'responsible': row.responsible,
+                      'amount': row.amount,
+                      'status': row.status,
+                    })
+                .toList()
+            : _detailedExpenses
+                .take(6)
+                .map<Map<String, dynamic>>((row) => {
+                      'date': row.date,
+                      'title': row.title,
+                      'responsible': row.responsible,
+                      'amount': row.amount,
+                      'status': row.status,
+                    })
+                .toList();
+    final rows = sourceRows
+        .map(
+          (row) => [
+            DateFormat('d MMM', 'es_MX').format(
+              _parseDate(row['date']) ?? DateTime.now(),
+            ),
+            _payloadString(row['title'], fallback: 'Gasto'),
+            _payloadString(row['responsible'], fallback: 'Sin responsable'),
+            _money(_payloadAmount(row['amount'])),
+            _payloadString(row['status'], fallback: 'pendiente'),
+          ],
+        )
+        .toList();
+    await _copyCsvExport(
+      filename: 'dashboard_ultimos_gastos',
+      headers: const ['fecha', 'concepto', 'responsable', 'monto', 'estado'],
+      rows: rows,
+    );
+  }
+
+  Future<void> _exportDashboardPayablesRows() async {
+    final rows = _payableRows
+        .take(6)
+        .map(
+          (row) => [
+            row['origen']?.toString() ?? '',
+            row['concepto']?.toString() ?? '',
+            row['responsable']?.toString() ?? '',
+            DateFormat('d MMM', 'es_MX').format(row['fecha'] as DateTime),
+            _money(row['monto'] as double),
+            row['estado']?.toString() ?? '',
+          ],
+        )
+        .toList();
+    await _copyCsvExport(
+      filename: 'dashboard_pagos_pendientes',
+      headers: const ['origen', 'concepto', 'responsable', 'fecha', 'monto', 'estado'],
+      rows: rows,
+    );
+  }
+
+  Future<void> _exportDashboardReceivablesRows() async {
+    final rows = _receivableRows
+        .take(6)
+        .map(
+          (row) => [
+            row['cliente']?.toString() ?? '',
+            row['servicio']?.toString() ?? '',
+            row['terapeuta']?.toString() ?? '',
+            DateFormat('d MMM', 'es_MX').format(row['fecha'] as DateTime),
+            _money(row['monto'] as double),
+            row['estado']?.toString() ?? '',
+          ],
+        )
+        .toList();
+    await _copyCsvExport(
+      filename: 'dashboard_cuentas_por_cobrar',
+      headers: const ['cliente', 'servicio', 'terapeuta', 'fecha', 'monto', 'estado'],
+      rows: rows,
+    );
   }
 
   String _csvCell(String value) => '"${value.replaceAll('"', '""')}"';
@@ -3235,15 +3661,15 @@ class _FinanzasModuleState extends State<FinanzasModule> {
       case 8:
         await _copyCsvExport(
           filename: 'finanzas_caja_chica',
-          headers: const ['fecha', 'concepto', 'responsable', 'monto', 'estado'],
-          rows: _pettyCashMovements
+          headers: const ['fecha', 'descripcion', 'tipo', 'monto', 'responsable'],
+          rows: _cashBoxRowsData
               .map(
                 (row) => [
-                  DateFormat('yyyy-MM-dd').format(row.date),
-                  row.title,
-                  row.responsible,
-                  row.amount.toStringAsFixed(2),
-                  row.status,
+                  DateFormat('yyyy-MM-dd').format(_cashBoxMovementDate(row)),
+                  _cashBoxMovementDescription(row),
+                  _cashBoxMovementType(row),
+                  _amount(row['amount']).toStringAsFixed(2),
+                  _cashBoxMovementResponsible(row),
                 ],
               )
               .toList(),
@@ -3413,6 +3839,15 @@ class _FinanzasModuleState extends State<FinanzasModule> {
     }
   }
 
+  List<String> get _branchOptions => const ['Sucursal Matriz'];
+
+  List<String> get _scopeOptions => const [
+        'Todos',
+        'Pagados',
+        'Pendientes',
+        'Vencidos',
+      ];
+
   Widget _buildCurrentPage() {
     final topServices = _servicioRevenue.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
@@ -3442,7 +3877,7 @@ class _FinanzasModuleState extends State<FinanzasModule> {
     final incomeTrend = _incomeTrendFromPayload;
     final incomePaymentBreakdown = _incomePaymentBreakdownFromPayload;
     final incomeTypeBreakdown = _incomeTypeBreakdownFromPayload;
-    final incomeRecentSales = _incomeRecentSalesFromPayload;
+    final incomeRecentSales = _recentIncomeRecords;
     final incomeSummaryRows = _incomeSummaryRowsFromPayload;
     final expenseCards = _expenseCardsFromPayload;
     final expenseTrend = _expenseTrendFromPayload;
@@ -3483,17 +3918,17 @@ class _FinanzasModuleState extends State<FinanzasModule> {
     );
     final dashboardTopProviders = _topProvidersBySpend;
     final pettyCashBreakdown = [
-      _CategoryAmount('Caja chica usada', _cajaChicaSalidas),
-      _CategoryAmount('Caja chica disponible', _cajaChicaDisponible),
+      _CategoryAmount('Entradas', _cashBoxEntradasAcumuladas),
+      _CategoryAmount('Salidas', _cajaChicaSalidas),
     ];
-    final pettyCashRows = _pettyCashMovements
+    final pettyCashRows = _cashBoxRowsData
         .map(
           (row) => [
-            DateFormat('d MMM', 'es_MX').format(row.date),
-            row.title,
-            row.responsible,
-            _money(row.amount),
-            row.status,
+            DateFormat('d MMM', 'es_MX').format(_cashBoxMovementDate(row)),
+            _cashBoxMovementDescription(row),
+            _cashBoxMovementType(row),
+            _money(_amount(row['amount'])),
+            _cashBoxMovementResponsible(row),
           ],
         )
         .toList();
@@ -3767,6 +4202,14 @@ class _FinanzasModuleState extends State<FinanzasModule> {
           recentExpenseRows: dashboardRecentExpenseRows,
           payablesRows: payablesRows.take(6).toList(),
           receivablesRows: receivablesRows.take(6).toList(),
+          onOpenIncomeModule: _openDashboardIncomeModule,
+          onOpenExpenseModule: _openDashboardExpenseModule,
+          onOpenPayablesModule: _openDashboardPayablesModule,
+          onOpenReceivablesModule: _openDashboardReceivablesModule,
+          onExportIncomeRows: _exportDashboardIncomeRows,
+          onExportExpenseRows: _exportDashboardExpenseRows,
+          onExportPayablesRows: _exportDashboardPayablesRows,
+          onExportReceivablesRows: _exportDashboardReceivablesRows,
         );
       case 1:
         return _IngresosPage(
@@ -3822,7 +4265,7 @@ class _FinanzasModuleState extends State<FinanzasModule> {
               : paymentBreakdown,
           typeBreakdown:
               incomeTypeBreakdown.isNotEmpty ? incomeTypeBreakdown : typeBreakdown,
-          recentSales: incomeRecentSales.isNotEmpty ? incomeRecentSales : _paidSales.take(8).toList(),
+          recentSales: incomeRecentSales.take(8).toList(),
           summary: incomeSummaryRows.isNotEmpty
               ? incomeSummaryRows
               : [
@@ -4201,6 +4644,9 @@ class _FinanzasModuleState extends State<FinanzasModule> {
                 ],
           onAdd: _openCreateDialog,
           onExport: _exportCurrentSection,
+          onViewRow: _viewPayrollRow,
+          onEditRow: _editPayrollRow,
+          onPayRow: _markPayrollAsPaid,
         );
       case 6:
         return _PerformanceOverviewPage(
@@ -4306,42 +4752,46 @@ class _FinanzasModuleState extends State<FinanzasModule> {
         return _CashBoxPage(
           cards: [
             _KpiData(
-              title: 'Caja Chica Disponible',
+              title: 'Saldo Actual',
               value: _money(_cajaChicaDisponible),
-              caption: 'Base estimada ${_money(_cajaChicaBaseEstimda)}',
+              caption: _hasCashBoxLedger
+                  ? 'Con movimientos reales'
+                  : 'Base estimada ${_money(_cajaChicaBaseEstimda)}',
               color: SaharaTheme.gold,
               icon: Icons.account_balance_wallet_outlined,
             ),
             _KpiData(
-              title: 'Salidas del Mes',
-              value: _money(_cajaChicaSalidas),
-              caption: '${_pettyCashMovements.length} movimientos detectados',
-              color: _financeNegative,
-              icon: Icons.south_rounded,
-            ),
-            _KpiData(
-              title: 'Movimientos de Hoy',
-              value: '${_pettyCashMovements.where((row) => !row.date.isBefore(_todayStart)).length}',
-              caption: _money(_pettyCashMovements.where((row) => !row.date.isBefore(_todayStart)).fold<double>(0, (sum, row) => sum + row.amount)),
-              color: _financeBlue,
-              icon: Icons.today_outlined,
-            ),
-            _KpiData(
-              title: 'Ticket Caja Chica',
-              value: _money(_pettyCashMovements.isEmpty ? 0 : _cajaChicaSalidas / _pettyCashMovements.length),
-              caption: 'Promedio por movimiento',
+              title: 'Entradas del Dia',
+              value: _money(_cashBoxEntradasHoy),
+              caption: '$_cashBoxEntradasHoyCount movimientos',
               color: _financePositive,
-              icon: Icons.receipt_long_rounded,
+              icon: Icons.arrow_downward_rounded,
+            ),
+            _KpiData(
+              title: 'Salidas del Dia',
+              value: _money(_cashBoxSalidasHoy),
+              caption: '$_cashBoxSalidasHoyCount movimientos',
+              color: _financeNegative,
+              icon: Icons.arrow_upward_rounded,
+            ),
+            _KpiData(
+              title: 'Responsable',
+              value: _cashBoxResponsibleLabel,
+              caption: _cashBoxRowsData.isEmpty
+                  ? 'Sin movimientos registrados'
+                  : 'Ultimo movimiento registrado',
+              color: _financeBlue,
+              icon: Icons.person_rounded,
             ),
           ],
           monthlySeries: _pettyCashMonthlySeries,
           breakdown: pettyCashBreakdown,
           rows: pettyCashRows,
           summary: [
-            _SummaryRow('Disponible', _money(_cajaChicaDisponible)),
-            _SummaryRow('Salidas del mes', _money(_cajaChicaSalidas)),
-            _SummaryRow('Movimientos', '${_pettyCashMovements.length}'),
-            _SummaryRow('Ultimo movimiento', _pettyCashMovements.isEmpty ? 'Sin datos' : _formattedDate(_pettyCashMovements.first.date)),
+            _SummaryRow('Saldo Actual', _money(_cajaChicaDisponible)),
+            _SummaryRow('Entradas', _money(_cashBoxEntradasAcumuladas)),
+            _SummaryRow('Salidas', _money(_cajaChicaSalidas)),
+            _SummaryRow('Movimientos', '${_cashBoxRowsData.length}'),
           ],
           onAdd: _openCreateDialog,
           onExport: _exportCurrentSection,
@@ -4563,6 +5013,14 @@ class _FinanzasModuleState extends State<FinanzasModule> {
                         onCreate: _createLabel == null ? null : _openCreateDialog,
                         createLabel: _createLabel,
                         showMenuButton: !isDesktop,
+                        branchLabel: _selectedBranchLabel,
+                        branchOptions: _branchOptions,
+                        onBranchSelected: (value) =>
+                            setState(() => _selectedBranchLabel = value),
+                        scopeLabel: _selectedScopeLabel,
+                        scopeOptions: _scopeOptions,
+                        onScopeSelected: (value) =>
+                            setState(() => _selectedScopeLabel = value),
                       ),
                       Expanded(
                         child: _loading
@@ -4597,6 +5055,14 @@ class _FinanceDashboardPage extends StatelessWidget {
     required this.recentExpenseRows,
     required this.payablesRows,
     required this.receivablesRows,
+    required this.onOpenIncomeModule,
+    required this.onOpenExpenseModule,
+    required this.onOpenPayablesModule,
+    required this.onOpenReceivablesModule,
+    required this.onExportIncomeRows,
+    required this.onExportExpenseRows,
+    required this.onExportPayablesRows,
+    required this.onExportReceivablesRows,
   });
 
   final List<_KpiData> cards;
@@ -4613,6 +5079,14 @@ class _FinanceDashboardPage extends StatelessWidget {
   final List<List<String>> recentExpenseRows;
   final List<List<String>> payablesRows;
   final List<List<String>> receivablesRows;
+  final VoidCallback onOpenIncomeModule;
+  final VoidCallback onOpenExpenseModule;
+  final VoidCallback onOpenPayablesModule;
+  final VoidCallback onOpenReceivablesModule;
+  final VoidCallback onExportIncomeRows;
+  final VoidCallback onExportExpenseRows;
+  final VoidCallback onExportPayablesRows;
+  final VoidCallback onExportReceivablesRows;
 
   @override
   Widget build(BuildContext context) {
@@ -4843,12 +5317,8 @@ class _FinanceDashboardPage extends StatelessWidget {
                       filterPrimary: 'Ultimos ingresos',
                       filterSecondary: 'Todos',
                       addLabel: 'Nuevo ingreso',
-                      onAdd: () => ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('La captura de ingresos se conecta en la siguiente fase.')),
-                      ),
-                      onExport: () => ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('La exportacion de ingresos se conecta en la siguiente fase.')),
-                      ),
+                      onAdd: onOpenIncomeModule,
+                      onExport: onExportIncomeRows,
                     ),
                   ),
                   SizedBox(
@@ -4860,31 +5330,9 @@ class _FinanceDashboardPage extends StatelessWidget {
                       filterPrimary: 'Ultimos gastos',
                       filterSecondary: 'Todos los estados',
                       addLabel: 'Nuevo gasto',
-                      onAdd: () => ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Usa el modulo de gastos para registrar nuevos egresos.')),
-                      ),
-                      onExport: () => ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('La exportacion de gastos se conecta en la siguiente fase.')),
-                      ),
+                      onAdd: onOpenExpenseModule,
+                      onExport: onExportExpenseRows,
                       statusColumnIndex: 4,
-                    ),
-                  ),
-                  SizedBox(
-                    width: wide ? 560 : double.infinity,
-                    child: _FinanceRecordsTableCard(
-                      columns: const ['Origen', 'Concepto', 'Responsable', 'Fecha', 'Monto', 'Estado'],
-                      rows: payablesRows,
-                      searchHint: 'Buscar pago pendiente...',
-                      filterPrimary: 'Pagos pendientes',
-                      filterSecondary: 'Todos los estados',
-                      addLabel: 'Nueva cuenta',
-                      onAdd: () => ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Usa cuentas por pagar para gestionar nuevos compromisos.')),
-                      ),
-                      onExport: () => ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('La exportacion de pagos pendientes se conecta en la siguiente fase.')),
-                      ),
-                      statusColumnIndex: 5,
                     ),
                   ),
                   SizedBox(
@@ -4896,12 +5344,22 @@ class _FinanceDashboardPage extends StatelessWidget {
                       filterPrimary: 'Cuentas por cobrar',
                       filterSecondary: 'Todos los estados',
                       addLabel: 'Nueva cuenta',
-                      onAdd: () => ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Usa cuentas por cobrar para gestionar nuevos seguimientos.')),
-                      ),
-                      onExport: () => ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('La exportacion de cobranza se conecta en la siguiente fase.')),
-                      ),
+                      onAdd: onOpenReceivablesModule,
+                      onExport: onExportReceivablesRows,
+                      statusColumnIndex: 5,
+                    ),
+                  ),
+                  SizedBox(
+                    width: wide ? 560 : double.infinity,
+                    child: _FinanceRecordsTableCard(
+                      columns: const ['Origen', 'Concepto', 'Responsable', 'Fecha', 'Monto', 'Estado'],
+                      rows: payablesRows,
+                      searchHint: 'Buscar pago pendiente...',
+                      filterPrimary: 'Pagos pendientes',
+                      filterSecondary: 'Todos los estados',
+                      addLabel: 'Nueva cuenta',
+                      onAdd: onOpenPayablesModule,
+                      onExport: onExportPayablesRows,
                       statusColumnIndex: 5,
                     ),
                   ),
@@ -4957,21 +5415,7 @@ class _IngresosPage extends StatelessWidget {
                 children: cards.map((card) => _FinanceKpiCard(data: card)).toList(),
               ),
               const SizedBox(height: 24),
-              _FinanceSurfaceCard(
-                padding: const EdgeInsets.all(16),
-                child: Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: tabs
-                      .map(
-                        (tab) => _SectionChip(
-                          label: tab,
-                          selected: tab == 'Resumen',
-                        ),
-                      )
-                      .toList(),
-                ),
-              ),
+              const _InteractiveTabsCard(tabs: tabs),
               const SizedBox(height: 24),
               if (wide)
                 Row(
@@ -5044,7 +5488,7 @@ class _IngresosPage extends StatelessWidget {
   }
 }
 
-class _GastosOverviewPage extends StatelessWidget {
+class _GastosOverviewPage extends StatefulWidget {
   const _GastosOverviewPage({
     required this.cards,
     required this.trend,
@@ -5066,20 +5510,110 @@ class _GastosOverviewPage extends StatelessWidget {
   final VoidCallback onExport;
 
   @override
+  State<_GastosOverviewPage> createState() => _GastosOverviewPageState();
+}
+
+class _GastosOverviewPageState extends State<_GastosOverviewPage> {
+  String _selectedTab = 'Resumen';
+
+  List<_DetailedExpenseRow> get _filteredExpenses {
+    final rows = [...widget.recentExpenses];
+    switch (_selectedTab) {
+      case 'Por Categoria':
+        rows.sort((a, b) => a.rawCategory.compareTo(b.rawCategory));
+        return rows;
+      case 'Por Metodo de Pago':
+        rows.sort((a, b) => a.paymentMethod.compareTo(b.paymentMethod));
+        return rows;
+      case 'Por Empleado':
+        return rows.where((row) => row.source == 'nomina').toList();
+      case 'Por Sucursal':
+        return rows;
+      case 'Con Comprobante':
+        return rows.where((row) => row.hasReceipt).toList();
+      case 'Sin Comprobante':
+        return rows.where((row) => !row.hasReceipt).toList();
+      default:
+        return rows;
+    }
+  }
+
+  List<_CategoryAmount> get _filteredBreakdown {
+    final map = <String, double>{};
+    for (final expense in _filteredExpenses) {
+      final key = expense.category;
+      map[key] = (map[key] ?? 0) + expense.amount;
+    }
+    return map.entries.map((entry) => _CategoryAmount(entry.key, entry.value)).toList();
+  }
+
+  List<_CategoryAmount> get _filteredStatusBreakdown {
+    final map = <String, double>{};
+    for (final expense in _filteredExpenses) {
+      final key = _normalizeExpenseStatusLabel(expense.status);
+      map[key] = (map[key] ?? 0) + expense.amount;
+    }
+    return map.entries.map((entry) => _CategoryAmount(entry.key, entry.value)).toList();
+  }
+
+  List<_TrendPoint> get _filteredTrend {
+    final now = DateTime.now();
+    final daysInView = 10;
+    return List.generate(daysInView, (index) {
+      final current = DateTime(now.year, now.month, now.day - (daysInView - 1 - index));
+      final previous = DateTime(current.year, current.month - 1, current.day);
+      final currentTotal = _filteredExpenses
+          .where(
+            (expense) =>
+                expense.date.year == current.year &&
+                expense.date.month == current.month &&
+                expense.date.day == current.day,
+          )
+          .fold<double>(0, (sum, expense) => sum + expense.amount);
+      final previousTotal = _filteredExpenses
+          .where(
+            (expense) =>
+                expense.date.year == previous.year &&
+                expense.date.month == previous.month &&
+                expense.date.day == previous.day,
+          )
+          .fold<double>(0, (sum, expense) => sum + expense.amount);
+      return _TrendPoint(
+        label: DateFormat('d MMM', 'es_MX').format(current),
+        ingresos: currentTotal,
+        egresos: previousTotal,
+      );
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final wide = constraints.maxWidth >= 1240;
+          final filteredExpenses = _filteredExpenses;
+          final filteredBreakdown =
+              _selectedTab == 'Resumen' ? widget.expenseBreakdown : _filteredBreakdown;
+          final filteredStatus = _selectedTab == 'Resumen'
+              ? widget.statusBreakdown
+              : _filteredStatusBreakdown;
+          final filteredTrend =
+              _selectedTab == 'Resumen' ? widget.trend : _filteredTrend;
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _FinanceResponsiveCardGrid(
-                children: cards.map((card) => _FinanceKpiCard(data: card)).toList(),
+                children: widget.cards
+                    .map((card) => _FinanceKpiCard(data: card))
+                    .toList(),
               ),
               const SizedBox(height: 24),
-              const _GastosTabsCard(),
+              _GastosTabsCard(
+                selectedTab: _selectedTab,
+                onChanged: (value) => setState(() => _selectedTab = value),
+              ),
               const SizedBox(height: 24),
               if (wide)
                 Row(
@@ -5087,7 +5621,7 @@ class _GastosOverviewPage extends StatelessWidget {
                   children: [
                     Expanded(
                       flex: 7,
-                      child: _ExpenseComparisonChartCard(points: trend),
+                      child: _ExpenseComparisonChartCard(points: filteredTrend),
                     ),
                     const SizedBox(width: 20),
                     Expanded(
@@ -5095,26 +5629,26 @@ class _GastosOverviewPage extends StatelessWidget {
                       child: _DonutBreakdownCard(
                         title: 'Gastos por Categoria',
                         subtitle: 'Distribucion por origen del egreso.',
-                        items: expenseBreakdown,
+                        items: filteredBreakdown,
                       ),
                     ),
                     const SizedBox(width: 20),
                     Expanded(
                       flex: 4,
-                      child: _ExpenseStatusCard(items: statusBreakdown),
+                      child: _ExpenseStatusCard(items: filteredStatus),
                     ),
                   ],
                 )
               else ...[
-                _ExpenseComparisonChartCard(points: trend),
+                _ExpenseComparisonChartCard(points: filteredTrend),
                 const SizedBox(height: 20),
                 _DonutBreakdownCard(
                   title: 'Gastos por Categoria',
                   subtitle: 'Distribucion por origen del egreso.',
-                  items: expenseBreakdown,
+                  items: filteredBreakdown,
                 ),
                 const SizedBox(height: 20),
-                _ExpenseStatusCard(items: statusBreakdown),
+                _ExpenseStatusCard(items: filteredStatus),
               ],
               const SizedBox(height: 24),
               if (wide)
@@ -5124,28 +5658,28 @@ class _GastosOverviewPage extends StatelessWidget {
                     Expanded(
                       flex: 3,
                       child: _ExpensesTableCard(
-                        expenses: recentExpenses,
-                        onAdd: onAdd,
-                        onExport: onExport,
+                        expenses: filteredExpenses,
+                        onAdd: widget.onAdd,
+                        onExport: widget.onExport,
                       ),
                     ),
                     const SizedBox(width: 20),
                     Expanded(
                       child: _SummaryListCard(
                         title: 'Resumen de Gastos',
-                        rows: summary,
+                        rows: widget.summary,
                       ),
                     ),
                   ],
                 )
               else ...[
                 _ExpensesTableCard(
-                  expenses: recentExpenses,
-                  onAdd: onAdd,
-                  onExport: onExport,
+                  expenses: filteredExpenses,
+                  onAdd: widget.onAdd,
+                  onExport: widget.onExport,
                 ),
                 const SizedBox(height: 20),
-                _SummaryListCard(title: 'Resumen de Gastos', rows: summary),
+                _SummaryListCard(title: 'Resumen de Gastos', rows: widget.summary),
               ],
             ],
           );
@@ -5155,7 +5689,7 @@ class _GastosOverviewPage extends StatelessWidget {
   }
 }
 
-class _FixedExpensesOverviewPage extends StatelessWidget {
+class _FixedExpensesOverviewPage extends StatefulWidget {
   const _FixedExpensesOverviewPage({
     required this.cards,
     required this.monthlySeries,
@@ -5179,20 +5713,126 @@ class _FixedExpensesOverviewPage extends StatelessWidget {
   final DateTime Function(Map<String, dynamic>) dueDateBuilder;
 
   @override
+  State<_FixedExpensesOverviewPage> createState() => _FixedExpensesOverviewPageState();
+}
+
+class _FixedExpensesOverviewPageState extends State<_FixedExpensesOverviewPage> {
+  String _selectedTab = 'Resumen';
+
+  double _rowAmount(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  bool _matchesTab(Map<String, dynamic> row) {
+    if (_selectedTab == 'Resumen') return true;
+    final name = row['description']?.toString().toLowerCase() ?? '';
+    final category = row['category']?.toString().toLowerCase() ?? '';
+    final frequency = row['frequency']?.toString().toLowerCase() ?? '';
+    final provider = row['name']?.toString().toLowerCase() ?? '';
+    final status = row['status']?.toString().toLowerCase() ?? '';
+    final combined = '$name $category $frequency $provider';
+    switch (_selectedTab) {
+      case 'Renta':
+        return combined.contains('renta');
+      case 'Servicios':
+        return combined.contains('servicio') ||
+            combined.contains('electric') ||
+            combined.contains('agua') ||
+            combined.contains('gas') ||
+            combined.contains('cfe');
+      case 'Software':
+        return combined.contains('software') ||
+            combined.contains('suscrip') ||
+            combined.contains('licencia');
+      case 'Seguros':
+        return combined.contains('seguro');
+      case 'Internet':
+        return combined.contains('internet');
+      case 'Mantenimiento':
+        return combined.contains('mantenimiento') || combined.contains('repar');
+      case 'Vencimientos':
+        return status != 'pagado';
+      default:
+        return true;
+    }
+  }
+
+  List<Map<String, dynamic>> get _filteredRows {
+    final rows = widget.rows.where(_matchesTab).toList();
+    if (_selectedTab == 'Vencimientos') {
+      rows.sort((a, b) => widget.dueDateBuilder(a).compareTo(widget.dueDateBuilder(b)));
+    }
+    return rows;
+  }
+
+  List<_CategoryAmount> get _filteredCategoryBreakdown {
+    final map = <String, double>{};
+    for (final row in _filteredRows) {
+      final key = _humanizeLabel(row['category']?.toString() ?? 'Sin categoria');
+      map[key] = (map[key] ?? 0) + _rowAmount(row['amount']);
+    }
+    return map.entries.map((entry) => _CategoryAmount(entry.key, entry.value)).toList();
+  }
+
+  List<_CategoryAmount> get _filteredStatusBreakdown {
+    final map = <String, double>{};
+    for (final row in _filteredRows) {
+      final key = _normalizeExpenseStatusLabel(row['status']?.toString() ?? 'pendiente');
+      map[key] = (map[key] ?? 0) + _rowAmount(row['amount']);
+    }
+    return map.entries.map((entry) => _CategoryAmount(entry.key, entry.value)).toList();
+  }
+
+  List<_MonthlyPoint> get _filteredMonthlySeries {
+    final now = DateTime.now();
+    final points = <_MonthlyPoint>[];
+    for (var offset = 5; offset >= 0; offset--) {
+      final monthStart = DateTime(now.year, now.month - offset, 1);
+      final nextMonth = DateTime(monthStart.year, monthStart.month + 1, 1);
+      final total = _filteredRows.where((row) {
+        final dueDate = widget.dueDateBuilder(row);
+        return !dueDate.isBefore(monthStart) && dueDate.isBefore(nextMonth);
+      }).fold<double>(0, (sum, row) => sum + _rowAmount(row['amount']));
+      points.add(
+        _MonthlyPoint(
+          label: DateFormat('MMM', 'es_MX').format(monthStart),
+          value: total,
+        ),
+      );
+    }
+    return points;
+  }
+
+  @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final wide = constraints.maxWidth >= 1240;
+          final filteredRows = _filteredRows;
+          final filteredSeries =
+              _selectedTab == 'Resumen' ? widget.monthlySeries : _filteredMonthlySeries;
+          final filteredBreakdown = _selectedTab == 'Resumen'
+              ? widget.categoryBreakdown
+              : _filteredCategoryBreakdown;
+          final filteredStatus = _selectedTab == 'Resumen'
+              ? widget.statusBreakdown
+              : _filteredStatusBreakdown;
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _FinanceResponsiveCardGrid(
-                children: cards.map((card) => _FinanceKpiCard(data: card)).toList(),
+                children: widget.cards
+                    .map((card) => _FinanceKpiCard(data: card))
+                    .toList(),
               ),
               const SizedBox(height: 24),
-              const _FixedExpenseTabsCard(),
+              _FixedExpenseTabsCard(
+                selectedTab: _selectedTab,
+                onChanged: (value) => setState(() => _selectedTab = value),
+              ),
               const SizedBox(height: 24),
               if (wide)
                 Row(
@@ -5200,7 +5840,7 @@ class _FixedExpensesOverviewPage extends StatelessWidget {
                   children: [
                     Expanded(
                       flex: 7,
-                      child: _FixedExpenseMonthlyChartCard(points: monthlySeries),
+                      child: _FixedExpenseMonthlyChartCard(points: filteredSeries),
                     ),
                     const SizedBox(width: 20),
                     Expanded(
@@ -5208,26 +5848,26 @@ class _FixedExpensesOverviewPage extends StatelessWidget {
                       child: _DonutBreakdownCard(
                         title: 'Distribucion de Gastos Fijos',
                         subtitle: 'Reparto por tipo de compromiso recurrente.',
-                        items: categoryBreakdown,
+                        items: filteredBreakdown,
                       ),
                     ),
                     const SizedBox(width: 20),
                     Expanded(
                       flex: 4,
-                      child: _ExpenseStatusCard(items: statusBreakdown),
+                      child: _ExpenseStatusCard(items: filteredStatus),
                     ),
                   ],
                 )
               else ...[
-                _FixedExpenseMonthlyChartCard(points: monthlySeries),
+                _FixedExpenseMonthlyChartCard(points: filteredSeries),
                 const SizedBox(height: 20),
                 _DonutBreakdownCard(
                   title: 'Distribucion de Gastos Fijos',
                   subtitle: 'Reparto por tipo de compromiso recurrente.',
-                  items: categoryBreakdown,
+                  items: filteredBreakdown,
                 ),
                 const SizedBox(height: 20),
-                _ExpenseStatusCard(items: statusBreakdown),
+                _ExpenseStatusCard(items: filteredStatus),
               ],
               const SizedBox(height: 24),
               if (wide)
@@ -5237,30 +5877,30 @@ class _FixedExpensesOverviewPage extends StatelessWidget {
                     Expanded(
                       flex: 3,
                       child: _FixedExpensesTableCard(
-                        rows: rows,
-                        onAdd: onAdd,
-                        onExport: onExport,
-                        dueDateBuilder: dueDateBuilder,
+                        rows: filteredRows,
+                        onAdd: widget.onAdd,
+                        onExport: widget.onExport,
+                        dueDateBuilder: widget.dueDateBuilder,
                       ),
                     ),
                     const SizedBox(width: 20),
                     Expanded(
                       child: _SummaryListCard(
                         title: 'Resumen de Gastos Fijos',
-                        rows: summary,
+                        rows: widget.summary,
                       ),
                     ),
                   ],
                 )
               else ...[
                 _FixedExpensesTableCard(
-                  rows: rows,
-                  onAdd: onAdd,
-                  onExport: onExport,
-                  dueDateBuilder: dueDateBuilder,
+                  rows: filteredRows,
+                  onAdd: widget.onAdd,
+                  onExport: widget.onExport,
+                  dueDateBuilder: widget.dueDateBuilder,
                 ),
                 const SizedBox(height: 20),
-                _SummaryListCard(title: 'Resumen de Gastos Fijos', rows: summary),
+                _SummaryListCard(title: 'Resumen de Gastos Fijos', rows: widget.summary),
               ],
             ],
           );
@@ -5392,6 +6032,9 @@ class _PayrollOverviewPage extends StatelessWidget {
     required this.summary,
     required this.onAdd,
     required this.onExport,
+    required this.onViewRow,
+    required this.onEditRow,
+    required this.onPayRow,
   });
 
   final List<_KpiData> cards;
@@ -5403,6 +6046,9 @@ class _PayrollOverviewPage extends StatelessWidget {
   final List<_SummaryRow> summary;
   final VoidCallback onAdd;
   final VoidCallback onExport;
+  final ValueChanged<Map<String, dynamic>> onViewRow;
+  final ValueChanged<Map<String, dynamic>> onEditRow;
+  final ValueChanged<Map<String, dynamic>> onPayRow;
 
   @override
   Widget build(BuildContext context) {
@@ -5467,6 +6113,9 @@ class _PayrollOverviewPage extends StatelessWidget {
                         staff: staff,
                         onAdd: onAdd,
                         onExport: onExport,
+                        onViewRow: onViewRow,
+                        onEditRow: onEditRow,
+                        onPayRow: onPayRow,
                       ),
                     ),
                     const SizedBox(width: 20),
@@ -5484,6 +6133,9 @@ class _PayrollOverviewPage extends StatelessWidget {
                   staff: staff,
                   onAdd: onAdd,
                   onExport: onExport,
+                  onViewRow: onViewRow,
+                  onEditRow: onEditRow,
+                  onPayRow: onPayRow,
                 ),
                 const SizedBox(height: 20),
                 _SummaryListCard(title: 'Resumen de Nomina', rows: summary),
@@ -5774,9 +6426,59 @@ String _alertToneLabel(_MetricAlert alert) {
 }
 
 class _FinanceTabsCard extends StatelessWidget {
-  const _FinanceTabsCard({required this.tabs});
+  const _FinanceTabsCard({
+    required this.tabs,
+    this.selectedTab,
+    this.onChanged,
+  });
 
   final List<String> tabs;
+  final String? selectedTab;
+  final ValueChanged<String>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InteractiveTabsCard(
+      tabs: tabs,
+      selectedTab: selectedTab,
+      onChanged: onChanged,
+    );
+  }
+}
+
+class _InteractiveTabsCard extends StatefulWidget {
+  const _InteractiveTabsCard({
+    required this.tabs,
+    this.selectedTab,
+    this.onChanged,
+  });
+
+  final List<String> tabs;
+  final String? selectedTab;
+  final ValueChanged<String>? onChanged;
+
+  @override
+  State<_InteractiveTabsCard> createState() => _InteractiveTabsCardState();
+}
+
+class _InteractiveTabsCardState extends State<_InteractiveTabsCard> {
+  late String _selected;
+
+  @override
+  void initState() {
+    super.initState();
+    _selected = widget.selectedTab ?? widget.tabs.first;
+  }
+
+  @override
+  void didUpdateWidget(covariant _InteractiveTabsCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.selectedTab != null && widget.selectedTab != _selected) {
+      _selected = widget.selectedTab!;
+    } else if (!widget.tabs.contains(_selected)) {
+      _selected = widget.tabs.first;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -5785,11 +6487,15 @@ class _FinanceTabsCard extends StatelessWidget {
       child: Wrap(
         spacing: 10,
         runSpacing: 10,
-        children: tabs
+        children: widget.tabs
             .map(
               (tab) => _SectionChip(
                 label: tab,
-                selected: tab == tabs.first,
+                selected: tab == _selected,
+                onTap: () {
+                  setState(() => _selected = tab);
+                  widget.onChanged?.call(tab);
+                },
               ),
             )
             .toList(),
@@ -5902,7 +6608,7 @@ class _ValueLineChartCard extends StatelessWidget {
   }
 }
 
-class _FinanceRecordsTableCard extends StatelessWidget {
+class _FinanceRecordsTableCard extends StatefulWidget {
   const _FinanceRecordsTableCard({
     required this.columns,
     required this.rows,
@@ -5926,53 +6632,153 @@ class _FinanceRecordsTableCard extends StatelessWidget {
   final int? statusColumnIndex;
 
   @override
+  State<_FinanceRecordsTableCard> createState() => _FinanceRecordsTableCardState();
+}
+
+class _FinanceRecordsTableCardState extends State<_FinanceRecordsTableCard> {
+  final _searchCtrl = TextEditingController();
+  String _query = '';
+  String _selectedPrimary = 'Todos';
+  String _selectedSecondary = 'Todos';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  int get _primaryFilterIndex => widget.columns.length > 1 ? 1 : 0;
+
+  int get _secondaryFilterIndex {
+    if (widget.statusColumnIndex != null) return widget.statusColumnIndex!;
+    return widget.columns.length > 2 ? 2 : 0;
+  }
+
+  List<String> _buildFilterOptions(int columnIndex, String defaultLabel) {
+    final values = <String>{
+      'Todos',
+      for (final row in widget.rows)
+        if (row.length > columnIndex && row[columnIndex].trim().isNotEmpty) row[columnIndex],
+    }.toList();
+    if (values.length == 1) {
+      return ['Todos', defaultLabel];
+    }
+    return values;
+  }
+
+  Future<void> _showRowDetail(List<String> row) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: SaharaTheme.background,
+        title: Text(
+          'Detalle del registro',
+          style: GoogleFonts.playfairDisplay(
+            color: _financeInk,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        content: SizedBox(
+          width: 460,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var i = 0; i < widget.columns.length; i++)
+                _PerformanceDetailRow(
+                  widget.columns[i],
+                  row.length > i ? row[i] : '',
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showMoreActions(List<String> row) {
+    final reference = row.isEmpty ? 'registro' : row.first;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Mas acciones para $reference se conectan enseguida.')),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final primaryOptions = _buildFilterOptions(_primaryFilterIndex, widget.filterPrimary);
+    final secondaryOptions = _buildFilterOptions(_secondaryFilterIndex, widget.filterSecondary);
+    if (!primaryOptions.contains(_selectedPrimary)) {
+      _selectedPrimary = 'Todos';
+    }
+    if (!secondaryOptions.contains(_selectedSecondary)) {
+      _selectedSecondary = 'Todos';
+    }
+    final filteredRows = widget.rows.where((row) {
+      final query = _query.trim().toLowerCase();
+      final matchesQuery = query.isEmpty ||
+          row.any((cell) => cell.toLowerCase().contains(query));
+      final primaryCell =
+          row.length > _primaryFilterIndex ? row[_primaryFilterIndex] : '';
+      final secondaryCell =
+          row.length > _secondaryFilterIndex ? row[_secondaryFilterIndex] : '';
+      final matchesPrimary =
+          _selectedPrimary == 'Todos' || primaryCell == _selectedPrimary;
+      final matchesSecondary =
+          _selectedSecondary == 'Todos' || secondaryCell == _selectedSecondary;
+      return matchesQuery && matchesPrimary && matchesSecondary;
+    }).toList();
     return _FinanceSurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: SaharaTheme.background,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: _financeBorder),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.search_rounded, size: 18, color: _financeMuted),
-                      const SizedBox(width: 10),
-                      Text(
-                        searchHint,
-                        style: GoogleFonts.inter(color: _financeMuted),
-                      ),
-                    ],
-                  ),
+              SizedBox(
+                width: 290,
+                child: _FinanceSearchField(
+                  controller: _searchCtrl,
+                  hint: widget.searchHint,
+                  onChanged: (value) => setState(() => _query = value),
                 ),
               ),
-              const SizedBox(width: 12),
-              _TopBarChip(label: filterPrimary, icon: Icons.tune_rounded),
-              const SizedBox(width: 12),
-              _TopBarChip(label: filterSecondary, icon: Icons.flag_outlined),
-              const SizedBox(width: 12),
+              _FilterMenuChip(
+                label: _selectedPrimary == 'Todos' ? widget.filterPrimary : _selectedPrimary,
+                icon: Icons.tune_rounded,
+                items: primaryOptions,
+                onSelected: (value) => setState(() => _selectedPrimary = value),
+              ),
+              _FilterMenuChip(
+                label: _selectedSecondary == 'Todos'
+                    ? widget.filterSecondary
+                    : _selectedSecondary,
+                icon: Icons.flag_outlined,
+                items: secondaryOptions,
+                onSelected: (value) => setState(() => _selectedSecondary = value),
+              ),
               OutlinedButton.icon(
-                onPressed: onExport,
+                onPressed: widget.onExport,
                 icon: const Icon(Icons.download_rounded, size: 16),
                 label: const Text('Exportar'),
               ),
-              const SizedBox(width: 12),
               ElevatedButton.icon(
-                onPressed: onAdd,
+                onPressed: widget.onAdd,
                 icon: const Icon(Icons.add_rounded, size: 16),
-                label: Text(addLabel),
+                label: Text(widget.addLabel),
               ),
             ],
           ),
           const SizedBox(height: 20),
-          if (rows.isEmpty)
+          if (filteredRows.isEmpty)
             const _EmptyFinanceState(message: 'Todavia no hay registros para esta vista.')
           else
             SingleChildScrollView(
@@ -5982,15 +6788,15 @@ class _FinanceRecordsTableCard extends StatelessWidget {
                   SaharaTheme.background.withValues(alpha: 0.8),
                 ),
                 columns: [
-                  for (final column in columns) DataColumn(label: Text(column)),
+                  for (final column in widget.columns) DataColumn(label: Text(column)),
                   const DataColumn(label: Text('Acciones')),
                 ],
-                rows: rows.map((row) {
+                rows: filteredRows.map((row) {
                   return DataRow(
                     cells: [
-                      for (var i = 0; i < columns.length; i++)
+                      for (var i = 0; i < widget.columns.length; i++)
                         DataCell(
-                          statusColumnIndex == i
+                          widget.statusColumnIndex == i
                               ? _StatusPill(status: row.length > i ? row[i] : '')
                               : Text(
                                   row.length > i ? row[i] : '',
@@ -5999,12 +6805,20 @@ class _FinanceRecordsTableCard extends StatelessWidget {
                                   ),
                                 ),
                         ),
-                      const DataCell(
+                      DataCell(
                         Row(
                           children: [
-                            Icon(Icons.visibility_rounded, size: 18),
-                            SizedBox(width: 10),
-                            Icon(Icons.more_horiz_rounded, size: 18),
+                            _RowActionIcon(
+                              icon: Icons.visibility_rounded,
+                              tooltip: 'Ver detalle',
+                              onTap: () => _showRowDetail(row),
+                            ),
+                            const SizedBox(width: 10),
+                            _RowActionIcon(
+                              icon: Icons.more_horiz_rounded,
+                              tooltip: 'Mas acciones',
+                              onTap: () => _showMoreActions(row),
+                            ),
                           ],
                         ),
                       ),
@@ -6015,7 +6829,7 @@ class _FinanceRecordsTableCard extends StatelessWidget {
             ),
           const SizedBox(height: 16),
           Text(
-            'Mostrando ${rows.isEmpty ? 0 : 1} a ${rows.length} de ${rows.length} registros',
+            'Mostrando ${filteredRows.isEmpty ? 0 : 1} a ${filteredRows.length} de ${widget.rows.length} registros',
             style: GoogleFonts.inter(color: _financeMuted, fontSize: 12),
           ),
         ],
@@ -6042,6 +6856,8 @@ class _FinanceModuleWorkspacePage extends StatelessWidget {
     required this.onExport,
     this.statusColumnIndex,
     this.tertiary,
+    this.selectedTab,
+    this.onTabChanged,
   });
 
   final List<_KpiData> cards;
@@ -6060,6 +6876,8 @@ class _FinanceModuleWorkspacePage extends StatelessWidget {
   final VoidCallback onAdd;
   final VoidCallback onExport;
   final int? statusColumnIndex;
+  final String? selectedTab;
+  final ValueChanged<String>? onTabChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -6075,7 +6893,11 @@ class _FinanceModuleWorkspacePage extends StatelessWidget {
                 children: cards.map((card) => _FinanceKpiCard(data: card)).toList(),
               ),
               const SizedBox(height: 24),
-              _FinanceTabsCard(tabs: tabs),
+              _FinanceTabsCard(
+                tabs: tabs,
+                selectedTab: selectedTab,
+                onChanged: onTabChanged,
+              ),
               const SizedBox(height: 24),
               if (wide)
                 Row(
@@ -6150,7 +6972,7 @@ class _FinanceModuleWorkspacePage extends StatelessWidget {
   }
 }
 
-class _ComparativesHubPage extends StatelessWidget {
+class _ComparativesHubPage extends StatefulWidget {
   const _ComparativesHubPage({
     required this.ventasHoy,
     required this.ventasAyer,
@@ -6176,29 +6998,352 @@ class _ComparativesHubPage extends StatelessWidget {
   final _TherapistPerformance? topTherapist;
 
   @override
-  Widget build(BuildContext context) {
-    final rows = [
-      ['Hoy', _money(ventasHoy), _money(ventasAyer), _comparisonStatus(ventasHoy, ventasAyer)],
-      ['Semana', _money(ventasSemana), _money(ventasSemanaPasada), _comparisonStatus(ventasSemana, ventasSemanaPasada)],
-      ['Mes', _money(ventasMes), _money(ventasMesPasado), _comparisonStatus(ventasMes, ventasMesPasado)],
-      ['Utilidad', _money(ingresosTotales), _money(egresosTotales), ingresosTotales >= egresosTotales ? 'saludable' : 'presionado'],
+  State<_ComparativesHubPage> createState() => _ComparativesHubPageState();
+}
+
+class _ComparativesHubPageState extends State<_ComparativesHubPage> {
+  String _selectedTab = 'Resumen';
+
+  MapEntry<String, double>? get _effectiveTopServicio {
+    final topServicio = widget.topServicio;
+    if (topServicio == null || topServicio.value <= 0) return null;
+    return topServicio;
+  }
+
+  _TherapistPerformance? get _effectiveTopTherapist {
+    final topTherapist = widget.topTherapist;
+    if (topTherapist == null) return null;
+    final normalizedName = topTherapist.name.trim().toLowerCase();
+    if (topTherapist.revenue <= 0 || normalizedName == 'sin terapeuta') {
+      return null;
+    }
+    return topTherapist;
+  }
+
+  List<List<String>> get _rowsForSelectedTab {
+    switch (_selectedTab) {
+      case 'Diario':
+        return [
+          [
+            'Hoy',
+            _money(widget.ventasHoy),
+            _money(widget.ventasAyer),
+            _comparisonStatus(widget.ventasHoy, widget.ventasAyer),
+          ],
+          [
+            'Variacion',
+            widget.ventasAyer == 0
+                ? (widget.ventasHoy == 0 ? '0.0%' : '100.0%')
+                : _percent(
+                    ((widget.ventasHoy - widget.ventasAyer) /
+                            widget.ventasAyer) *
+                        100,
+                  ),
+            'Ayer',
+            widget.ventasHoy >= widget.ventasAyer ? 'mejorando' : 'descendiendo',
+          ],
+        ];
+      case 'Semanal':
+        return [
+          [
+            'Semana',
+            _money(widget.ventasSemana),
+            _money(widget.ventasSemanaPasada),
+            _comparisonStatus(widget.ventasSemana, widget.ventasSemanaPasada),
+          ],
+          [
+            'Diferencia',
+            _money(widget.ventasSemana - widget.ventasSemanaPasada),
+            'Semana previa',
+            widget.ventasSemana >= widget.ventasSemanaPasada
+                ? 'mejorando'
+                : 'descendiendo',
+          ],
+        ];
+      case 'Mensual':
+        return [
+          [
+            'Mes',
+            _money(widget.ventasMes),
+            _money(widget.ventasMesPasado),
+            _comparisonStatus(widget.ventasMes, widget.ventasMesPasado),
+          ],
+          [
+            'Variacion',
+            widget.ventasMesPasado == 0
+                ? (widget.ventasMes == 0 ? '0.0%' : '100.0%')
+                : _percent(
+                    ((widget.ventasMes - widget.ventasMesPasado) /
+                            widget.ventasMesPasado) *
+                        100,
+                  ),
+            'Mes previo',
+            widget.ventasMes >= widget.ventasMesPasado
+                ? 'mejorando'
+                : 'descendiendo',
+          ],
+        ];
+      case 'Utilidad':
+        return [
+          [
+            'Ingresos',
+            _money(widget.ingresosTotales),
+            _money(widget.egresosTotales),
+            widget.ingresosTotales >= widget.egresosTotales
+                ? 'saludable'
+                : 'presionado',
+          ],
+          [
+            'Balance',
+            _money(widget.ingresosTotales - widget.egresosTotales),
+            _money(widget.egresosTotales),
+            widget.ingresosTotales >= widget.egresosTotales
+                ? 'mejorando'
+                : 'presionado',
+          ],
+        ];
+      case 'Servicios':
+        return [
+          [
+            'Servicio Top',
+            _effectiveTopServicio?.key ?? 'Sin datos',
+            _effectiveTopServicio == null
+                ? 'Sin comparativo'
+                : _money(_effectiveTopServicio!.value),
+            _effectiveTopServicio == null ? 'sin datos' : 'mejorando',
+          ],
+          [
+            'Participacion',
+            _effectiveTopServicio == null || widget.ventasMes <= 0
+                ? '0.0%'
+                : _percent(
+                    (_effectiveTopServicio!.value / widget.ventasMes) * 100,
+                  ),
+            _money(widget.ventasMes),
+            _effectiveTopServicio == null ? 'sin datos' : 'saludable',
+          ],
+        ];
+      case 'Equipo':
+        return [
+          [
+            'Empleado Top',
+            _effectiveTopTherapist?.name ?? 'Sin datos',
+            _effectiveTopTherapist == null
+                ? 'Sin comparativo'
+                : _money(_effectiveTopTherapist!.revenue),
+            _effectiveTopTherapist == null ? 'sin datos' : 'mejorando',
+          ],
+          [
+            'Productividad',
+            _effectiveTopTherapist == null
+                ? 'Sin datos'
+                : '${_effectiveTopTherapist!.servicesCompleted} servicios',
+            _effectiveTopTherapist == null
+                ? 'Sin comparativo'
+                : '${_effectiveTopTherapist!.cancelled} canceladas',
+            _effectiveTopTherapist == null ? 'sin datos' : 'saludable',
+          ],
+        ];
+      case 'Resumen':
+      default:
+        return [
+          [
+            'Hoy',
+            _money(widget.ventasHoy),
+            _money(widget.ventasAyer),
+            _comparisonStatus(widget.ventasHoy, widget.ventasAyer),
+          ],
+          [
+            'Semana',
+            _money(widget.ventasSemana),
+            _money(widget.ventasSemanaPasada),
+            _comparisonStatus(widget.ventasSemana, widget.ventasSemanaPasada),
+          ],
+          [
+            'Mes',
+            _money(widget.ventasMes),
+            _money(widget.ventasMesPasado),
+            _comparisonStatus(widget.ventasMes, widget.ventasMesPasado),
+          ],
+          [
+            'Utilidad',
+            _money(widget.ingresosTotales),
+            _money(widget.egresosTotales),
+            widget.ingresosTotales >= widget.egresosTotales
+                ? 'saludable'
+                : 'presionado',
+          ],
+        ];
+    }
+  }
+
+  String get _primaryTitle {
+    switch (_selectedTab) {
+      case 'Diario':
+        return 'Comparativa Diaria';
+      case 'Semanal':
+        return 'Comparativa Semanal';
+      case 'Mensual':
+        return 'Comparativa Mensual';
+      case 'Utilidad':
+        return 'Comparativa de Utilidad';
+      case 'Servicios':
+        return 'Comparativa por Servicios';
+      case 'Equipo':
+        return 'Comparativa por Equipo';
+      case 'Resumen':
+      default:
+        return 'Comparativa Operativa';
+    }
+  }
+
+  String get _primarySubtitle {
+    switch (_selectedTab) {
+      case 'Diario':
+        return 'Lectura corta entre la jornada actual y la anterior.';
+      case 'Semanal':
+        return 'Seguimiento del ritmo semanal contra la semana previa.';
+      case 'Mensual':
+        return 'Comparacion del mes actual frente al anterior.';
+      case 'Utilidad':
+        return 'Cruce de ingresos contra egresos para leer presion operativa.';
+      case 'Servicios':
+        return 'Desempeno del servicio lider dentro del periodo actual.';
+      case 'Equipo':
+        return 'Lectura de productividad y venta del mejor colaborador.';
+      case 'Resumen':
+      default:
+        return 'Lectura cruzada entre periodos y presion de utilidad.';
+    }
+  }
+
+  List<_SummaryRow> get _keyFindings {
+    return [
+      _SummaryRow(
+        'Servicio mas vendido',
+        _effectiveTopServicio == null
+            ? 'Sin datos'
+            : '${_effectiveTopServicio!.key} · ${_money(_effectiveTopServicio!.value)}',
+      ),
+      _SummaryRow(
+        'Terapeuta mas rentable',
+        _effectiveTopTherapist == null
+            ? 'Sin datos'
+            : '${_effectiveTopTherapist!.name} · ${_money(_effectiveTopTherapist!.revenue)}',
+      ),
+      _SummaryRow(
+        'Balance',
+        widget.ingresosTotales >= widget.egresosTotales
+            ? 'Operacion positiva'
+            : 'Operacion presionada',
+      ),
     ];
+  }
+
+  List<_SummaryRow> get _summaryRows {
+    switch (_selectedTab) {
+      case 'Diario':
+        return [
+          _SummaryRow('Ventas hoy', _money(widget.ventasHoy)),
+          _SummaryRow('Ventas ayer', _money(widget.ventasAyer)),
+          _SummaryRow(
+            'Estado',
+            _comparisonStatus(widget.ventasHoy, widget.ventasAyer),
+          ),
+        ];
+      case 'Semanal':
+        return [
+          _SummaryRow('Ventas semana', _money(widget.ventasSemana)),
+          _SummaryRow('Semana previa', _money(widget.ventasSemanaPasada)),
+          _SummaryRow(
+            'Estado',
+            _comparisonStatus(widget.ventasSemana, widget.ventasSemanaPasada),
+          ),
+        ];
+      case 'Mensual':
+        return [
+          _SummaryRow('Ventas mes', _money(widget.ventasMes)),
+          _SummaryRow('Mes previo', _money(widget.ventasMesPasado)),
+          _SummaryRow(
+            'Estado',
+            _comparisonStatus(widget.ventasMes, widget.ventasMesPasado),
+          ),
+        ];
+      case 'Utilidad':
+        return [
+          _SummaryRow('Ingresos', _money(widget.ingresosTotales)),
+          _SummaryRow('Egresos', _money(widget.egresosTotales)),
+          _SummaryRow(
+            'Balance',
+            _money(widget.ingresosTotales - widget.egresosTotales),
+          ),
+        ];
+      case 'Servicios':
+        return [
+          _SummaryRow(
+            'Servicio top',
+            _effectiveTopServicio?.key ?? 'Sin datos',
+          ),
+          _SummaryRow(
+            'Venta top',
+            _effectiveTopServicio == null
+                ? 'Sin comparativo'
+                : _money(_effectiveTopServicio!.value),
+          ),
+          _SummaryRow('Ventas mes', _money(widget.ventasMes)),
+        ];
+      case 'Equipo':
+        return [
+          _SummaryRow(
+            'Empleado top',
+            _effectiveTopTherapist?.name ?? 'Sin datos',
+          ),
+          _SummaryRow(
+            'Venta top',
+            _effectiveTopTherapist == null
+                ? 'Sin comparativo'
+                : _money(_effectiveTopTherapist!.revenue),
+          ),
+          _SummaryRow(
+            'Servicios',
+            _effectiveTopTherapist == null
+                ? 'Sin datos'
+                : '${_effectiveTopTherapist!.servicesCompleted}',
+          ),
+        ];
+      case 'Resumen':
+      default:
+        return [
+          _SummaryRow('Ventas hoy', _money(widget.ventasHoy)),
+          _SummaryRow('Ventas semana', _money(widget.ventasSemana)),
+          _SummaryRow('Ventas mes', _money(widget.ventasMes)),
+          _SummaryRow('Ingresos totales', _money(widget.ingresosTotales)),
+          _SummaryRow('Egresos totales', _money(widget.egresosTotales)),
+        ];
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = _rowsForSelectedTab;
 
     return _FinanceModuleWorkspacePage(
       cards: [
-        _KpiData(title: 'Hoy vs Ayer', value: _money(ventasHoy), caption: 'Ayer ${_money(ventasAyer)}', color: _financeBlue, icon: Icons.today_outlined),
-        _KpiData(title: 'Semana vs Semana', value: _money(ventasSemana), caption: 'Previa ${_money(ventasSemanaPasada)}', color: _financePositive, icon: Icons.view_week_outlined),
-        _KpiData(title: 'Mes vs Mes', value: _money(ventasMes), caption: 'Previo ${_money(ventasMesPasado)}', color: SaharaTheme.gold, icon: Icons.calendar_month_outlined),
-        _KpiData(title: 'Balance', value: _money(ingresosTotales - egresosTotales), caption: '${_money(ingresosTotales)} vs ${_money(egresosTotales)}', color: _financeViolet, icon: Icons.compare_arrows_rounded),
-        _KpiData(title: 'Servicio Top', value: topServicio?.key ?? 'Sin datos', caption: topServicio == null ? 'Sin comparativo' : _money(topServicio!.value), color: _financePositive, icon: Icons.star_rounded),
-        _KpiData(title: 'Empleado Top', value: topTherapist?.name ?? 'Sin datos', caption: topTherapist == null ? 'Sin comparativo' : _money(topTherapist!.revenue), color: _financeNegative, icon: Icons.emoji_events_rounded),
+        _KpiData(title: 'Hoy vs Ayer', value: _money(widget.ventasHoy), caption: 'Ayer ${_money(widget.ventasAyer)}', color: _financeBlue, icon: Icons.today_outlined),
+        _KpiData(title: 'Semana vs Semana', value: _money(widget.ventasSemana), caption: 'Previa ${_money(widget.ventasSemanaPasada)}', color: _financePositive, icon: Icons.view_week_outlined),
+        _KpiData(title: 'Mes vs Mes', value: _money(widget.ventasMes), caption: 'Previo ${_money(widget.ventasMesPasado)}', color: SaharaTheme.gold, icon: Icons.calendar_month_outlined),
+        _KpiData(title: 'Balance', value: _money(widget.ingresosTotales - widget.egresosTotales), caption: '${_money(widget.ingresosTotales)} vs ${_money(widget.egresosTotales)}', color: _financeViolet, icon: Icons.compare_arrows_rounded),
+        _KpiData(title: 'Servicio Top', value: _effectiveTopServicio?.key ?? 'Sin datos', caption: _effectiveTopServicio == null ? 'Sin comparativo' : _money(_effectiveTopServicio!.value), color: _financePositive, icon: Icons.star_rounded),
+        _KpiData(title: 'Empleado Top', value: _effectiveTopTherapist?.name ?? 'Sin datos', caption: _effectiveTopTherapist == null ? 'Sin comparativo' : _money(_effectiveTopTherapist!.revenue), color: _financeNegative, icon: Icons.emoji_events_rounded),
       ],
       tabs: const ['Resumen', 'Diario', 'Semanal', 'Mensual', 'Utilidad', 'Servicios', 'Equipo'],
+      selectedTab: _selectedTab,
+      onTabChanged: (value) => setState(() => _selectedTab = value),
       primary: _FinanceSurfaceCard(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const _CardHeader(title: 'Comparativa Operativa', subtitle: 'Lectura cruzada entre periodos y presion de utilidad.'),
+            _CardHeader(title: _primaryTitle, subtitle: _primarySubtitle),
             const SizedBox(height: 16),
             ...rows.map((row) => Padding(
                   padding: const EdgeInsets.only(bottom: 14),
@@ -6218,11 +7363,7 @@ class _ComparativesHubPage extends StatelessWidget {
       ),
       secondary: _SummaryListCard(
         title: 'Hallazgos Clave',
-        rows: [
-          _SummaryRow('Servicio mas vendido', topServicio == null ? 'Sin datos' : '${topServicio!.key} · ${_money(topServicio!.value)}'),
-          _SummaryRow('Terapeuta mas rentable', topTherapist == null ? 'Sin datos' : '${topTherapist!.name} · ${_money(topTherapist!.revenue)}'),
-          _SummaryRow('Balance', ingresosTotales >= egresosTotales ? 'Operacion positiva' : 'Operacion presionada'),
-        ],
+        rows: _keyFindings,
       ),
       tableColumns: const ['Periodo', 'Actual', 'Comparativo', 'Estado'],
       tableRows: rows,
@@ -6231,13 +7372,7 @@ class _ComparativesHubPage extends StatelessWidget {
       tableFilterSecondary: 'Todos los estados',
       addLabel: 'Nueva comparativa',
       summaryTitle: 'Resumen de Comparativas',
-      summaryRows: [
-        _SummaryRow('Ventas hoy', _money(ventasHoy)),
-        _SummaryRow('Ventas semana', _money(ventasSemana)),
-        _SummaryRow('Ventas mes', _money(ventasMes)),
-        _SummaryRow('Ingresos totales', _money(ingresosTotales)),
-        _SummaryRow('Egresos totales', _money(egresosTotales)),
-      ],
+      summaryRows: _summaryRows,
       onAdd: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('La comparativa guiada se conecta en la siguiente fase.'))),
       onExport: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('La exportacion comparativa se conecta en la siguiente fase.'))),
       statusColumnIndex: 3,
@@ -6401,20 +7536,20 @@ class _CashBoxPage extends StatelessWidget {
       ),
       secondary: _DonutBreakdownCard(
         title: 'Movimientos de Caja',
-        subtitle: 'Distribucion estimada por origen del movimiento.',
+        subtitle: 'Distribucion entre entradas y salidas registradas.',
         items: breakdown,
       ),
-      tableColumns: const ['Fecha', 'Concepto', 'Responsable', 'Monto', 'Estado'],
+      tableColumns: const ['Fecha', 'Descripcion', 'Tipo', 'Monto', 'Responsable'],
       tableRows: rows,
       tableSearchHint: 'Buscar movimiento...',
       tableFilterPrimary: 'Todos los movimientos',
-      tableFilterSecondary: 'Todos los estados',
+      tableFilterSecondary: 'Entradas y salidas',
       addLabel: 'Nuevo movimiento',
       summaryTitle: 'Resumen de Caja Chica',
       summaryRows: summary,
       onAdd: onAdd,
       onExport: onExport,
-      statusColumnIndex: 4,
+      statusColumnIndex: 2,
     );
   }
 }
@@ -6846,6 +7981,12 @@ class _FinanceTopBar extends StatelessWidget {
     required this.onCreate,
     required this.createLabel,
     required this.showMenuButton,
+    required this.branchLabel,
+    required this.branchOptions,
+    required this.onBranchSelected,
+    required this.scopeLabel,
+    required this.scopeOptions,
+    required this.onScopeSelected,
   });
 
   final String title;
@@ -6855,6 +7996,12 @@ class _FinanceTopBar extends StatelessWidget {
   final VoidCallback? onCreate;
   final String? createLabel;
   final bool showMenuButton;
+  final String branchLabel;
+  final List<String> branchOptions;
+  final ValueChanged<String> onBranchSelected;
+  final String scopeLabel;
+  final List<String> scopeOptions;
+  final ValueChanged<String> onScopeSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -6906,8 +8053,18 @@ class _FinanceTopBar extends StatelessWidget {
             alignment: WrapAlignment.end,
             children: [
               _TopBarChip(label: rangeLabel, icon: Icons.calendar_today_outlined),
-              const _TopBarChip(label: 'Sucursal Matriz', icon: Icons.storefront_outlined),
-              const _TopBarChip(label: 'Todos', icon: Icons.tune_rounded),
+              _FilterMenuChip(
+                label: branchLabel,
+                icon: Icons.storefront_outlined,
+                items: branchOptions,
+                onSelected: onBranchSelected,
+              ),
+              _FilterMenuChip(
+                label: scopeLabel,
+                icon: Icons.tune_rounded,
+                items: scopeOptions,
+                onSelected: onScopeSelected,
+              ),
               OutlinedButton.icon(
                 onPressed: onRefresh,
                 icon: const Icon(Icons.refresh_rounded, size: 16),
@@ -7506,11 +8663,20 @@ class _ProgressBreakdownCard extends StatelessWidget {
 }
 
 class _GastosTabsCard extends StatelessWidget {
-  const _GastosTabsCard();
+  const _GastosTabsCard({
+    required this.selectedTab,
+    required this.onChanged,
+  });
+
+  final String selectedTab;
+  final ValueChanged<String> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    const tabs = [
+    return _InteractiveTabsCard(
+      selectedTab: selectedTab,
+      onChanged: onChanged,
+      tabs: [
       'Resumen',
       'Por Categoria',
       'Por Metodo de Pago',
@@ -7518,32 +8684,26 @@ class _GastosTabsCard extends StatelessWidget {
       'Por Sucursal',
       'Con Comprobante',
       'Sin Comprobante',
-    ];
-
-    return _FinanceSurfaceCard(
-      padding: const EdgeInsets.all(16),
-      child: Wrap(
-        spacing: 10,
-        runSpacing: 10,
-        children: tabs
-            .map(
-              (tab) => _SectionChip(
-                label: tab,
-                selected: tab == 'Resumen',
-              ),
-            )
-            .toList(),
-      ),
+      ],
     );
   }
 }
 
 class _FixedExpenseTabsCard extends StatelessWidget {
-  const _FixedExpenseTabsCard();
+  const _FixedExpenseTabsCard({
+    required this.selectedTab,
+    required this.onChanged,
+  });
+
+  final String selectedTab;
+  final ValueChanged<String> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    const tabs = [
+    return _InteractiveTabsCard(
+      selectedTab: selectedTab,
+      onChanged: onChanged,
+      tabs: [
       'Resumen',
       'Renta',
       'Servicios',
@@ -7552,22 +8712,7 @@ class _FixedExpenseTabsCard extends StatelessWidget {
       'Internet',
       'Mantenimiento',
       'Vencimientos',
-    ];
-
-    return _FinanceSurfaceCard(
-      padding: const EdgeInsets.all(16),
-      child: Wrap(
-        spacing: 10,
-        runSpacing: 10,
-        children: tabs
-            .map(
-              (tab) => _SectionChip(
-                label: tab,
-                selected: tab == 'Resumen',
-              ),
-            )
-            .toList(),
-      ),
+      ],
     );
   }
 }
@@ -7577,7 +8722,8 @@ class _SuppliersTabsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const tabs = [
+    return const _InteractiveTabsCard(
+      tabs: [
       'Resumen',
       'Activos',
       'Pendientes',
@@ -7586,22 +8732,7 @@ class _SuppliersTabsCard extends StatelessWidget {
       'Insumos',
       'Servicios',
       'Historial',
-    ];
-
-    return _FinanceSurfaceCard(
-      padding: const EdgeInsets.all(16),
-      child: Wrap(
-        spacing: 10,
-        runSpacing: 10,
-        children: tabs
-            .map(
-              (tab) => _SectionChip(
-                label: tab,
-                selected: tab == 'Resumen',
-              ),
-            )
-            .toList(),
-      ),
+      ],
     );
   }
 }
@@ -7611,7 +8742,8 @@ class _PayrollTabsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const tabs = [
+    return const _InteractiveTabsCard(
+      tabs: [
       'Resumen',
       'Empleados',
       'Sueldos',
@@ -7620,22 +8752,7 @@ class _PayrollTabsCard extends StatelessWidget {
       'Anticipos',
       'Descuentos',
       'Historial',
-    ];
-
-    return _FinanceSurfaceCard(
-      padding: const EdgeInsets.all(16),
-      child: Wrap(
-        spacing: 10,
-        runSpacing: 10,
-        children: tabs
-            .map(
-              (tab) => _SectionChip(
-                label: tab,
-                selected: tab == 'Resumen',
-              ),
-            )
-            .toList(),
-      ),
+      ],
     );
   }
 }
@@ -7645,7 +8762,8 @@ class _PerformanceTabsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const tabs = [
+    return const _InteractiveTabsCard(
+      tabs: [
       'Resumen',
       'Empleados',
       'Servicios',
@@ -7654,22 +8772,7 @@ class _PerformanceTabsCard extends StatelessWidget {
       'Margen',
       'Comparativas',
       'Alertas',
-    ];
-
-    return _FinanceSurfaceCard(
-      padding: const EdgeInsets.all(16),
-      child: Wrap(
-        spacing: 10,
-        runSpacing: 10,
-        children: tabs
-            .map(
-              (tab) => _SectionChip(
-                label: tab,
-                selected: tab == 'Resumen',
-              ),
-            )
-            .toList(),
-      ),
+      ],
     );
   }
 }
@@ -8522,7 +9625,7 @@ class _PerformanceBranchCard extends StatelessWidget {
   }
 }
 
-class _ExpensesTableCard extends StatelessWidget {
+class _ExpensesTableCard extends StatefulWidget {
   const _ExpensesTableCard({
     required this.expenses,
     required this.onAdd,
@@ -8534,7 +9637,92 @@ class _ExpensesTableCard extends StatelessWidget {
   final VoidCallback onExport;
 
   @override
+  State<_ExpensesTableCard> createState() => _ExpensesTableCardState();
+}
+
+class _ExpensesTableCardState extends State<_ExpensesTableCard> {
+  final _searchCtrl = TextEditingController();
+  String _query = '';
+  String _selectedCategory = 'Todas las categorias';
+  String _selectedMethod = 'Todos los metodos';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _showExpenseDetail(_DetailedExpenseRow expense) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: SaharaTheme.background,
+        title: Text(
+          expense.title,
+          style: GoogleFonts.playfairDisplay(
+            color: _financeInk,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        content: SizedBox(
+          width: 460,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _PerformanceDetailRow('Categoria', expense.rawCategory),
+              _PerformanceDetailRow('Responsable', expense.responsible),
+              _PerformanceDetailRow('Metodo', _humanizeLabel(expense.paymentMethod)),
+              _PerformanceDetailRow('Monto', _money(expense.amount)),
+              _PerformanceDetailRow('Estado', _humanizeLabel(expense.status)),
+              _PerformanceDetailRow(
+                'Fecha',
+                DateFormat('d MMM yyyy - h:mm a', 'es_MX').format(expense.date),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showExpenseMore(_DetailedExpenseRow expense) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Mas acciones para "${expense.title}" se conectan enseguida.')),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final categoryOptions = <String>{
+      'Todas las categorias',
+      for (final expense in widget.expenses) expense.rawCategory,
+    }.toList();
+    final methodOptions = <String>{
+      'Todos los metodos',
+      for (final expense in widget.expenses) _humanizeLabel(expense.paymentMethod),
+    }.toList();
+    final filteredExpenses = widget.expenses.where((expense) {
+      final query = _query.trim().toLowerCase();
+      final matchesQuery = query.isEmpty ||
+          expense.title.toLowerCase().contains(query) ||
+          expense.rawCategory.toLowerCase().contains(query) ||
+          expense.responsible.toLowerCase().contains(query);
+      final matchesCategory =
+          _selectedCategory == 'Todas las categorias' ||
+              expense.rawCategory == _selectedCategory;
+      final methodLabel = _humanizeLabel(expense.paymentMethod);
+      final matchesMethod =
+          _selectedMethod == 'Todos los metodos' || methodLabel == _selectedMethod;
+      return matchesQuery && matchesCategory && matchesMethod;
+    }).toList();
     return _FinanceSurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -8542,48 +9730,42 @@ class _ExpensesTableCard extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: SaharaTheme.background,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: _financeBorder),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.search_rounded, size: 18, color: _financeMuted),
-                      const SizedBox(width: 10),
-                      Text(
-                        'Buscar gasto...',
-                        style: GoogleFonts.inter(color: _financeMuted),
-                      ),
-                    ],
-                  ),
+                child: _FinanceSearchField(
+                  controller: _searchCtrl,
+                  hint: 'Buscar gasto...',
+                  onChanged: (value) => setState(() => _query = value),
                 ),
               ),
               const SizedBox(width: 12),
-              const _TopBarChip(
-                label: 'Todas las categorias',
+              _FilterMenuChip(
+                label: _selectedCategory,
                 icon: Icons.tune_rounded,
+                items: categoryOptions,
+                onSelected: (value) => setState(() => _selectedCategory = value),
               ),
               const SizedBox(width: 12),
-              const _TopBarChip(label: 'Todos los metodos', icon: Icons.payments_outlined),
+              _FilterMenuChip(
+                label: _selectedMethod,
+                icon: Icons.payments_outlined,
+                items: methodOptions,
+                onSelected: (value) => setState(() => _selectedMethod = value),
+              ),
               const SizedBox(width: 12),
               OutlinedButton.icon(
-                onPressed: onExport,
+                onPressed: widget.onExport,
                 icon: const Icon(Icons.download_rounded, size: 16),
                 label: const Text('Exportar'),
               ),
               const SizedBox(width: 12),
               ElevatedButton.icon(
-                onPressed: onAdd,
+                onPressed: widget.onAdd,
                 icon: const Icon(Icons.add_rounded, size: 16),
                 label: const Text('Registrar Gasto'),
               ),
             ],
           ),
           const SizedBox(height: 20),
-          if (expenses.isEmpty)
+          if (filteredExpenses.isEmpty)
             const _EmptyFinanceState(message: 'Todavia no hay gastos registrados.')
           else
             SingleChildScrollView(
@@ -8602,7 +9784,7 @@ class _ExpensesTableCard extends StatelessWidget {
                   DataColumn(label: Text('Estado')),
                   DataColumn(label: Text('Acciones')),
                 ],
-                rows: expenses.map((expense) {
+                rows: filteredExpenses.map((expense) {
                   return DataRow(
                     cells: [
                       DataCell(
@@ -8627,12 +9809,20 @@ class _ExpensesTableCard extends StatelessWidget {
                         ),
                       ),
                       DataCell(_StatusPill(status: expense.status)),
-                      const DataCell(
+                      DataCell(
                         Row(
                           children: [
-                            Icon(Icons.visibility_rounded, size: 18),
-                            SizedBox(width: 10),
-                            Icon(Icons.more_horiz_rounded, size: 18),
+                            _RowActionIcon(
+                              icon: Icons.visibility_rounded,
+                              tooltip: 'Ver detalle',
+                              onTap: () => _showExpenseDetail(expense),
+                            ),
+                            const SizedBox(width: 10),
+                            _RowActionIcon(
+                              icon: Icons.more_horiz_rounded,
+                              tooltip: 'Mas acciones',
+                              onTap: () => _showExpenseMore(expense),
+                            ),
                           ],
                         ),
                       ),
@@ -8643,7 +9833,7 @@ class _ExpensesTableCard extends StatelessWidget {
             ),
           const SizedBox(height: 16),
           Text(
-            'Mostrando ${expenses.isEmpty ? 0 : 1} a ${expenses.length} de ${expenses.length} gastos',
+            'Mostrando ${filteredExpenses.isEmpty ? 0 : 1} a ${filteredExpenses.length} de ${widget.expenses.length} gastos',
             style: GoogleFonts.inter(color: _financeMuted, fontSize: 12),
           ),
         ],
@@ -8652,7 +9842,7 @@ class _ExpensesTableCard extends StatelessWidget {
   }
 }
 
-class _FixedExpensesTableCard extends StatelessWidget {
+class _FixedExpensesTableCard extends StatefulWidget {
   const _FixedExpensesTableCard({
     required this.rows,
     required this.onAdd,
@@ -8666,7 +9856,119 @@ class _FixedExpensesTableCard extends StatelessWidget {
   final DateTime Function(Map<String, dynamic>) dueDateBuilder;
 
   @override
+  State<_FixedExpensesTableCard> createState() => _FixedExpensesTableCardState();
+}
+
+class _FixedExpensesTableCardState extends State<_FixedExpensesTableCard> {
+  final _searchCtrl = TextEditingController();
+  String _query = '';
+  String _selectedCategory = 'Todas las categorias';
+  String _selectedStatus = 'Todos los estados';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _showFixedExpenseDetail(Map<String, dynamic> row) async {
+    final name = row['description']?.toString().trim().isNotEmpty == true
+        ? row['description'].toString()
+        : _humanizeLabel(row['category']?.toString() ?? 'Gasto fijo');
+    final category = _humanizeLabel(row['category']?.toString() ?? 'Sin categoria');
+    final provider = row['name']?.toString().trim().isNotEmpty == true
+        ? row['name'].toString()
+        : 'Sahara Club Spa';
+    final dueDate = _formattedDate(widget.dueDateBuilder(row));
+    final frequency = _humanizeLabel(row['frequency']?.toString() ?? 'mensual');
+    final amount = _money((row['amount'] as num?)?.toDouble() ?? 0);
+    final status = _humanizeLabel(row['status']?.toString() ?? 'pendiente');
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: SaharaTheme.background,
+        title: Text(
+          name,
+          style: GoogleFonts.playfairDisplay(
+            color: _financeInk,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        content: SizedBox(
+          width: 460,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _PerformanceDetailRow('Categoria', category),
+              _PerformanceDetailRow('Proveedor', provider),
+              _PerformanceDetailRow('Fecha de pago', dueDate),
+              _PerformanceDetailRow('Frecuencia', frequency),
+              _PerformanceDetailRow('Monto', amount),
+              _PerformanceDetailRow('Estado', status),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showFixedExpenseEditHint(Map<String, dynamic> row) {
+    final name = row['description']?.toString().trim().isNotEmpty == true
+        ? row['description'].toString()
+        : _humanizeLabel(row['category']?.toString() ?? 'Gasto fijo');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('La edicion de "$name" se conecta enseguida.')),
+    );
+  }
+
+  void _showFixedExpenseMore(Map<String, dynamic> row) {
+    final name = row['description']?.toString().trim().isNotEmpty == true
+        ? row['description'].toString()
+        : _humanizeLabel(row['category']?.toString() ?? 'Gasto fijo');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Mas acciones para "$name" se conectan enseguida.')),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final categoryOptions = <String>{
+      'Todas las categorias',
+      for (final row in widget.rows)
+        _humanizeLabel(row['category']?.toString() ?? 'Sin categoria'),
+    }.toList();
+    final statusOptions = <String>{
+      'Todos los estados',
+      for (final row in widget.rows)
+        _humanizeLabel(row['status']?.toString() ?? 'pendiente'),
+    }.toList();
+    final filteredRows = widget.rows.where((row) {
+      final name = row['description']?.toString().trim().isNotEmpty == true
+          ? row['description'].toString()
+          : _humanizeLabel(row['category']?.toString() ?? 'Gasto fijo');
+      final category = _humanizeLabel(row['category']?.toString() ?? 'Sin categoria');
+      final provider = row['name']?.toString().trim().isNotEmpty == true
+          ? row['name'].toString()
+          : 'Sahara Club Spa';
+      final status = _humanizeLabel(row['status']?.toString() ?? 'pendiente');
+      final query = _query.trim().toLowerCase();
+      final matchesQuery = query.isEmpty ||
+          name.toLowerCase().contains(query) ||
+          category.toLowerCase().contains(query) ||
+          provider.toLowerCase().contains(query);
+      final matchesCategory =
+          _selectedCategory == 'Todas las categorias' || category == _selectedCategory;
+      final matchesStatus =
+          _selectedStatus == 'Todos los estados' || status == _selectedStatus;
+      return matchesQuery && matchesCategory && matchesStatus;
+    }).toList();
     return _FinanceSurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -8674,48 +9976,42 @@ class _FixedExpensesTableCard extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: SaharaTheme.background,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: _financeBorder),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.search_rounded, size: 18, color: _financeMuted),
-                      const SizedBox(width: 10),
-                      Text(
-                        'Buscar gasto fijo...',
-                        style: GoogleFonts.inter(color: _financeMuted),
-                      ),
-                    ],
-                  ),
+                child: _FinanceSearchField(
+                  controller: _searchCtrl,
+                  hint: 'Buscar gasto fijo...',
+                  onChanged: (value) => setState(() => _query = value),
                 ),
               ),
               const SizedBox(width: 12),
-              const _TopBarChip(
-                label: 'Todas las categorias',
+              _FilterMenuChip(
+                label: _selectedCategory,
                 icon: Icons.tune_rounded,
+                items: categoryOptions,
+                onSelected: (value) => setState(() => _selectedCategory = value),
               ),
               const SizedBox(width: 12),
-              const _TopBarChip(label: 'Todos los estados', icon: Icons.flag_outlined),
+              _FilterMenuChip(
+                label: _selectedStatus,
+                icon: Icons.flag_outlined,
+                items: statusOptions,
+                onSelected: (value) => setState(() => _selectedStatus = value),
+              ),
               const SizedBox(width: 12),
               OutlinedButton.icon(
-                onPressed: onExport,
+                onPressed: widget.onExport,
                 icon: const Icon(Icons.download_rounded, size: 16),
                 label: const Text('Exportar'),
               ),
               const SizedBox(width: 12),
               ElevatedButton.icon(
-                onPressed: onAdd,
+                onPressed: widget.onAdd,
                 icon: const Icon(Icons.add_rounded, size: 16),
                 label: const Text('Agregar Gasto Fijo'),
               ),
             ],
           ),
           const SizedBox(height: 20),
-          if (rows.isEmpty)
+          if (filteredRows.isEmpty)
             const _EmptyFinanceState(message: 'Todavia no hay gastos fijos registrados.')
           else
             SingleChildScrollView(
@@ -8734,7 +10030,7 @@ class _FixedExpensesTableCard extends StatelessWidget {
                   DataColumn(label: Text('Estado')),
                   DataColumn(label: Text('Acciones')),
                 ],
-                rows: rows.map((row) {
+                rows: filteredRows.map((row) {
                   final name = row['description']?.toString().trim().isNotEmpty == true
                       ? row['description'].toString()
                       : _humanizeLabel(row['category']?.toString() ?? 'Gasto fijo');
@@ -8742,7 +10038,7 @@ class _FixedExpensesTableCard extends StatelessWidget {
                   final provider = row['name']?.toString().trim().isNotEmpty == true
                       ? row['name'].toString()
                       : 'Sahara Club Spa';
-                  final dueDate = _formattedDate(dueDateBuilder(row));
+                  final dueDate = _formattedDate(widget.dueDateBuilder(row));
                   final frequency = _humanizeLabel(row['frequency']?.toString() ?? 'mensual');
                   final amount = _money((row['amount'] as num?)?.toDouble() ?? 0);
                   final status = row['status']?.toString() ?? 'pendiente';
@@ -8768,14 +10064,26 @@ class _FixedExpensesTableCard extends StatelessWidget {
                         ),
                       ),
                       DataCell(_StatusPill(status: status)),
-                      const DataCell(
+                      DataCell(
                         Row(
                           children: [
-                            Icon(Icons.visibility_rounded, size: 18),
-                            SizedBox(width: 10),
-                            Icon(Icons.edit_rounded, size: 18),
-                            SizedBox(width: 10),
-                            Icon(Icons.more_horiz_rounded, size: 18),
+                            _RowActionIcon(
+                              icon: Icons.visibility_rounded,
+                              tooltip: 'Ver detalle',
+                              onTap: () => _showFixedExpenseDetail(row),
+                            ),
+                            const SizedBox(width: 10),
+                            _RowActionIcon(
+                              icon: Icons.edit_rounded,
+                              tooltip: 'Editar gasto fijo',
+                              onTap: () => _showFixedExpenseEditHint(row),
+                            ),
+                            const SizedBox(width: 10),
+                            _RowActionIcon(
+                              icon: Icons.more_horiz_rounded,
+                              tooltip: 'Mas acciones',
+                              onTap: () => _showFixedExpenseMore(row),
+                            ),
                           ],
                         ),
                       ),
@@ -8786,7 +10094,7 @@ class _FixedExpensesTableCard extends StatelessWidget {
             ),
           const SizedBox(height: 16),
           Text(
-            'Mostrando ${rows.isEmpty ? 0 : 1} a ${rows.length} de ${rows.length} gastos fijos',
+            'Mostrando ${filteredRows.isEmpty ? 0 : 1} a ${filteredRows.length} de ${widget.rows.length} gastos fijos',
             style: GoogleFonts.inter(color: _financeMuted, fontSize: 12),
           ),
         ],
@@ -8959,30 +10267,85 @@ class _SuppliersTableCard extends StatelessWidget {
   }
 }
 
-class _PayrollTableCard extends StatelessWidget {
+class _PayrollTableCard extends StatefulWidget {
   const _PayrollTableCard({
     required this.rows,
     required this.staff,
     required this.onAdd,
     required this.onExport,
+    required this.onViewRow,
+    required this.onEditRow,
+    required this.onPayRow,
   });
 
   final List<Map<String, dynamic>> rows;
   final List<Map<String, dynamic>> staff;
   final VoidCallback onAdd;
   final VoidCallback onExport;
+  final ValueChanged<Map<String, dynamic>> onViewRow;
+  final ValueChanged<Map<String, dynamic>> onEditRow;
+  final ValueChanged<Map<String, dynamic>> onPayRow;
+
+  @override
+  State<_PayrollTableCard> createState() => _PayrollTableCardState();
+}
+
+class _PayrollTableCardState extends State<_PayrollTableCard> {
+  final _searchCtrl = TextEditingController();
+  String _query = '';
+  String _selectedRole = 'Todos los roles';
+  String _selectedStatus = 'Todos los estados';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final staffNames = <String, String>{
-      for (final item in staff)
+      for (final item in widget.staff)
         item['id']?.toString() ?? '':
             item['full_name']?.toString() ?? item['name']?.toString() ?? 'Empleado',
     };
     final staffRoles = <String, String>{
-      for (final item in staff)
+      for (final item in widget.staff)
         item['id']?.toString() ?? '': item['role']?.toString() ?? 'Empleado',
     };
+    final roleOptions = <String>{
+      'Todos los roles',
+      for (final row in widget.rows)
+        _humanizeLabel(
+          staffRoles[row['employee_id']?.toString() ?? ''] ??
+              row['employee_role']?.toString() ??
+              'Empleado',
+        ),
+    }.toList();
+    final statusOptions = <String>{
+      'Todos los estados',
+      for (final row in widget.rows)
+        _humanizeLabel(row['payment_status']?.toString() ?? 'pendiente'),
+    }.toList();
+    final filteredRows = widget.rows.where((row) {
+      final employeeId = row['employee_id']?.toString() ?? '';
+      final name = staffNames[employeeId] ??
+          row['employee_name']?.toString() ??
+          'Empleado';
+      final role = _humanizeLabel(
+        staffRoles[employeeId] ?? row['employee_role']?.toString() ?? 'Empleado',
+      );
+      final status = _humanizeLabel(row['payment_status']?.toString() ?? 'pendiente');
+      final query = _query.trim().toLowerCase();
+      final matchesQuery = query.isEmpty ||
+          name.toLowerCase().contains(query) ||
+          role.toLowerCase().contains(query) ||
+          status.toLowerCase().contains(query);
+      final matchesRole = _selectedRole == 'Todos los roles' || role == _selectedRole;
+      final matchesStatus =
+          _selectedStatus == 'Todos los estados' || status == _selectedStatus;
+      return matchesQuery && matchesRole && matchesStatus;
+    }).toList();
 
     return _FinanceSurfaceCard(
       child: Column(
@@ -8991,45 +10354,42 @@ class _PayrollTableCard extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: SaharaTheme.background,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: _financeBorder),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.search_rounded, size: 18, color: _financeMuted),
-                      const SizedBox(width: 10),
-                      Text(
-                        'Buscar empleado...',
-                        style: GoogleFonts.inter(color: _financeMuted),
-                      ),
-                    ],
-                  ),
+                child: _FinanceSearchField(
+                  controller: _searchCtrl,
+                  hint: 'Buscar empleado...',
+                  onChanged: (value) => setState(() => _query = value),
                 ),
               ),
               const SizedBox(width: 12),
-              const _TopBarChip(label: 'Todos los roles', icon: Icons.tune_rounded),
+              _FilterMenuChip(
+                label: _selectedRole,
+                icon: Icons.tune_rounded,
+                items: roleOptions,
+                onSelected: (value) => setState(() => _selectedRole = value),
+              ),
               const SizedBox(width: 12),
-              const _TopBarChip(label: 'Todos los estados', icon: Icons.flag_outlined),
+              _FilterMenuChip(
+                label: _selectedStatus,
+                icon: Icons.flag_outlined,
+                items: statusOptions,
+                onSelected: (value) => setState(() => _selectedStatus = value),
+              ),
               const SizedBox(width: 12),
               OutlinedButton.icon(
-                onPressed: onExport,
+                onPressed: widget.onExport,
                 icon: const Icon(Icons.download_rounded, size: 16),
                 label: const Text('Exportar'),
               ),
               const SizedBox(width: 12),
               ElevatedButton.icon(
-                onPressed: onAdd,
+                onPressed: widget.onAdd,
                 icon: const Icon(Icons.add_rounded, size: 16),
                 label: const Text('Registrar Pago'),
               ),
             ],
           ),
           const SizedBox(height: 20),
-          if (rows.isEmpty)
+          if (filteredRows.isEmpty)
             const _EmptyFinanceState(message: 'Todavia no hay registros de nomina.')
           else
             SingleChildScrollView(
@@ -9049,7 +10409,7 @@ class _PayrollTableCard extends StatelessWidget {
                   DataColumn(label: Text('Estado')),
                   DataColumn(label: Text('Acciones')),
                 ],
-                rows: rows.map((row) {
+                rows: filteredRows.map((row) {
                   final employeeId = row['employee_id']?.toString() ?? '';
                   final name = staffNames[employeeId] ??
                       row['employee_name']?.toString() ??
@@ -9110,16 +10470,26 @@ class _PayrollTableCard extends StatelessWidget {
                         ),
                       ),
                       DataCell(_StatusPill(status: status)),
-                      const DataCell(
+                      DataCell(
                         Row(
                           children: [
-                            Icon(Icons.visibility_rounded, size: 18),
-                            SizedBox(width: 10),
-                            Icon(Icons.payment_rounded, size: 18),
-                            SizedBox(width: 10),
-                            Icon(Icons.edit_rounded, size: 18),
-                            SizedBox(width: 10),
-                            Icon(Icons.more_horiz_rounded, size: 18),
+                            _RowActionIcon(
+                              icon: Icons.visibility_rounded,
+                              tooltip: 'Ver detalle',
+                              onTap: () => widget.onViewRow(row),
+                            ),
+                            const SizedBox(width: 8),
+                            _RowActionIcon(
+                              icon: Icons.payment_rounded,
+                              tooltip: 'Registrar pago',
+                              onTap: () => widget.onPayRow(row),
+                            ),
+                            const SizedBox(width: 8),
+                            _RowActionIcon(
+                              icon: Icons.edit_rounded,
+                              tooltip: 'Editar nomina',
+                              onTap: () => widget.onEditRow(row),
+                            ),
                           ],
                         ),
                       ),
@@ -9130,7 +10500,7 @@ class _PayrollTableCard extends StatelessWidget {
             ),
           const SizedBox(height: 16),
           Text(
-            'Mostrando ${rows.isEmpty ? 0 : 1} a ${rows.length} de ${rows.length} empleados',
+            'Mostrando ${filteredRows.isEmpty ? 0 : 1} a ${filteredRows.length} de ${widget.rows.length} empleados',
             style: GoogleFonts.inter(color: _financeMuted, fontSize: 12),
           ),
         ],
@@ -9139,7 +10509,40 @@ class _PayrollTableCard extends StatelessWidget {
   }
 }
 
-class _PerformanceTableCard extends StatelessWidget {
+class _RowActionIcon extends StatelessWidget {
+  const _RowActionIcon({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          width: 28,
+          height: 28,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            color: Colors.transparent,
+          ),
+          child: Icon(icon, size: 16, color: _financeInk),
+        ),
+      ),
+    );
+  }
+}
+
+class _PerformanceTableCard extends StatefulWidget {
   const _PerformanceTableCard({
     required this.rows,
     required this.onExport,
@@ -9149,9 +10552,98 @@ class _PerformanceTableCard extends StatelessWidget {
   final VoidCallback onExport;
 
   @override
+  State<_PerformanceTableCard> createState() => _PerformanceTableCardState();
+}
+
+class _PerformanceTableCardState extends State<_PerformanceTableCard> {
+  final _searchCtrl = TextEditingController();
+  String _query = '';
+  String _selectedEmployee = 'Todos los empleados';
+  String _selectedBranch = 'Sucursal principal';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _showRowDetail(_TherapistPerformance row) async {
+    if (!mounted) return;
+    final avgTicket =
+        row.servicesCompleted == 0 ? 0.0 : row.revenue / row.servicesCompleted;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: SaharaTheme.background,
+        title: Text(
+          row.name,
+          style: GoogleFonts.playfairDisplay(
+            color: _financeInk,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _PerformanceDetailRow('Rol', 'Terapeuta'),
+              _PerformanceDetailRow('Servicios', '${row.servicesCompleted}'),
+              _PerformanceDetailRow('Ventas', _money(row.revenue)),
+              _PerformanceDetailRow('Ticket promedio', _money(avgTicket)),
+              _PerformanceDetailRow('Canceladas', '${row.cancelled}'),
+              _PerformanceDetailRow('No show', '${row.noShows}'),
+              _PerformanceDetailRow('Sucursal', 'Sucursal principal'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showMetricsHint(_TherapistPerformance row) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Servicios: ${row.servicesCompleted}, ventas: ${_money(row.revenue)}, no show: ${row.noShows}.',
+        ),
+      ),
+    );
+  }
+
+  void _showMoreActions(_TherapistPerformance row) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Mas acciones para ${row.name} se conectan enseguida.')),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final topRevenue = rows.isEmpty ? 0.0 : rows.first.revenue;
-    final totalRevenue = rows.fold<double>(0, (sum, row) => sum + row.revenue);
+    final employeeOptions = <String>{
+      'Todos los empleados',
+      for (final row in widget.rows) row.name,
+    }.toList();
+    const branchOptions = ['Sucursal principal'];
+    final filteredRows = widget.rows.where((row) {
+      final query = _query.trim().toLowerCase();
+      final matchesQuery = query.isEmpty || row.name.toLowerCase().contains(query);
+      final matchesEmployee =
+          _selectedEmployee == 'Todos los empleados' || row.name == _selectedEmployee;
+      final matchesBranch =
+          _selectedBranch == 'Sucursal principal' || _selectedBranch == 'Todas las sucursales';
+      return matchesQuery && matchesEmployee && matchesBranch;
+    }).toList();
+    final topRevenue =
+        filteredRows.isEmpty ? 0.0 : filteredRows.map((row) => row.revenue).reduce(math.max);
+    final totalRevenue =
+        filteredRows.fold<double>(0, (sum, row) => sum + row.revenue);
     return _FinanceSurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -9159,45 +10651,36 @@ class _PerformanceTableCard extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: SaharaTheme.background,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: _financeBorder),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.search_rounded, size: 18, color: _financeMuted),
-                      const SizedBox(width: 10),
-                      Text(
-                        'Buscar empleado...',
-                        style: GoogleFonts.inter(color: _financeMuted),
-                      ),
-                    ],
-                  ),
+                child: _FinanceSearchField(
+                  controller: _searchCtrl,
+                  hint: 'Buscar empleado...',
+                  onChanged: (value) => setState(() => _query = value),
                 ),
               ),
               const SizedBox(width: 12),
-              const _TopBarChip(
-                label: 'Todos los empleados',
+              _FilterMenuChip(
+                label: _selectedEmployee,
                 icon: Icons.tune_rounded,
+                items: employeeOptions,
+                onSelected: (value) => setState(() => _selectedEmployee = value),
               ),
               const SizedBox(width: 12),
-              const _TopBarChip(
-                label: 'Sucursal principal',
+              _FilterMenuChip(
+                label: _selectedBranch,
                 icon: Icons.storefront_outlined,
+                items: branchOptions,
+                onSelected: (value) => setState(() => _selectedBranch = value),
               ),
               const SizedBox(width: 12),
               OutlinedButton.icon(
-                onPressed: onExport,
+                onPressed: widget.onExport,
                 icon: const Icon(Icons.download_rounded, size: 16),
                 label: const Text('Exportar'),
               ),
             ],
           ),
           const SizedBox(height: 20),
-          if (rows.isEmpty)
+          if (filteredRows.isEmpty)
             const _EmptyFinanceState(message: 'Todavia no hay datos de rendimiento.')
           else
             SingleChildScrollView(
@@ -9216,7 +10699,7 @@ class _PerformanceTableCard extends StatelessWidget {
                   DataColumn(label: Text('Rendimiento')),
                   DataColumn(label: Text('Acciones')),
                 ],
-                rows: rows.map((row) {
+                rows: filteredRows.map((row) {
                   final avgTicket = row.servicesCompleted == 0
                       ? 0.0
                       : row.revenue / row.servicesCompleted;
@@ -9255,14 +10738,26 @@ class _PerformanceTableCard extends StatelessWidget {
                       DataCell(Text(_money(avgTicket))),
                       DataCell(Text(_percent(margin))),
                       DataCell(_PerformancePill(label: label)),
-                      const DataCell(
+                      DataCell(
                         Row(
                           children: [
-                            Icon(Icons.visibility_rounded, size: 18),
-                            SizedBox(width: 10),
-                            Icon(Icons.bar_chart_rounded, size: 18),
-                            SizedBox(width: 10),
-                            Icon(Icons.more_horiz_rounded, size: 18),
+                            _RowActionIcon(
+                              icon: Icons.visibility_rounded,
+                              tooltip: 'Ver detalle',
+                              onTap: () => _showRowDetail(row),
+                            ),
+                            const SizedBox(width: 10),
+                            _RowActionIcon(
+                              icon: Icons.bar_chart_rounded,
+                              tooltip: 'Ver metricas',
+                              onTap: () => _showMetricsHint(row),
+                            ),
+                            const SizedBox(width: 10),
+                            _RowActionIcon(
+                              icon: Icons.more_horiz_rounded,
+                              tooltip: 'Mas acciones',
+                              onTap: () => _showMoreActions(row),
+                            ),
                           ],
                         ),
                       ),
@@ -9273,8 +10768,47 @@ class _PerformanceTableCard extends StatelessWidget {
             ),
           const SizedBox(height: 16),
           Text(
-            'Mostrando ${rows.isEmpty ? 0 : 1} a ${rows.length} de ${rows.length} empleados',
+            'Mostrando ${filteredRows.isEmpty ? 0 : 1} a ${filteredRows.length} de ${widget.rows.length} empleados',
             style: GoogleFonts.inter(color: _financeMuted, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PerformanceDetailRow extends StatelessWidget {
+  const _PerformanceDetailRow(this.label, this.value);
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              label,
+              style: GoogleFonts.inter(
+                color: _financeMuted,
+                fontSize: 12,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: GoogleFonts.inter(
+                color: _financeInk,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
         ],
       ),
@@ -9648,6 +11182,116 @@ class _TopBarChip extends StatelessWidget {
   }
 }
 
+class _FinanceSearchField extends StatelessWidget {
+  const _FinanceSearchField({
+    required this.controller,
+    required this.hint,
+    required this.onChanged,
+  });
+
+  final TextEditingController controller;
+  final String hint;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+      decoration: BoxDecoration(
+        color: SaharaTheme.background,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _financeBorder),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.search_rounded, size: 18, color: _financeMuted),
+          const SizedBox(width: 10),
+          Expanded(
+            child: TextField(
+              controller: controller,
+              onChanged: onChanged,
+              decoration: InputDecoration(
+                hintText: hint,
+                hintStyle: GoogleFonts.inter(color: _financeMuted),
+                border: InputBorder.none,
+                isCollapsed: true,
+              ),
+              style: GoogleFonts.inter(color: _financeInk),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FilterMenuChip extends StatelessWidget {
+  const _FilterMenuChip({
+    required this.label,
+    required this.icon,
+    required this.items,
+    required this.onSelected,
+  });
+
+  final String label;
+  final IconData icon;
+  final List<String> items;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _financeBorder),
+        color: Colors.white,
+      ),
+      child: PopupMenuButton<String>(
+        tooltip: label,
+        onSelected: onSelected,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        itemBuilder: (context) => items
+            .map(
+              (item) => PopupMenuItem<String>(
+                value: item,
+                child: Text(
+                  item,
+                  style: GoogleFonts.inter(
+                    color: _financeInk,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            )
+            .toList(),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: _financeMuted),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: GoogleFonts.inter(
+                  color: _financeInk,
+                  fontSize: 13,
+                ),
+              ),
+              const SizedBox(width: 6),
+              const Icon(
+                Icons.keyboard_arrow_down_rounded,
+                size: 16,
+                color: _financeMuted,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _QuickActionTile extends StatelessWidget {
   const _QuickActionTile({
     required this.icon,
@@ -9721,28 +11365,35 @@ class _SectionChip extends StatelessWidget {
   const _SectionChip({
     required this.label,
     required this.selected,
+    this.onTap,
   });
 
   final String label;
   final bool selected;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-      decoration: BoxDecoration(
-        color: selected ? SaharaTheme.gold : SaharaTheme.background,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: selected ? SaharaTheme.gold : _financeBorder,
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        decoration: BoxDecoration(
+          color: selected ? SaharaTheme.gold : SaharaTheme.background,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: selected ? SaharaTheme.gold : _financeBorder,
+          ),
         ),
-      ),
-      child: Text(
-        label,
-        style: GoogleFonts.inter(
-          color: selected ? Colors.white : _financeInk,
-          fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-          fontSize: 12,
+        child: Text(
+          label,
+          style: GoogleFonts.inter(
+            color: selected ? Colors.white : _financeInk,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            fontSize: 12,
+          ),
         ),
       ),
     );
@@ -10309,9 +11960,13 @@ class _SupplierExpenseDialogState extends State<_SupplierExpenseDialog> {
 }
 
 class _PayrollDialog extends StatefulWidget {
-  const _PayrollDialog({required this.staff});
+  const _PayrollDialog({
+    required this.staff,
+    this.initialEntry,
+  });
 
   final List<Map<String, dynamic>> staff;
+  final Map<String, dynamic>? initialEntry;
 
   @override
   State<_PayrollDialog> createState() => _PayrollDialogState();
@@ -10330,6 +11985,22 @@ class _PayrollDialogState extends State<_PayrollDialog> {
   bool _saving = false;
 
   @override
+  void initState() {
+    super.initState();
+    final entry = widget.initialEntry;
+    if (entry == null) return;
+    _employeeId = entry['employee_id']?.toString();
+    _baseCtrl.text = _entryAmount(entry['base_salary']).toStringAsFixed(2);
+    _commissionsCtrl.text = _entryAmount(entry['commissions']).toStringAsFixed(2);
+    _bonusesCtrl.text = _entryAmount(entry['bonuses']).toStringAsFixed(2);
+    _tipsCtrl.text = _entryAmount(entry['tips']).toStringAsFixed(2);
+    _deductionsCtrl.text = _entryAmount(entry['deductions']).toStringAsFixed(2);
+    _periodStartCtrl.text = _dateFieldValue(entry['period_start']);
+    _periodEndCtrl.text = _dateFieldValue(entry['period_end']);
+    _status = entry['payment_status']?.toString() ?? _status;
+  }
+
+  @override
   void dispose() {
     _baseCtrl.dispose();
     _commissionsCtrl.dispose();
@@ -10344,6 +12015,18 @@ class _PayrollDialogState extends State<_PayrollDialog> {
   double _num(TextEditingController ctrl) =>
       double.tryParse(ctrl.text.trim()) ?? 0;
 
+  double _entryAmount(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  String _dateFieldValue(dynamic value) {
+    if (value == null) return '';
+    final text = value.toString().trim();
+    if (text.isEmpty) return '';
+    return text.length >= 10 ? text.substring(0, 10) : text;
+  }
+
   Future<void> _save() async {
     setState(() => _saving = true);
     final total = _num(_baseCtrl) +
@@ -10352,7 +12035,7 @@ class _PayrollDialogState extends State<_PayrollDialog> {
         _num(_tipsCtrl) -
         _num(_deductionsCtrl);
     try {
-      await Supabase.instance.client.from('payroll_entries').insert({
+      final payload = {
         'branch_id': kDefaultBranchId,
         'employee_id': _employeeId,
         'period_start': _periodStartCtrl.text.trim(),
@@ -10365,7 +12048,16 @@ class _PayrollDialogState extends State<_PayrollDialog> {
         'total_pay': total,
         'payment_status': _status,
         'paid_at': _status == 'pagado' ? DateTime.now().toIso8601String() : null,
-      });
+      };
+      final rowId = widget.initialEntry?['id']?.toString();
+      if (rowId != null && rowId.isNotEmpty) {
+        await Supabase.instance.client
+            .from('payroll_entries')
+            .update(payload)
+            .eq('id', rowId);
+      } else {
+        await Supabase.instance.client.from('payroll_entries').insert(payload);
+      }
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
       if (mounted) {
@@ -10381,7 +12073,9 @@ class _PayrollDialogState extends State<_PayrollDialog> {
   @override
   Widget build(BuildContext context) {
     return _BaseAdminDialog(
-      title: 'Nuevo registro de nomina',
+      title: widget.initialEntry == null
+          ? 'Nuevo registro de nomina'
+          : 'Editar registro de nomina',
       saving: _saving,
       onSave: _employeeId == null ? null : _save,
       child: Column(
@@ -10464,6 +12158,148 @@ class _PayrollDialogState extends State<_PayrollDialog> {
             items: const ['pendiente', 'pagado', 'parcial'],
             onChanged: (value) => setState(() => _status = value ?? _status),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CashBoxMovementDialog extends StatefulWidget {
+  const _CashBoxMovementDialog({required this.staff});
+
+  final List<Map<String, dynamic>> staff;
+
+  @override
+  State<_CashBoxMovementDialog> createState() => _CashBoxMovementDialogState();
+}
+
+class _CashBoxMovementDialogState extends State<_CashBoxMovementDialog> {
+  final _descriptionCtrl = TextEditingController();
+  final _amountCtrl = TextEditingController();
+  final _notesCtrl = TextEditingController();
+  String _movementType = 'entrada';
+  String _status = 'registrado';
+  String _responsibleName = 'Administracion';
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final staffNames = widget.staff
+        .map((item) => item['full_name']?.toString().trim() ?? '')
+        .where((name) => name.isNotEmpty)
+        .toList();
+    if (staffNames.isNotEmpty) {
+      _responsibleName = staffNames.first;
+    }
+  }
+
+  @override
+  void dispose() {
+    _descriptionCtrl.dispose();
+    _amountCtrl.dispose();
+    _notesCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final description = _descriptionCtrl.text.trim();
+    final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0;
+    if (description.isEmpty || amount <= 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Descripcion y monto son obligatorios.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    setState(() => _saving = true);
+    try {
+      await Supabase.instance.client.from('cash_box_movements').insert({
+        'id': _financeUuid(),
+        'branch_id': kDefaultBranchId,
+        'movement_type': _movementType,
+        'description': description,
+        'amount': amount,
+        'responsible_name': _responsibleName,
+        'status': _status,
+        'notes': _notesCtrl.text.trim(),
+        'movement_at': DateTime.now().toIso8601String(),
+      });
+      if (mounted) Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'No se pudo guardar el movimiento. Si la tabla no existe aun, corre el SQL de caja chica. Error: $e',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final staffNames = widget.staff
+        .map((item) => item['full_name']?.toString().trim() ?? '')
+        .where((name) => name.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    final responsibleItems = <String>{
+      'Administracion',
+      if (!staffNames.contains(_responsibleName)) _responsibleName,
+      ...staffNames,
+    }.toList(growable: false);
+
+    return _BaseAdminDialog(
+      title: 'Nuevo movimiento de caja chica',
+      saving: _saving,
+      onSave: _save,
+      child: Column(
+        children: [
+          _LabeledDropdown(
+            label: 'Tipo de movimiento',
+            value: _movementType,
+            items: const ['entrada', 'salida'],
+            labels: const {
+              'entrada': 'Entrada',
+              'salida': 'Salida',
+            },
+            onChanged: (value) =>
+                setState(() => _movementType = value ?? _movementType),
+          ),
+          _LabeledField(
+            controller: _descriptionCtrl,
+            label: 'Descripcion',
+            lines: 2,
+          ),
+          _LabeledField(
+            controller: _amountCtrl,
+            label: 'Monto',
+            number: true,
+          ),
+          _LabeledDropdown(
+            label: 'Responsable',
+            value: _responsibleName,
+            items: responsibleItems,
+            onChanged: (value) =>
+                setState(() => _responsibleName = value ?? _responsibleName),
+          ),
+          _LabeledDropdown(
+            label: 'Estado',
+            value: _status,
+            items: const ['registrado', 'aplicado'],
+            onChanged: (value) => setState(() => _status = value ?? _status),
+          ),
+          _LabeledField(controller: _notesCtrl, label: 'Notas', lines: 3),
         ],
       ),
     );

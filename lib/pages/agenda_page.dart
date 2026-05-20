@@ -339,6 +339,86 @@ class _AgendaCalendarHours {
   }
 }
 
+class _ScheduleBlock {
+  const _ScheduleBlock({
+    required this.id,
+    required this.blockDate,
+    required this.startMinute,
+    required this.endMinute,
+    required this.scope,
+    required this.title,
+    required this.notes,
+    this.branchId,
+    this.createdAt,
+  });
+
+  final String id;
+  final String? branchId;
+  final DateTime blockDate;
+  final int startMinute;
+  final int endMinute;
+  final String scope;
+  final String title;
+  final String notes;
+  final DateTime? createdAt;
+
+  factory _ScheduleBlock.fromMap(Map<String, dynamic> map) {
+    final parsedDate =
+        DateTime.tryParse(map['block_date'] as String? ?? '') ?? DateTime.now();
+    final start = (map['start_minute'] as num?)?.toInt() ?? 0;
+    final rawEnd = (map['end_minute'] as num?)?.toInt() ?? start + 60;
+    return _ScheduleBlock(
+      id: map['id'] as String? ?? '',
+      branchId: map['branch_id'] as String?,
+      blockDate: DateTime(parsedDate.year, parsedDate.month, parsedDate.day),
+      startMinute: start.clamp(0, _kDefaultCalendarEndMinute),
+      endMinute: rawEnd.clamp(start + 15, 24 * 60),
+      scope: (map['scope'] as String? ?? 'day').toLowerCase(),
+      title:
+          (map['title'] as String?)?.trim().isNotEmpty == true
+          ? (map['title'] as String).trim()
+          : 'Horario bloqueado',
+      notes: (map['notes'] as String? ?? '').trim(),
+      createdAt: DateTime.tryParse(map['created_at'] as String? ?? ''),
+    );
+  }
+
+  bool get appliesWholeWeek => scope == 'week';
+  int get durationMinutes => max(15, endMinute - startMinute);
+
+  String get scopeLabel => appliesWholeWeek ? 'Toda la semana' : 'Solo este día';
+
+  String get timeLabel =>
+      '${_minuteLabel24(startMinute)} - ${_minuteLabel24(endMinute)}';
+
+  bool appliesToDay(DateTime day) {
+    final normalizedDay = DateTime(day.year, day.month, day.day);
+    if (!appliesWholeWeek) {
+      return _sameDay(normalizedDay, blockDate);
+    }
+    final weekStart = _mondayOf(blockDate);
+    final weekEnd = weekStart.add(const Duration(days: 6));
+    return !normalizedDay.isBefore(weekStart) && !normalizedDay.isAfter(weekEnd);
+  }
+
+  bool overlaps(DateTime day, int slotStartMinute, int slotEndMinute) {
+    if (!appliesToDay(day)) return false;
+    return slotStartMinute < endMinute && slotEndMinute > startMinute;
+  }
+
+  bool intersectsRange(DateTime start, DateTime end) {
+    final normalizedStart = DateTime(start.year, start.month, start.day);
+    final normalizedEnd = DateTime(end.year, end.month, end.day);
+    if (!appliesWholeWeek) {
+      return !blockDate.isBefore(normalizedStart) &&
+          !blockDate.isAfter(normalizedEnd);
+    }
+    final weekStart = _mondayOf(blockDate);
+    final weekEnd = weekStart.add(const Duration(days: 6));
+    return !weekEnd.isBefore(normalizedStart) && !weekStart.isAfter(normalizedEnd);
+  }
+}
+
 int _parseCalendarMinute(dynamic raw, {required int fallbackMinute}) {
   if (raw == null) return fallbackMinute;
   if (raw is num) {
@@ -395,6 +475,7 @@ class _AgendaPageState extends State<AgendaPage> {
   String _statusFilter = 'active';
   bool _loading = true;
   List<_Booking> _bookings = [];
+  List<_ScheduleBlock> _scheduleBlocks = [];
   List<_Therapist> _therapists = [];
   List<Map<String, dynamic>> _branches = [];
   String? _selectedBranchId;
@@ -408,6 +489,7 @@ class _AgendaPageState extends State<AgendaPage> {
   late DateTime _monthStart;
   bool _hasLoadedOnce = false;
   RealtimeChannel? _bookingsChannel;
+  RealtimeChannel? _scheduleBlocksChannel;
   RealtimeChannel? _conversationsChannel;
   RealtimeChannel? _messagesChannel;
   Timer? _bookingsReloadDebounce;
@@ -442,6 +524,7 @@ class _AgendaPageState extends State<AgendaPage> {
       await _loadBookings();
     });
     _subscribeToBookingsRealtime();
+    _subscribeToScheduleBlocksRealtime();
     _subscribeToMessagesRealtime();
     _startMessagesPolling();
     _timer = Timer.periodic(
@@ -459,6 +542,9 @@ class _AgendaPageState extends State<AgendaPage> {
     if (_bookingsChannel != null) {
       Supabase.instance.client.removeChannel(_bookingsChannel!);
     }
+    if (_scheduleBlocksChannel != null) {
+      Supabase.instance.client.removeChannel(_scheduleBlocksChannel!);
+    }
     if (_conversationsChannel != null) {
       Supabase.instance.client.removeChannel(_conversationsChannel!);
     }
@@ -469,8 +555,34 @@ class _AgendaPageState extends State<AgendaPage> {
   }
 
   DateTime get _weekEnd => _weekStart.add(const Duration(days: 6));
-  _AgendaCalendarHours get _visibleCalendarHours =>
-      _calendarHours.expandToFit(_bookings);
+  _AgendaCalendarHours get _visibleCalendarHours {
+    final expandedForBookings = _calendarHours.expandToFit(_bookings);
+    if (_scheduleBlocks.isEmpty) {
+      return expandedForBookings;
+    }
+
+    var expandedStart = expandedForBookings.startMinute;
+    var expandedEnd = expandedForBookings.endMinuteInclusive;
+
+    for (final block in _scheduleBlocks) {
+      final blockStart = block.startMinute.clamp(0, _kDefaultCalendarEndMinute);
+      final blockEnd = block.endMinute.clamp(0, 24 * 60);
+      if (blockStart < expandedStart) {
+        expandedStart = max(0, (blockStart ~/ 60) * 60);
+      }
+      if (blockEnd > expandedEnd) {
+        expandedEnd = min(
+          _kDefaultCalendarEndMinute,
+          (((blockEnd + 14) ~/ 15) * 15) - 1,
+        );
+      }
+    }
+
+    return _AgendaCalendarHours(
+      startMinute: expandedStart,
+      endMinuteInclusive: max(expandedStart, expandedEnd),
+    );
+  }
 
   DateTime get _rangeStart {
     if (_viewMode == 'day')
@@ -524,6 +636,28 @@ class _AgendaPageState extends State<AgendaPage> {
         );
       },
     );
+  }
+
+  void _subscribeToScheduleBlocksRealtime() {
+    _scheduleBlocksChannel = Supabase.instance.client
+        .channel('agenda-schedule-blocks-realtime')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'schedule_blocks',
+          callback: (_) {
+            _bookingsReloadDebounce?.cancel();
+            _bookingsReloadDebounce = Timer(
+              const Duration(milliseconds: 350),
+              () {
+                if (mounted) {
+                  _loadBookings();
+                }
+              },
+            );
+          },
+        )
+        .subscribe();
   }
 
   void _subscribeToMessagesRealtime() {
@@ -611,6 +745,17 @@ class _AgendaPageState extends State<AgendaPage> {
     final list = _bookings.where((b) => _sameDay(b.date, day)).toList();
     list.sort((a, b) => a.startMinute.compareTo(b.startMinute));
     return list;
+  }
+
+  List<_ScheduleBlock> _scheduleBlocksForDay(DateTime day) {
+    final list = _scheduleBlocks.where((b) => b.appliesToDay(day)).toList();
+    list.sort((a, b) => a.startMinute.compareTo(b.startMinute));
+    return list;
+  }
+
+  bool _isSlotBlocked(DateTime day, int startMinute, int durationMinutes) {
+    final slotEnd = startMinute + max(15, durationMinutes).toInt();
+    return _scheduleBlocks.any((block) => block.overlaps(day, startMinute, slotEnd));
   }
 
   List<_Booking> get _upcomingBookings {
@@ -867,9 +1012,16 @@ class _AgendaPageState extends State<AgendaPage> {
           debugPrint('Skipping malformed booking row: $e');
         }
       }
+      var parsedBlocks = _scheduleBlocks;
+      try {
+        parsedBlocks = await _loadScheduleBlocksForVisibleRange();
+      } catch (e) {
+        debugPrint('loadScheduleBlocks: $e');
+      }
       if (!mounted) return;
       setState(() {
         _bookings = parsed;
+        _scheduleBlocks = parsedBlocks;
         _loading = false;
         _hasLoadedOnce = true;
       });
@@ -1104,9 +1256,13 @@ class _AgendaPageState extends State<AgendaPage> {
                                                   _visibleCalendarHours,
                                               weekStart: _weekStart,
                                               bookings: _bookings,
+                                              scheduleBlocks: _scheduleBlocks,
                                               now: _now,
                                               onBookingTap: _showBookingDetail,
+                                              onScheduleBlockTap:
+                                                  _showScheduleBlockDetail,
                                               onReschedule: _rescheduleBooking,
+                                              isSlotBlocked: _isSlotBlocked,
                                               onSlotTap: _onSlotTap,
                                             )
                                           : _viewMode == 'day'
@@ -1115,9 +1271,15 @@ class _AgendaPageState extends State<AgendaPage> {
                                                   _visibleCalendarHours,
                                               day: _selectedDay,
                                               bookings: _bookings,
+                                              scheduleBlocks: _scheduleBlocksForDay(
+                                                _selectedDay,
+                                              ),
                                               now: _now,
                                               onBookingTap: _showBookingDetail,
+                                              onScheduleBlockTap:
+                                                  _showScheduleBlockDetail,
                                               onReschedule: _rescheduleBooking,
+                                              isSlotBlocked: _isSlotBlocked,
                                               onSlotTap: _onSlotTap,
                                             )
                                           : _MonthGrid(
@@ -1206,6 +1368,138 @@ class _AgendaPageState extends State<AgendaPage> {
     );
   }
 
+  void _showScheduleBlockDialog(
+    BuildContext ctx, {
+    required DateTime date,
+    required TimeOfDay time,
+    _ScheduleBlock? initialBlock,
+  }) {
+    showDialog(
+      context: ctx,
+      builder: (_) => _ScheduleBlockDialog(
+        calendarHours: _visibleCalendarHours,
+        selectedDate: date,
+        initialStartMinute: (time.hour * 60) + time.minute,
+        initialBlock: initialBlock,
+        onSave: ({
+          required DateTime blockDate,
+          required int startMinute,
+          required int endMinute,
+          required String scope,
+          required String title,
+          required String notes,
+        }) async {
+          final saved = await _saveScheduleBlock(
+            existing: initialBlock,
+            blockDate: blockDate,
+            startMinute: startMinute,
+            endMinute: endMinute,
+            scope: scope,
+            title: title,
+            notes: notes,
+          );
+          if (!saved || !mounted) return false;
+          Navigator.pop(ctx);
+          return true;
+        },
+        onDelete: initialBlock == null
+            ? null
+            : () async {
+                final deleted = await _deleteScheduleBlock(initialBlock);
+                if (!deleted || !mounted) return false;
+                Navigator.pop(ctx);
+                return true;
+              },
+      ),
+    );
+  }
+
+  void _showScheduleBlockDetail(BuildContext ctx, _ScheduleBlock block) {
+    showDialog(
+      context: ctx,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        titlePadding: const EdgeInsets.fromLTRB(22, 22, 22, 12),
+        contentPadding: const EdgeInsets.fromLTRB(22, 0, 22, 12),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        title: Row(
+          children: [
+            const Icon(Icons.block_outlined, color: SaharaTheme.gold),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                block.title,
+                style: GoogleFonts.playfairDisplay(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF1F1A17),
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${_kDaysShort[block.blockDate.weekday - 1]}, ${block.blockDate.day}/${block.blockDate.month}/${block.blockDate.year}',
+              style: GoogleFonts.inter(
+                fontSize: 13,
+                color: Colors.black87,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              block.timeLabel,
+              style: GoogleFonts.inter(fontSize: 13, color: Colors.black54),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              block.scopeLabel,
+              style: GoogleFonts.inter(fontSize: 13, color: Colors.black54),
+            ),
+            if (block.notes.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              Text(
+                block.notes,
+                style: GoogleFonts.inter(fontSize: 13, color: Colors.black87),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(
+              'Cerrar',
+              style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              _showScheduleBlockDialog(
+                context,
+                date: block.blockDate,
+                time: TimeOfDay(
+                  hour: block.startMinute ~/ 60,
+                  minute: block.startMinute % 60,
+                ),
+                initialBlock: block,
+              );
+            },
+            child: Text(
+              'Editar',
+              style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _onSlotTap(DateTime date, TimeOfDay time, Offset globalPos) {
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     showMenu<String>(
@@ -1279,9 +1573,94 @@ class _AgendaPageState extends State<AgendaPage> {
         ),
       ],
     ).then((value) {
-      if (!mounted || value != 'reserva') return;
-      _showNewDialog(context, date: date, time: time);
+      if (!mounted || value == null) return;
+      if (value == 'reserva') {
+        _showNewDialog(context, date: date, time: time);
+        return;
+      }
+      if (value == 'bloquear') {
+        _showScheduleBlockDialog(context, date: date, time: time);
+      }
     });
+  }
+
+  Future<bool> _saveScheduleBlock({
+    _ScheduleBlock? existing,
+    required DateTime blockDate,
+    required int startMinute,
+    required int endMinute,
+    required String scope,
+    required String title,
+    required String notes,
+  }) async {
+    final payload = <String, dynamic>{
+      'branch_id': kEnableMultiBranch ? _selectedBranchId : kDefaultBranchId,
+      'block_date': _isoDateOnly(
+        DateTime(blockDate.year, blockDate.month, blockDate.day),
+      ),
+      'start_minute': startMinute,
+      'end_minute': endMinute,
+      'scope': scope,
+      'title': title.trim().isEmpty ? 'Horario bloqueado' : title.trim(),
+      'notes': notes.trim(),
+    };
+    try {
+      final table = Supabase.instance.client.from('schedule_blocks');
+      if (existing == null) {
+        await table.insert(payload);
+      } else {
+        await table.update(payload).eq('id', existing.id);
+      }
+      if (!mounted) return true;
+      await _loadBookings();
+      if (!mounted) return true;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            existing == null
+                ? 'Bloqueo de horario guardado.'
+                : 'Bloqueo de horario actualizado.',
+          ),
+        ),
+      );
+      return true;
+    } catch (error) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.red.shade400,
+          content: Text(
+            'No se pudo guardar el bloqueo. Si la tabla no existe aún, corre el SQL de schedule_blocks. Error: $error',
+          ),
+        ),
+      );
+      return false;
+    }
+  }
+
+  Future<bool> _deleteScheduleBlock(_ScheduleBlock block) async {
+    try {
+      await Supabase.instance.client
+          .from('schedule_blocks')
+          .delete()
+          .eq('id', block.id);
+      if (!mounted) return true;
+      await _loadBookings();
+      if (!mounted) return true;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Bloqueo eliminado.')),
+      );
+      return true;
+    } catch (error) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.red.shade400,
+          content: Text('No se pudo eliminar el bloqueo: $error'),
+        ),
+      );
+      return false;
+    }
   }
 
   String _isoDateOnly(DateTime value) => value.toIso8601String().split('T').first;
@@ -1347,6 +1726,36 @@ class _AgendaPageState extends State<AgendaPage> {
         _calendarHours = const _AgendaCalendarHours.fullDay();
       }
     }
+  }
+
+  Future<List<_ScheduleBlock>> _loadScheduleBlocksForVisibleRange() async {
+    final bufferStart = _rangeStart.subtract(const Duration(days: 6));
+    dynamic query = Supabase.instance.client
+        .from('schedule_blocks')
+        .select(
+          'id, branch_id, block_date, start_minute, end_minute, scope, title, notes, created_at',
+        )
+        .gte('block_date', _isoDateOnly(bufferStart))
+        .lte('block_date', _isoDateOnly(_rangeEnd))
+        .order('block_date')
+        .order('start_minute');
+
+    if (kEnableMultiBranch && _selectedBranchId != null) {
+      query = query.eq('branch_id', _selectedBranchId!);
+    }
+
+    final response = await query;
+    final parsed = (response as List)
+        .cast<Map<String, dynamic>>()
+        .map(_ScheduleBlock.fromMap)
+        .where((block) => block.intersectsRange(_rangeStart, _rangeEnd))
+        .toList();
+    parsed.sort((a, b) {
+      final byDate = a.blockDate.compareTo(b.blockDate);
+      if (byDate != 0) return byDate;
+      return a.startMinute.compareTo(b.startMinute);
+    });
+    return parsed;
   }
 
   Future<bool> _rescheduleBooking(
@@ -2879,18 +3288,24 @@ class _WeekGrid extends StatefulWidget {
     required this.calendarHours,
     required this.weekStart,
     required this.bookings,
+    required this.scheduleBlocks,
     required this.now,
     required this.onBookingTap,
+    required this.onScheduleBlockTap,
     required this.onReschedule,
+    required this.isSlotBlocked,
     required this.onSlotTap,
   });
 
   final _AgendaCalendarHours calendarHours;
   final DateTime weekStart;
   final List<_Booking> bookings;
+  final List<_ScheduleBlock> scheduleBlocks;
   final DateTime now;
   final void Function(BuildContext, _Booking) onBookingTap;
+  final void Function(BuildContext, _ScheduleBlock) onScheduleBlockTap;
   final Future<bool> Function(_Booking, DateTime, int) onReschedule;
+  final bool Function(DateTime, int, int) isSlotBlocked;
   final void Function(DateTime, TimeOfDay, Offset) onSlotTap;
 
   @override
@@ -3169,6 +3584,25 @@ class _WeekGridState extends State<_WeekGrid> {
               if (slot == null) return;
               final (dayIdx, minute) = slot;
               final newDate = widget.weekStart.add(Duration(days: dayIdx));
+              if (widget.isSlotBlocked(
+                newDate,
+                minute,
+                details.data.durationMinutes,
+              )) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Ese horario está bloqueado. Edita o elimina el bloqueo para mover la cita.',
+                    ),
+                  ),
+                );
+                setState(() {
+                  _dragging = null;
+                  _dragLocal = null;
+                });
+                return;
+              }
               final confirmed = await _confirmReschedule(
                 context,
                 details.data,
@@ -3198,6 +3632,9 @@ class _WeekGridState extends State<_WeekGrid> {
             builder: (context, candidateData, rejectedData) =>
                 const SizedBox.expand(),
           ),
+
+          // 8. Schedule blocks
+          ..._buildScheduleBlocks(ctx),
 
           // 8. Booking cards (Draggable) - MOVED TO TOP OF STACK Z-INDEX
           ..._buildCards(ctx),
@@ -3379,6 +3816,34 @@ class _WeekGridState extends State<_WeekGrid> {
       );
     }).toList();
   }
+
+  List<Widget> _buildScheduleBlocks(BuildContext ctx) {
+    final widgets = <Widget>[];
+    for (final block in widget.scheduleBlocks) {
+      for (var dayOffset = 0; dayOffset < 7; dayOffset++) {
+        final day = widget.weekStart.add(Duration(days: dayOffset));
+        if (!block.appliesToDay(day)) continue;
+        final top = _topForMinute(block.startMinute);
+        final height = (block.durationMinutes * _kHourHeight / 60).clamp(
+          22.0,
+          double.infinity,
+        );
+        widgets.add(
+          Positioned(
+            top: top + 1,
+            left: dayOffset * _dayWidth + 1,
+            width: _dayWidth - 2,
+            height: height,
+            child: _ScheduleBlockCard(
+              block: block,
+              onTap: () => widget.onScheduleBlockTap(ctx, block),
+            ),
+          ),
+        );
+      }
+    }
+    return widgets;
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -3389,17 +3854,23 @@ class _DayGrid extends StatefulWidget {
     required this.calendarHours,
     required this.day,
     required this.bookings,
+    required this.scheduleBlocks,
     required this.now,
     required this.onBookingTap,
+    required this.onScheduleBlockTap,
     required this.onReschedule,
+    required this.isSlotBlocked,
     required this.onSlotTap,
   });
   final _AgendaCalendarHours calendarHours;
   final DateTime day;
   final List<_Booking> bookings;
+  final List<_ScheduleBlock> scheduleBlocks;
   final DateTime now;
   final void Function(BuildContext, _Booking) onBookingTap;
+  final void Function(BuildContext, _ScheduleBlock) onScheduleBlockTap;
   final Future<bool> Function(_Booking, DateTime, int) onReschedule;
+  final bool Function(DateTime, int, int) isSlotBlocked;
   final void Function(DateTime, TimeOfDay, Offset) onSlotTap;
 
   @override
@@ -3638,6 +4109,25 @@ class _DayGridState extends State<_DayGrid> {
                                 if (l == null) return;
                                 final m = _slotMinute(l);
                                 if (m == null) return;
+                                if (widget.isSlotBlocked(
+                                  widget.day,
+                                  m,
+                                  d.data.durationMinutes,
+                                )) {
+                                  if (!mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Ese horario está bloqueado. Edita o elimina el bloqueo para mover la cita.',
+                                      ),
+                                    ),
+                                  );
+                                  setState(() {
+                                    _dragging = null;
+                                    _dragLocal = null;
+                                  });
+                                  return;
+                                }
                                 final confirmed = await _confirmReschedule(
                                   context,
                                   d.data,
@@ -3667,6 +4157,7 @@ class _DayGridState extends State<_DayGrid> {
                               builder: (ctx2, cd, rd) =>
                                   const SizedBox.expand(),
                             ),
+                            ..._buildScheduleBlocks(ctx),
                             // Booking cards - MOVED TO TOP OF STACK
                             ..._buildCards(ctx),
                           ],
@@ -3844,6 +4335,26 @@ class _DayGridState extends State<_DayGrid> {
       );
     }).toList();
   }
+
+  List<Widget> _buildScheduleBlocks(BuildContext ctx) {
+    return widget.scheduleBlocks.map((block) {
+      final top = _topForMinute(block.startMinute);
+      final height = (block.durationMinutes * _kHourHeight / 60).clamp(
+        22.0,
+        double.infinity,
+      );
+      return Positioned(
+        top: top + 1,
+        left: 1,
+        right: 1,
+        height: height,
+        child: _ScheduleBlockCard(
+          block: block,
+          onTap: () => widget.onScheduleBlockTap(ctx, block),
+        ),
+      );
+    }).toList();
+  }
 }
 
 class _DayPainter extends CustomPainter {
@@ -3889,6 +4400,96 @@ class _DayPainter extends CustomPainter {
 // ═════════════════════════════════════════════════════════════════════════════
 // Month Grid  (vista mensual)
 // ═════════════════════════════════════════════════════════════════════════════
+class _ScheduleBlockCard extends StatelessWidget {
+  const _ScheduleBlockCard({required this.block, required this.onTap});
+
+  final _ScheduleBlock block;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          margin: const EdgeInsets.all(2),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8EEE7),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: const Color(0xFFE0C2AC)),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFC07A4A),
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.block_outlined,
+                          size: 12,
+                          color: Color(0xFFA96535),
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            block.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.inter(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFF5E3921),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      block.timeLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.inter(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF9A6B46),
+                      ),
+                    ),
+                    if (block.notes.isNotEmpty)
+                      Text(
+                        block.notes,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inter(
+                          fontSize: 10,
+                          color: const Color(0xFF7C5A42),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _MonthGrid extends StatelessWidget {
   const _MonthGrid({
     required this.monthStart,
@@ -4990,6 +5591,386 @@ class _DialogBtn extends StatelessWidget {
 // ═════════════════════════════════════════════════════════════════════════════
 // New Booking Dialog
 // ═════════════════════════════════════════════════════════════════════════════
+class _ScheduleBlockDialog extends StatefulWidget {
+  const _ScheduleBlockDialog({
+    required this.calendarHours,
+    required this.selectedDate,
+    required this.initialStartMinute,
+    required this.onSave,
+    this.initialBlock,
+    this.onDelete,
+  });
+
+  final _AgendaCalendarHours calendarHours;
+  final DateTime selectedDate;
+  final int initialStartMinute;
+  final _ScheduleBlock? initialBlock;
+  final Future<bool> Function({
+    required DateTime blockDate,
+    required int startMinute,
+    required int endMinute,
+    required String scope,
+    required String title,
+    required String notes,
+  })
+  onSave;
+  final Future<bool> Function()? onDelete;
+
+  @override
+  State<_ScheduleBlockDialog> createState() => _ScheduleBlockDialogState();
+}
+
+class _ScheduleBlockDialogState extends State<_ScheduleBlockDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _titleCtrl;
+  late final TextEditingController _notesCtrl;
+  late DateTime _selectedDate;
+  late int _startMinute;
+  late int _endMinute;
+  late String _scope;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initialBlock;
+    _selectedDate = initial?.blockDate ?? widget.selectedDate;
+    _startMinute = initial?.startMinute ?? widget.initialStartMinute;
+    _endMinute = initial?.endMinute ?? (_startMinute + 60).clamp(15, 24 * 60);
+    _scope = initial?.scope ?? 'day';
+    _titleCtrl = TextEditingController(
+      text: initial?.title ?? 'Horario bloqueado',
+    );
+    _notesCtrl = TextEditingController(text: initial?.notes ?? '');
+  }
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    _notesCtrl.dispose();
+    super.dispose();
+  }
+
+  List<int> get _availableHours => widget.calendarHours.selectableHours;
+
+  List<int> _minutesForHour(int hour) =>
+      widget.calendarHours.selectableMinutesForHour(hour);
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2024),
+      lastDate: DateTime(2035),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _selectedDate = picked);
+  }
+
+  Future<void> _submit() async {
+    if (_saving || !_formKey.currentState!.validate()) return;
+    if (_endMinute <= _startMinute) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.red.shade400,
+          content: const Text('La hora final debe ser mayor a la inicial.'),
+        ),
+      );
+      return;
+    }
+    setState(() => _saving = true);
+    final saved = await widget.onSave(
+      blockDate: _selectedDate,
+      startMinute: _startMinute,
+      endMinute: _endMinute,
+      scope: _scope,
+      title: _titleCtrl.text,
+      notes: _notesCtrl.text,
+    );
+    if (mounted && !saved) {
+      setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _delete() async {
+    if (_saving || widget.onDelete == null) return;
+    setState(() => _saving = true);
+    final deleted = await widget.onDelete!.call();
+    if (mounted && !deleted) {
+      setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = widget.initialBlock == null
+        ? 'Bloquear horario'
+        : 'Editar bloqueo';
+
+    return Dialog(
+      backgroundColor: Colors.white,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.block_outlined, color: SaharaTheme.gold),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: GoogleFonts.playfairDisplay(
+                          fontSize: 28,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF1F1A17),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: _saving ? null : () => Navigator.pop(context),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _titleCtrl,
+                  decoration: const InputDecoration(labelText: 'Título'),
+                  validator: (value) => (value == null || value.trim().isEmpty)
+                      ? 'Ingresa un título'
+                      : null,
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _saving ? null : _pickDate,
+                        icon: const Icon(Icons.calendar_today_outlined),
+                        label: Text(
+                          '${_selectedDate.day}/${_selectedDate.month}/${_selectedDate.year}',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: _scope,
+                        decoration: const InputDecoration(labelText: 'Aplicar a'),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'day',
+                            child: Text('Solo este día'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'week',
+                            child: Text('Toda la semana'),
+                          ),
+                        ],
+                        onChanged: _saving
+                            ? null
+                            : (value) {
+                                if (value == null) return;
+                                setState(() => _scope = value);
+                              },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<int>(
+                        value: _startMinute ~/ 60,
+                        decoration: const InputDecoration(
+                          labelText: 'Hora inicial',
+                        ),
+                        items: _availableHours
+                            .map(
+                              (hour) => DropdownMenuItem(
+                                value: hour,
+                                child: Text(hour.toString().padLeft(2, '0')),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: _saving
+                            ? null
+                            : (hour) {
+                                if (hour == null) return;
+                                final minutes = _minutesForHour(hour);
+                                setState(() {
+                                  final selectedMinute = _startMinute % 60;
+                                  _startMinute = (hour * 60) +
+                                      (minutes.contains(selectedMinute)
+                                          ? selectedMinute
+                                          : minutes.first);
+                                  if (_endMinute <= _startMinute) {
+                                    _endMinute = min(_startMinute + 60, 24 * 60);
+                                  }
+                                });
+                              },
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: DropdownButtonFormField<int>(
+                        value: _startMinute % 60,
+                        decoration: const InputDecoration(
+                          labelText: 'Minuto inicial',
+                        ),
+                        items: _minutesForHour(_startMinute ~/ 60)
+                            .map(
+                              (minute) => DropdownMenuItem(
+                                value: minute,
+                                child: Text(minute.toString().padLeft(2, '0')),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: _saving
+                            ? null
+                            : (minute) {
+                                if (minute == null) return;
+                                setState(() {
+                                  _startMinute =
+                                      ((_startMinute ~/ 60) * 60) + minute;
+                                  if (_endMinute <= _startMinute) {
+                                    _endMinute = min(_startMinute + 60, 24 * 60);
+                                  }
+                                });
+                              },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<int>(
+                        value: (_endMinute >= 24 * 60
+                                ? 23
+                                : _endMinute ~/ 60)
+                            .clamp(_availableHours.first, _availableHours.last),
+                        decoration: const InputDecoration(labelText: 'Hora final'),
+                        items: _availableHours
+                            .map(
+                              (hour) => DropdownMenuItem(
+                                value: hour,
+                                child: Text(hour.toString().padLeft(2, '0')),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: _saving
+                            ? null
+                            : (hour) {
+                                if (hour == null) return;
+                                final minutes = _minutesForHour(hour);
+                                setState(() {
+                                  final selectedMinute = _endMinute % 60;
+                                  _endMinute = (hour * 60) +
+                                      (minutes.contains(selectedMinute)
+                                          ? selectedMinute
+                                          : minutes.last);
+                                });
+                              },
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: DropdownButtonFormField<int>(
+                        value: _endMinute % 60,
+                        decoration: const InputDecoration(
+                          labelText: 'Minuto final',
+                        ),
+                        items: _minutesForHour(
+                          (_endMinute >= 24 * 60 ? 23 : _endMinute ~/ 60).clamp(
+                            _availableHours.first,
+                            _availableHours.last,
+                          ),
+                        )
+                            .map(
+                              (minute) => DropdownMenuItem(
+                                value: minute,
+                                child: Text(minute.toString().padLeft(2, '0')),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: _saving
+                            ? null
+                            : (minute) {
+                                if (minute == null) return;
+                                setState(() {
+                                  _endMinute = ((_endMinute ~/ 60) * 60) + minute;
+                                });
+                              },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                TextFormField(
+                  controller: _notesCtrl,
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: 'Notas',
+                    hintText: 'Motivo del bloqueo o indicaciones internas',
+                  ),
+                ),
+                const SizedBox(height: 22),
+                Row(
+                  children: [
+                    if (widget.onDelete != null)
+                      TextButton.icon(
+                        onPressed: _saving ? null : _delete,
+                        icon: const Icon(Icons.delete_outline),
+                        label: Text(
+                          'Eliminar',
+                          style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    const Spacer(),
+                    OutlinedButton(
+                      onPressed: _saving ? null : () => Navigator.pop(context),
+                      child: Text(
+                        'Cancelar',
+                        style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    ElevatedButton.icon(
+                      onPressed: _saving ? null : _submit,
+                      icon: _saving
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.save_outlined),
+                      label: Text(
+                        widget.initialBlock == null ? 'Guardar bloqueo' : 'Guardar cambios',
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _NewBookingDialog extends StatefulWidget {
   const _NewBookingDialog({
     required this.calendarHours,

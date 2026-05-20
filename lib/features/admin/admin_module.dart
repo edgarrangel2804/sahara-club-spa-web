@@ -94,7 +94,7 @@ class _Staff {
       paymentNotes: m['payment_notes'],
       canAccessMobile: m['can_access_mobile'] ?? false,
       canAccessWeb: m['can_access_web'] ?? false,
-      accessEmail: m['access_email'],
+      accessEmail: m['access_email'] ?? m['email'],
     );
   }
 }
@@ -335,8 +335,8 @@ class _AdminModuleState extends State<AdminModule>
     try {
       final userId = Supabase.instance.client.auth.currentUser?.id;
       final now = DateTime.now();
-      final todayKey =
-          DateTime(now.year, now.month, now.day).toIso8601String().split('T').first;
+      final todayStart = DateTime(now.year, now.month, now.day);
+      final todayKey = todayStart.toIso8601String().split('T').first;
       _role = RolePermissions.normalize(widget.currentRole);
       if (userId != null) {
         final profile = await Supabase.instance.client
@@ -369,7 +369,8 @@ class _AdminModuleState extends State<AdminModule>
             status,
             service:services(name, price)
           ''')
-          .eq('booking_date', todayKey)
+          .gte('booking_date', todayKey)
+          .order('booking_date', ascending: true)
           .order('booking_time', ascending: true);
 
       if (_canAccessAdministration) {
@@ -901,6 +902,7 @@ class _AdminModuleState extends State<AdminModule>
                         onEdit: _openStaffForm,
                         onDelete: _deleteStaff,
                         onAdd: _openStaffForm,
+                        onRefresh: _load,
                       ),
                       _ServicesTab(
                         services: _services,
@@ -938,6 +940,7 @@ class _StaffTab extends StatefulWidget {
     required this.onEdit,
     required this.onDelete,
     required this.onAdd,
+    required this.onRefresh,
   });
   final List<_Staff> staff;
   final List<Map<String, dynamic>> todayBookings;
@@ -945,6 +948,7 @@ class _StaffTab extends StatefulWidget {
   final void Function(_Staff) onEdit;
   final void Function(_Staff) onDelete;
   final VoidCallback onAdd;
+  final Future<void> Function() onRefresh;
 
   @override
   State<_StaffTab> createState() => _StaffTabState();
@@ -960,6 +964,32 @@ class _StaffTabState extends State<_StaffTab> {
   void dispose() {
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _openScheduleDialog(_Staff staffMember) async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => _StaffScheduleDialog(
+        staff: staffMember,
+        onSaved: () async {
+          await widget.onRefresh();
+          if (mounted) setState(() {});
+        },
+      ),
+    );
+  }
+
+  Future<void> _openPermissionsDialog(_Staff staffMember) async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => _StaffPermissionsDialog(
+        staff: staffMember,
+        onSaved: () async {
+          await widget.onRefresh();
+          if (mounted) setState(() {});
+        },
+      ),
+    );
   }
 
   List<_StaffSnapshot> get _snapshots {
@@ -995,11 +1025,20 @@ class _StaffTabState extends State<_StaffTab> {
 
   _StaffSnapshot _buildSnapshot(_Staff staffMember) {
     final now = DateTime.now();
+    final todayStart = DateTime(now.year, now.month, now.day);
+    final tomorrowStart = todayStart.add(const Duration(days: 1));
     final bookings = widget.todayBookings
         .where((row) => row['therapist_id']?.toString().trim() == staffMember.id)
         .toList()
       ..sort((a, b) => _bookingDateTime(a).compareTo(_bookingDateTime(b)));
     final validBookings = bookings.where((row) => !_isCancelled(row)).toList();
+    final todayBookings = validBookings
+        .where((row) {
+          final bookingDate = _bookingDateTime(row);
+          return !bookingDate.isBefore(todayStart) &&
+              bookingDate.isBefore(tomorrowStart);
+        })
+        .toList();
     final currentBooking = validBookings.cast<Map<String, dynamic>?>().firstWhere(
       (row) {
         if (row == null) return false;
@@ -1011,15 +1050,15 @@ class _StaffTabState extends State<_StaffTab> {
       orElse: () => null,
     );
     final upcomingBooking = validBookings.cast<Map<String, dynamic>?>().firstWhere(
-      (row) => row != null && _bookingDateTime(row).isAfter(now),
+      (row) => row != null && !_bookingDateTime(row).isBefore(now),
       orElse: () => null,
     );
-    final totalMinutes = validBookings.fold<int>(
+    final totalMinutes = todayBookings.fold<int>(
       0,
       (sum, row) => sum + ((row['duration_min'] as num?)?.toInt() ?? 60),
     );
     final commissionRate = (staffMember.commissionPercentage ?? 0) / 100;
-    final estimatedCommission = validBookings.fold<double>(0, (sum, row) {
+    final estimatedCommission = todayBookings.fold<double>(0, (sum, row) {
       final service = row['service'];
       final price = service is Map ? (service['price'] as num?)?.toDouble() : 0.0;
       return sum + ((price ?? 0) * commissionRate);
@@ -1036,7 +1075,7 @@ class _StaffTabState extends State<_StaffTab> {
       statusLabel = 'En servicio';
       statusColor = const Color(0xFFE39A1F);
       statusPriority = 0;
-    } else if (upcomingBooking != null || validBookings.isEmpty) {
+    } else if (upcomingBooking != null || todayBookings.isEmpty) {
       statusLabel = 'Disponible';
       statusColor = const Color(0xFF2F9E62);
       statusPriority = 1;
@@ -1057,8 +1096,8 @@ class _StaffTabState extends State<_StaffTab> {
           ? _formatTime(_bookingDateTime(currentBooking))
           : '—',
       nextBookingService: _serviceName(upcomingBooking ?? currentBooking) ??
-          (validBookings.isEmpty ? 'Sin citas para hoy' : 'Agenda completada'),
-      servicesToday: validBookings.length,
+          (todayBookings.isEmpty ? 'Sin citas programadas' : 'Agenda completada'),
+      servicesToday: todayBookings.length,
       scheduledHours: _formatMinutes(totalMinutes),
       shiftLabel: _shiftLabel(staffMember),
       estimatedCommission: estimatedCommission,
@@ -1213,8 +1252,8 @@ class _StaffTabState extends State<_StaffTab> {
                         snapshot: item,
                         onToggle: () => widget.onToggle(item.staff),
                         onEdit: () => widget.onEdit(item.staff),
-                        onSchedule: () => widget.onEdit(item.staff),
-                        onPermissions: () => widget.onEdit(item.staff),
+                        onSchedule: () => _openScheduleDialog(item.staff),
+                        onPermissions: () => _openPermissionsDialog(item.staff),
                         onDelete: () => widget.onDelete(item.staff),
                       ),
                     ),
@@ -1231,6 +1270,46 @@ class _StaffTabState extends State<_StaffTab> {
         ],
       ),
     );
+  }
+}
+
+String? _extractMissingStaffColumnCompat(Object error) {
+  final message = error.toString();
+  final match = RegExp(
+    "Could not find the '([^']+)' column of 'staff'",
+  ).firstMatch(message);
+  return match?.group(1);
+}
+
+Map<String, dynamic> _normalizeStaffPayloadCompat(Map<String, dynamic> payload) {
+  final cleaned = <String, dynamic>{};
+  payload.forEach((key, value) {
+    if (value == null) return;
+    if (value is String && value.trim().isEmpty) return;
+    cleaned[key] = value;
+  });
+  return cleaned;
+}
+
+Future<void> _updateStaffWithCompatiblePayloadCompat(
+  String staffId,
+  Map<String, dynamic> payload,
+) async {
+  final mutable = Map<String, dynamic>.from(
+    _normalizeStaffPayloadCompat(payload),
+  );
+  while (true) {
+    try {
+      await Supabase.instance.client.from('staff').update(mutable).eq('id', staffId);
+      return;
+    } catch (error) {
+      final missingColumn = _extractMissingStaffColumnCompat(error);
+      if (missingColumn == null || !mutable.containsKey(missingColumn)) rethrow;
+      mutable.remove(missingColumn);
+      debugPrint(
+        'Staff quick update retry without unsupported column: $missingColumn',
+      );
+    }
   }
 }
 
@@ -2203,6 +2282,476 @@ class _PersonnelSwitchChip extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _StaffScheduleDialog extends StatefulWidget {
+  const _StaffScheduleDialog({
+    required this.staff,
+    required this.onSaved,
+  });
+
+  final _Staff staff;
+  final Future<void> Function() onSaved;
+
+  @override
+  State<_StaffScheduleDialog> createState() => _StaffScheduleDialogState();
+}
+
+class _StaffScheduleDialogState extends State<_StaffScheduleDialog> {
+  static const _dayOptions = <MapEntry<String, String>>[
+    MapEntry('monday', 'Lun'),
+    MapEntry('tuesday', 'Mar'),
+    MapEntry('wednesday', 'Mie'),
+    MapEntry('thursday', 'Jue'),
+    MapEntry('friday', 'Vie'),
+    MapEntry('saturday', 'Sab'),
+    MapEntry('sunday', 'Dom'),
+  ];
+
+  late final TextEditingController _startCtrl;
+  late final TextEditingController _endCtrl;
+  late final TextEditingController _breakCtrl;
+  late bool _showInCalendar;
+  late Set<String> _workDays;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _startCtrl = TextEditingController(text: widget.staff.workStartTime ?? '');
+    _endCtrl = TextEditingController(text: widget.staff.workEndTime ?? '');
+    _breakCtrl = TextEditingController(text: widget.staff.breakTime ?? '');
+    _showInCalendar = widget.staff.showInCalendar;
+    _workDays = widget.staff.workDays.map((day) => day.toLowerCase()).toSet();
+  }
+
+  @override
+  void dispose() {
+    _startCtrl.dispose();
+    _endCtrl.dispose();
+    _breakCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_showInCalendar && _workDays.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Selecciona al menos un dia de trabajo.')),
+      );
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await _updateStaffWithCompatiblePayloadCompat(widget.staff.id, {
+        'work_days': _workDays.toList(),
+        'work_start_time': _startCtrl.text.trim(),
+        'work_end_time': _endCtrl.text.trim(),
+        'break_time': _breakCtrl.text.trim(),
+        'show_in_calendar': _showInCalendar,
+      });
+      if (!mounted) return;
+      Navigator.pop(context);
+      await widget.onSaved();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Horario actualizado.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error al guardar horario: $e')));
+      setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: SizedBox(
+        width: 520,
+        child: Padding(
+          padding: const EdgeInsets.all(22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.calendar_today_outlined,
+                    size: 18,
+                    color: Color(0xFF805D22),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Horario de ${widget.staff.name}',
+                    style: GoogleFonts.outfit(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF1F1A17),
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: _saving ? null : () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Configura la jornada, descanso y visibilidad en agenda.',
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  color: const Color(0xFF6D655B),
+                ),
+              ),
+              const SizedBox(height: 18),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _dayOptions.map((entry) {
+                  final selected = _workDays.contains(entry.key);
+                  return FilterChip(
+                    selected: selected,
+                    onSelected: _saving
+                        ? null
+                        : (value) {
+                            setState(() {
+                              if (value) {
+                                _workDays.add(entry.key);
+                              } else {
+                                _workDays.remove(entry.key);
+                              }
+                            });
+                          },
+                    label: Text(entry.value),
+                    selectedColor: const Color(0xFFEEDAAE),
+                    checkmarkColor: const Color(0xFF805D22),
+                    labelStyle: GoogleFonts.inter(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: selected
+                          ? const Color(0xFF805D22)
+                          : const Color(0xFF6D655B),
+                    ),
+                    side: const BorderSide(color: Color(0xFFE9DDD0)),
+                    backgroundColor: const Color(0xFFFFFCF8),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: _QuickTextField(
+                      controller: _startCtrl,
+                      label: 'Entrada',
+                      hint: '09:00',
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _QuickTextField(
+                      controller: _endCtrl,
+                      label: 'Salida',
+                      hint: '18:00',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _QuickTextField(
+                controller: _breakCtrl,
+                label: 'Descanso',
+                hint: '14:00 - 15:00',
+              ),
+              const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                value: _showInCalendar,
+                onChanged: _saving ? null : (value) => setState(() => _showInCalendar = value),
+                activeColor: SaharaTheme.gold,
+                title: Text(
+                  'Mostrar en agenda',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                subtitle: Text(
+                  'Permite que aparezca como profesional disponible.',
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    color: const Color(0xFF7A746C),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: _saving ? null : () => Navigator.pop(context),
+                    child: const Text('Cancelar'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: _saving ? null : _save,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFC6A76A),
+                      foregroundColor: Colors.white,
+                    ),
+                    child: Text(_saving ? 'Guardando...' : 'Guardar'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StaffPermissionsDialog extends StatefulWidget {
+  const _StaffPermissionsDialog({
+    required this.staff,
+    required this.onSaved,
+  });
+
+  final _Staff staff;
+  final Future<void> Function() onSaved;
+
+  @override
+  State<_StaffPermissionsDialog> createState() => _StaffPermissionsDialogState();
+}
+
+class _StaffPermissionsDialogState extends State<_StaffPermissionsDialog> {
+  late bool _active;
+  late bool _canAccessWeb;
+  late bool _canAccessMobile;
+  late final TextEditingController _emailCtrl;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _active = widget.staff.active;
+    _canAccessWeb = widget.staff.canAccessWeb;
+    _canAccessMobile = widget.staff.canAccessMobile;
+    _emailCtrl = TextEditingController(
+      text: widget.staff.accessEmail ?? widget.staff.email ?? '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _emailCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final accessEnabled = _canAccessWeb || _canAccessMobile;
+    if (accessEnabled && _emailCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Captura un correo para el acceso.')),
+      );
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await _updateStaffWithCompatiblePayloadCompat(widget.staff.id, {
+        'active': _active,
+        'can_access_web': _canAccessWeb,
+        'can_access_mobile': _canAccessMobile,
+        'email': _emailCtrl.text.trim(),
+      });
+      if (!mounted) return;
+      Navigator.pop(context);
+      await widget.onSaved();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Permisos actualizados.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error al guardar permisos: $e')));
+      setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: SizedBox(
+        width: 500,
+        child: Padding(
+          padding: const EdgeInsets.all(22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.badge_outlined,
+                    size: 18,
+                    color: Color(0xFF805D22),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Permisos de ${widget.staff.name}',
+                    style: GoogleFonts.outfit(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF1F1A17),
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: _saving ? null : () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Define acceso y estado operativo del miembro del equipo.',
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  color: const Color(0xFF6D655B),
+                ),
+              ),
+              const SizedBox(height: 18),
+              _QuickTextField(
+                controller: _emailCtrl,
+                label: 'Correo de acceso',
+                hint: 'correo@empresa.com',
+                keyboardType: TextInputType.emailAddress,
+              ),
+              const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                value: _active,
+                onChanged: _saving ? null : (value) => setState(() => _active = value),
+                activeColor: SaharaTheme.gold,
+                title: Text(
+                  'Empleado activo',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              SwitchListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                value: _canAccessWeb,
+                onChanged: _saving ? null : (value) => setState(() => _canAccessWeb = value),
+                activeColor: SaharaTheme.gold,
+                title: Text(
+                  'Permitir acceso web',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              SwitchListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                value: _canAccessMobile,
+                onChanged: _saving
+                    ? null
+                    : (value) => setState(() => _canAccessMobile = value),
+                activeColor: SaharaTheme.gold,
+                title: Text(
+                  'Permitir acceso movil',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: _saving ? null : () => Navigator.pop(context),
+                    child: const Text('Cancelar'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: _saving ? null : _save,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFC6A76A),
+                      foregroundColor: Colors.white,
+                    ),
+                    child: Text(_saving ? 'Guardando...' : 'Guardar'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickTextField extends StatelessWidget {
+  const _QuickTextField({
+    required this.controller,
+    required this.label,
+    required this.hint,
+    this.keyboardType,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final String hint;
+  final TextInputType? keyboardType;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.inter(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: const Color(0xFF6D655B),
+          ),
+        ),
+        const SizedBox(height: 6),
+        TextField(
+          controller: controller,
+          keyboardType: keyboardType,
+          style: GoogleFonts.inter(fontSize: 13),
+          decoration: InputDecoration(
+            hintText: hint,
+            filled: true,
+            fillColor: const Color(0xFFFFFCF8),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFFE9DDD0)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFFE9DDD0)),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -3781,14 +4330,24 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
 
       if (widget.staff != null) {
         final staffId = widget.staff!.id;
-        final data = await Supabase.instance.client
-            .from('staff_services')
-            .select('service_id')
-            .eq('staff_id', staffId);
-        final ids = (data as List)
-            .map((e) => e['service_id'].toString())
-            .toSet();
-        if (mounted) setState(() => _selectedServiceIds = ids);
+        try {
+          final data = await Supabase.instance.client
+              .from('staff_services')
+              .select('service_id')
+              .eq('staff_id', staffId);
+          final ids = (data as List)
+              .map((e) => e['service_id'].toString())
+              .toSet();
+          if (mounted) setState(() => _selectedServiceIds = ids);
+        } catch (e) {
+          if (_isMissingTable(e, 'staff_services')) {
+            debugPrint(
+              'staff_services no existe en esta base; se omite carga de servicios por terapeuta.',
+            );
+          } else {
+            rethrow;
+          }
+        }
       }
     } catch (e) {
       debugPrint('Error cargando staff_services: $e');
@@ -3818,6 +4377,96 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
       c.dispose();
     }
     super.dispose();
+  }
+
+  String? _extractMissingStaffColumn(Object error) {
+    if (error is! PostgrestException) return null;
+    final message = error.message;
+    final match = RegExp(r"Could not find the '([^']+)' column of 'staff'")
+        .firstMatch(message);
+    return match?.group(1);
+  }
+
+  bool _isMissingTable(Object error, String tableName) {
+    if (error is! PostgrestException) return false;
+    return error.message.contains("Could not find the table 'public.$tableName'");
+  }
+
+  Map<String, dynamic> _normalizedStaffPayload(Map<String, dynamic> payload) {
+    const requiredKeys = {
+      'name',
+      'role',
+      'active',
+      'phone',
+      'show_in_calendar',
+      'can_access_mobile',
+      'can_access_web',
+    };
+
+    final cleaned = <String, dynamic>{};
+    payload.forEach((key, value) {
+      if (value == null) {
+        if (requiredKeys.contains(key)) cleaned[key] = value;
+        return;
+      }
+      if (value is String) {
+        final trimmed = value.trim();
+        if (trimmed.isEmpty && !requiredKeys.contains(key)) return;
+        cleaned[key] = trimmed;
+        return;
+      }
+      if (value is List && value.isEmpty && !requiredKeys.contains(key)) {
+        return;
+      }
+      cleaned[key] = value;
+    });
+    return cleaned;
+  }
+
+  Future<Map<String, dynamic>> _insertStaffWithCompatiblePayload(
+    Map<String, dynamic> payload,
+  ) async {
+    final mutable = Map<String, dynamic>.from(_normalizedStaffPayload(payload));
+    while (true) {
+      try {
+        final res = await Supabase.instance.client
+            .from('staff')
+            .insert(mutable)
+            .select()
+            .single();
+        return Map<String, dynamic>.from(res);
+      } catch (error) {
+        final missingColumn = _extractMissingStaffColumn(error);
+        if (missingColumn == null || !mutable.containsKey(missingColumn)) rethrow;
+        mutable.remove(missingColumn);
+        debugPrint(
+          'Staff insert retry without unsupported column: $missingColumn',
+        );
+      }
+    }
+  }
+
+  Future<void> _updateStaffWithCompatiblePayload(
+    String staffId,
+    Map<String, dynamic> payload,
+  ) async {
+    final mutable = Map<String, dynamic>.from(_normalizedStaffPayload(payload));
+    while (true) {
+      try {
+        await Supabase.instance.client
+            .from('staff')
+            .update(mutable)
+            .eq('id', staffId);
+        return;
+      } catch (error) {
+        final missingColumn = _extractMissingStaffColumn(error);
+        if (missingColumn == null || !mutable.containsKey(missingColumn)) rethrow;
+        mutable.remove(missingColumn);
+        debugPrint(
+          'Staff update retry without unsupported column: $missingColumn',
+        );
+      }
+    }
   }
 
   Future<void> _save() async {
@@ -3854,13 +4503,18 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
     }
 
     try {
+      final accessEmail = _accessEmailCtrl.text.trim();
+      final contactEmail = _emailCtrl.text.trim().isNotEmpty
+          ? _emailCtrl.text.trim()
+          : (_canLogin ? accessEmail : '');
+
       final payload = {
         'name': _nameCtrl.text.trim(),
         'role': _role,
         'active': _active,
         'phone': _phoneCtrl.text.trim(),
         'whatsapp': _whatsappCtrl.text.trim(),
-        'email': _emailCtrl.text.trim(),
+        'email': contactEmail,
         'address': _addressCtrl.text.trim(),
         'city': _cityCtrl.text.trim(),
         'emergency_contact_name': _emergNameCtrl.text.trim(),
@@ -3875,35 +4529,39 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
         'payment_notes': _payNotesCtrl.text.trim(),
         'can_access_mobile': _canLogin,
         'can_access_web': _canLogin,
-        'access_email': _accessEmailCtrl.text.trim(),
       };
 
       String staffId = '';
       if (widget.staff == null) {
-        final res = await Supabase.instance.client
-            .from('staff')
-            .insert(payload)
-            .select()
-            .single();
+        final res = await _insertStaffWithCompatiblePayload(payload);
         staffId = res['id'].toString();
       } else {
         staffId = widget.staff!.id;
-        await Supabase.instance.client
-            .from('staff')
-            .update(payload)
-            .eq('id', staffId);
+        await _updateStaffWithCompatiblePayload(staffId, payload);
       }
 
       if (_role == 'therapist') {
-        await Supabase.instance.client
-            .from('staff_services')
-            .delete()
-            .eq('staff_id', staffId);
-        if (_selectedServiceIds.isNotEmpty) {
-          final inserts = _selectedServiceIds
-              .map((sid) => {'staff_id': staffId, 'service_id': sid})
-              .toList();
-          await Supabase.instance.client.from('staff_services').insert(inserts);
+        try {
+          await Supabase.instance.client
+              .from('staff_services')
+              .delete()
+              .eq('staff_id', staffId);
+          if (_selectedServiceIds.isNotEmpty) {
+            final inserts = _selectedServiceIds
+                .map((sid) => {'staff_id': staffId, 'service_id': sid})
+                .toList();
+            await Supabase.instance.client
+                .from('staff_services')
+                .insert(inserts);
+          }
+        } catch (e) {
+          if (_isMissingTable(e, 'staff_services')) {
+            debugPrint(
+              'staff_services no existe en esta base; se omite sincronizacion de servicios del terapeuta.',
+            );
+          } else {
+            rethrow;
+          }
         }
       }
 
