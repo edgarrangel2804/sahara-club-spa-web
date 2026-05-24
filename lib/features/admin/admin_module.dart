@@ -6071,23 +6071,46 @@ class _WhatsAppMetaSetupState extends State<_WhatsAppMetaSetup> {
         'send_whatsapp_test_message',
         body: {'phone': _testPhoneCtrl.text.trim()},
       );
-      final payload = Map<String, dynamic>.from(response.data as Map);
+      final payload = response.data is Map
+          ? Map<String, dynamic>.from(response.data as Map)
+          : <String, dynamic>{};
+      final ok = payload['ok'] == true;
+      final noWindow = payload['no_window'] == true;
+      final wamid = payload['wamid']?.toString();
+      final metaErr = payload['meta_error'] is Map
+          ? Map<String, dynamic>.from(payload['meta_error'] as Map)
+          : null;
+
+      String msg;
+      Color color;
+      if (ok) {
+        msg = 'Mensaje enviado ✓ wamid=${wamid ?? "—"} (${payload['elapsed_ms'] ?? "?"} ms). '
+            'Verifica entrega en el dashboard.';
+        color = const Color(0xFF1A9E65);
+      } else if (noWindow) {
+        msg = (payload['error'] as String?) ??
+            'No hay ventana de 24h activa. El cliente debe escribir primero.';
+        color = const Color(0xFFC68A17);
+      } else {
+        final code = metaErr?['code'];
+        final detail = metaErr?['message'] ?? payload['error'] ?? 'desconocido';
+        msg = 'Fallo Meta: $detail (code ${code ?? "n/a"})';
+        color = const Color(0xFFB32D2D);
+      }
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            payload['message'] as String? ?? 'Mensaje de prueba enviado.',
-          ),
-          backgroundColor: const Color(0xFF1A9E65),
+          content: Text(msg),
+          backgroundColor: color,
+          duration: const Duration(seconds: 8),
         ),
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'No se pudo enviar el mensaje de prueba. Verifica el numero y la conexion.',
-          ),
+        SnackBar(
+          content: Text('Error de red al enviar prueba: $e'),
           backgroundColor: SaharaTheme.rojoCoral,
         ),
       );
