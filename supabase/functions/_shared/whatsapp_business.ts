@@ -1,6 +1,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 export const DEFAULT_BRANCH_ID = "11111111-1111-1111-1111-111111111111"
+export const META_GRAPH_API_VERSION = "v21.0"
+export const META_GRAPH_BASE_URL = `https://graph.facebook.com/${META_GRAPH_API_VERSION}`
 
 export const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -27,6 +29,12 @@ export type BusinessWhatsAppRow = {
   last_validated_at: string | null
   created_at: string
   updated_at: string
+  environment: string
+  is_sandbox: boolean
+  webhook_status: string
+  webhook_last_event_at: string | null
+  webhook_last_verified_at: string | null
+  webhook_last_error: string | null
 }
 
 export function createAdminClient() {
@@ -199,6 +207,13 @@ export function sanitizeSettings(row: BusinessWhatsAppRow | null) {
       updated_at: null,
       has_access_token: false,
       has_app_secret: false,
+      environment: "sandbox",
+      is_sandbox: true,
+      webhook_status: "not_verified",
+      webhook_last_event_at: null,
+      webhook_last_verified_at: null,
+      webhook_last_error: null,
+      graph_api_version: META_GRAPH_API_VERSION,
     }
   }
 
@@ -220,6 +235,13 @@ export function sanitizeSettings(row: BusinessWhatsAppRow | null) {
     updated_at: row.updated_at,
     has_access_token: Boolean(row.access_token_encrypted),
     has_app_secret: Boolean(row.app_secret_encrypted),
+    environment: row.environment ?? "sandbox",
+    is_sandbox: row.is_sandbox ?? true,
+    webhook_status: row.webhook_status ?? "not_verified",
+    webhook_last_event_at: row.webhook_last_event_at ?? null,
+    webhook_last_verified_at: row.webhook_last_verified_at ?? null,
+    webhook_last_error: row.webhook_last_error ?? null,
+    graph_api_version: META_GRAPH_API_VERSION,
   }
 }
 
@@ -297,7 +319,7 @@ export async function callMetaApi<T>(
   accessToken: string,
   init?: RequestInit,
 ) {
-  const response = await fetch(`https://graph.facebook.com/v22.0/${path}`, {
+  const response = await fetch(`${META_GRAPH_BASE_URL}/${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${accessToken}`,

@@ -62,6 +62,9 @@ serve(async (req) => {
         ? maskSecret(appSecretInput)
         : current?.app_secret_masked ?? "",
       webhook_verify_token: String(body.webhook_verify_token ?? "").trim(),
+      environment: ["sandbox", "production"].includes(String(body.environment ?? "").trim())
+        ? String(body.environment).trim()
+        : (current?.environment ?? "sandbox"),
       connection_status: getConnectionStatusForDraft({
         phone_number_id: String(body.phone_number_id ?? "").trim(),
         whatsapp_business_account_id: String(body.whatsapp_business_account_id ?? "").trim(),

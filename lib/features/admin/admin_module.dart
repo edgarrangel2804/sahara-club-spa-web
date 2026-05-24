@@ -9,6 +9,8 @@ import '../productos/productos_module.dart';
 import '../../theme/sahara_theme.dart';
 import 'finanzas_module.dart';
 import 'reception_permissions_module.dart';
+import 'whatsapp_meta_templates_panel.dart';
+import 'whatsapp_queue_dashboard.dart';
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Models
@@ -204,6 +206,13 @@ class _BusinessWhatsAppSettings {
   final DateTime? lastValidatedAt;
   final bool hasAccessToken;
   final bool hasAppSecret;
+  final String environment;
+  final bool isSandbox;
+  final String webhookStatus;
+  final DateTime? webhookLastEventAt;
+  final DateTime? webhookLastVerifiedAt;
+  final String webhookLastError;
+  final String graphApiVersion;
 
   const _BusinessWhatsAppSettings({
     required this.id,
@@ -221,6 +230,13 @@ class _BusinessWhatsAppSettings {
     required this.lastValidatedAt,
     required this.hasAccessToken,
     required this.hasAppSecret,
+    required this.environment,
+    required this.isSandbox,
+    required this.webhookStatus,
+    required this.webhookLastEventAt,
+    required this.webhookLastVerifiedAt,
+    required this.webhookLastError,
+    required this.graphApiVersion,
   });
 
   factory _BusinessWhatsAppSettings.empty() => const _BusinessWhatsAppSettings(
@@ -239,6 +255,13 @@ class _BusinessWhatsAppSettings {
     lastValidatedAt: null,
     hasAccessToken: false,
     hasAppSecret: false,
+    environment: 'sandbox',
+    isSandbox: true,
+    webhookStatus: 'not_verified',
+    webhookLastEventAt: null,
+    webhookLastVerifiedAt: null,
+    webhookLastError: '',
+    graphApiVersion: 'v21.0',
   );
 
   factory _BusinessWhatsAppSettings.fromMap(Map<String, dynamic> m) =>
@@ -261,6 +284,17 @@ class _BusinessWhatsAppSettings {
             : DateTime.tryParse(m['last_validated_at'] as String),
         hasAccessToken: m['has_access_token'] as bool? ?? false,
         hasAppSecret: m['has_app_secret'] as bool? ?? false,
+        environment: m['environment'] as String? ?? 'sandbox',
+        isSandbox: m['is_sandbox'] as bool? ?? true,
+        webhookStatus: m['webhook_status'] as String? ?? 'not_verified',
+        webhookLastEventAt: m['webhook_last_event_at'] == null
+            ? null
+            : DateTime.tryParse(m['webhook_last_event_at'] as String),
+        webhookLastVerifiedAt: m['webhook_last_verified_at'] == null
+            ? null
+            : DateTime.tryParse(m['webhook_last_verified_at'] as String),
+        webhookLastError: m['webhook_last_error'] as String? ?? '',
+        graphApiVersion: m['graph_api_version'] as String? ?? 'v21.0',
       );
 }
 
@@ -5550,6 +5584,10 @@ class _SettingsTabState extends State<_SettingsTab> {
               const SizedBox(height: 24),
               _WhatsAppMetaSetup(onRefresh: widget.onRefresh),
               const SizedBox(height: 32),
+              const WhatsAppMetaTemplatesPanel(),
+              const SizedBox(height: 32),
+              const WhatsAppQueueDashboard(),
+              const SizedBox(height: 32),
               _StripeSetup(onRefresh: widget.onRefresh),
               const SizedBox(height: 32),
               kEnableMultiBranch
@@ -5845,6 +5883,7 @@ class _WhatsAppMetaSetupState extends State<_WhatsAppMetaSetup> {
   bool _showAppSecret = false;
   String? _accessTokenMask;
   String? _appSecretMask;
+  String _selectedEnvironment = 'sandbox';
   _BusinessWhatsAppSettings _settings = _BusinessWhatsAppSettings.empty();
 
   @override
@@ -5902,6 +5941,7 @@ class _WhatsAppMetaSetupState extends State<_WhatsAppMetaSetup> {
 
   void _applySettings(_BusinessWhatsAppSettings settings) {
     _settings = settings;
+    _selectedEnvironment = settings.environment;
     _businessNameCtrl.text = settings.businessName;
     _metaBusinessIdCtrl.text = settings.metaBusinessId;
     _wabaIdCtrl.text = settings.whatsappBusinessAccountId;
@@ -5935,6 +5975,7 @@ class _WhatsAppMetaSetupState extends State<_WhatsAppMetaSetup> {
           'app_id': _appIdCtrl.text.trim(),
           'app_secret': _appSecretCtrl.text.trim(),
           'webhook_verify_token': _verifyTokenCtrl.text.trim(),
+          'environment': _selectedEnvironment,
         },
       );
       final payload = Map<String, dynamic>.from(response.data as Map);
@@ -6079,6 +6120,167 @@ class _WhatsAppMetaSetupState extends State<_WhatsAppMetaSetup> {
       default:
         return Colors.black45;
     }
+  }
+
+  String _webhookStatusLabel(String status) {
+    switch (status) {
+      case 'verified':
+        return 'Verificado';
+      case 'error':
+        return 'Error';
+      default:
+        return 'No verificado';
+    }
+  }
+
+  Color _webhookStatusColor(String status) {
+    switch (status) {
+      case 'verified':
+        return const Color(0xFF1A9E65);
+      case 'error':
+        return const Color(0xFFB32D2D);
+      default:
+        return Colors.black45;
+    }
+  }
+
+  String get _webhookUrl {
+    // SupabaseClient no expone functionsUrl; lo derivamos del REST URL del proyecto:
+    // https://<ref>.supabase.co/rest/v1 -> https://<ref>.supabase.co/functions/v1/whatsapp-webhook
+    final restUrl = Supabase.instance.client.rest.url.toString();
+    final uri = Uri.parse(restUrl);
+    final base = '${uri.scheme}://${uri.host}';
+    return '$base/functions/v1/whatsapp-webhook';
+  }
+
+  Widget _envBadge(String env) {
+    final isProd = env == 'production';
+    final color = isProd ? const Color(0xFFB32D2D) : const Color(0xFFC68A17);
+    final label = isProd ? 'PRODUCCIÓN' : 'SANDBOX';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
+      child: Text(
+        label,
+        style: GoogleFonts.inter(
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          color: color,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEnvironmentSelector() {
+    return Row(
+      children: [
+        Expanded(
+          child: RadioListTile<String>(
+            value: 'sandbox',
+            groupValue: _selectedEnvironment,
+            onChanged: (v) => setState(() => _selectedEnvironment = v ?? 'sandbox'),
+            title: const Text('Sandbox (pruebas)'),
+            subtitle: const Text('Número de prueba de Meta. No envía a clientes reales.'),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+        Expanded(
+          child: RadioListTile<String>(
+            value: 'production',
+            groupValue: _selectedEnvironment,
+            onChanged: (v) => setState(() => _selectedEnvironment = v ?? 'sandbox'),
+            title: const Text('Producción'),
+            subtitle: const Text('Número real verificado. Envía a clientes finales.'),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWebhookPanel() {
+    final url = _webhookUrl;
+    final verified = _settings.webhookLastVerifiedAt;
+    final lastEvent = _settings.webhookLastEventAt;
+    final err = _settings.webhookLastError;
+    final color = _webhookStatusColor(_settings.webhookStatus);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.cable_outlined, color: color, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                'Webhook · ${_webhookStatusLabel(_settings.webhookStatus)}',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: color,
+                ),
+              ),
+              const Spacer(),
+              _envBadge(_settings.environment),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SelectableText(
+            url,
+            style: GoogleFonts.firaCode(
+              fontSize: 12,
+              color: SaharaTheme.grisCarbon,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Pega esta URL en Meta › App › Webhooks › Callback URL. Usa el "Verify Token" configurado abajo.',
+            style: GoogleFonts.inter(fontSize: 11, color: Colors.black54),
+          ),
+          if (verified != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              'Última verificación challenge: $verified',
+              style: GoogleFonts.inter(fontSize: 11, color: Colors.black45),
+            ),
+          ],
+          if (lastEvent != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Último evento recibido: $lastEvent',
+              style: GoogleFonts.inter(fontSize: 11, color: Colors.black45),
+            ),
+          ],
+          if (err.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Último error: $err',
+              style: GoogleFonts.inter(
+                fontSize: 11,
+                color: const Color(0xFFB32D2D),
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
+          Text(
+            'Graph API: ${_settings.graphApiVersion}',
+            style: GoogleFonts.inter(fontSize: 11, color: Colors.black45),
+          ),
+        ],
+      ),
+    );
   }
 
   String _stepGuide(int step) {
@@ -6313,7 +6515,14 @@ class _WhatsAppMetaSetupState extends State<_WhatsAppMetaSetup> {
             style: GoogleFonts.inter(fontSize: 12, color: Colors.black45),
           ),
         ],
+        const SizedBox(height: 16),
+        _buildWebhookPanel(),
         const SizedBox(height: 20),
+        _wizardStep(
+          step: 0,
+          title: 'Entorno (sandbox / producción)',
+          child: _buildEnvironmentSelector(),
+        ),
         _wizardStep(
           step: 1,
           title: 'Datos de Meta Business',

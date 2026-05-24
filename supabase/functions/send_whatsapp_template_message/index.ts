@@ -1,14 +1,21 @@
 import {
   assertAdminRequest,
+  callMetaApi,
   corsHeaders,
   createAdminClient,
   DEFAULT_BRANCH_ID,
   jsonResponse,
   loadBusinessSettings,
   normalizePhone,
-  renderTemplate,
   sendMetaTextMessage,
 } from "../_shared/whatsapp_business.ts"
+import {
+  bodyParamsForTemplateKey,
+  buildMetaTemplatePayload,
+  isWithinCustomerServiceWindow,
+  resolveTemplateForEvent,
+  sendMetaTemplate,
+} from "../_shared/meta_templates.ts"
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -28,26 +35,18 @@ serve(async (req) => {
       )
     }
 
-    let templateQuery = supabase
-      .from("whatsapp_templates")
-      .select("id, template_name, message_body, trigger_event")
-      .limit(1)
-
-    if (body.template_id) {
-      templateQuery = templateQuery.eq("id", String(body.template_id))
-    } else {
-      templateQuery = templateQuery
-        .eq("trigger_event", String(body.event_type ?? body.eventType ?? ""))
-        .eq("is_active", true)
-        .eq("branch_id", DEFAULT_BRANCH_ID)
-    }
-
-    const { data: template, error: templateError } = await templateQuery.maybeSingle()
-    if (templateError) throw templateError
+    const eventType = String(body.event_type ?? body.eventType ?? "")
+    const template = await resolveTemplateForEvent(
+      supabase,
+      eventType,
+      DEFAULT_BRANCH_ID,
+      body.template_id ?? body.templateId ?? null,
+    )
     if (!template) {
-      return jsonResponse({ error: "No se encontro una plantilla activa." }, 404)
+      return jsonResponse({ error: "No se encontro plantilla para el evento." }, 404)
     }
 
+    // Construye contexto (vars dinámicas) usando build_whatsapp_context si hay reservation_id
     let vars = (body.payload ?? {}) as Record<string, unknown>
     if (body.reservation_id || body.reservationId) {
       const { data, error } = await supabase.rpc("build_whatsapp_context", {
@@ -58,63 +57,102 @@ serve(async (req) => {
       vars = (data ?? {}) as Record<string, unknown>
     }
 
-    const rendered = renderTemplate(String(template.message_body ?? ""), vars)
-    const targetPhone = normalizePhone(
-      String(body.phone ?? vars.telefono ?? ""),
-    )
-
+    const targetPhone = normalizePhone(String(body.phone ?? vars.telefono ?? ""))
     if (!targetPhone) {
-      return jsonResponse(
-        { error: "No se encontro un telefono de destino para el envio." },
-        400,
+      return jsonResponse({ error: "No se encontro telefono destino." }, 400)
+    }
+
+    const bodyParams = Array.isArray(body.body_params)
+      ? (body.body_params as string[])
+      : bodyParamsForTemplateKey(template.template_key, vars)
+
+    const allowFreeText = body.allow_free_text === true
+    const withinWindow = await isWithinCustomerServiceWindow(supabase, targetPhone)
+
+    let metaResponse
+    let payloadSent: Record<string, unknown>
+    let windowType: "template" | "free_text_within_24h"
+
+    if (allowFreeText && withinWindow) {
+      // Camino libre solo si admin pidió explícitamente Y hay ventana 24h activa.
+      const rendered = String(body.message ?? template.message_body ?? "")
+      windowType = "free_text_within_24h"
+      payloadSent = {
+        messaging_product: "whatsapp",
+        to: targetPhone,
+        type: "text",
+        text: { body: rendered },
+      }
+      metaResponse = await sendMetaTextMessage(
+        settings.accessToken,
+        settings.row.phone_number_id,
+        targetPhone,
+        rendered,
+      )
+    } else {
+      // Camino oficial: template Meta aprobado.
+      const tmplPayload = buildMetaTemplatePayload(template, targetPhone, {
+        bodyParams,
+      })
+      payloadSent = tmplPayload as unknown as Record<string, unknown>
+      windowType = "template"
+      metaResponse = await sendMetaTemplate(
+        settings.accessToken,
+        settings.row.phone_number_id,
+        tmplPayload,
       )
     }
 
-    const response = await sendMetaTextMessage(
-      settings.accessToken,
-      settings.row.phone_number_id,
-      targetPhone,
-      rendered,
-    )
+    const metaErr = !metaResponse.ok
+      ? ((metaResponse.data as { error?: Record<string, unknown> })?.error ?? {})
+      : {}
+    const wamid = (metaResponse.data as { messages?: Array<{ id?: string }> })?.messages?.[0]?.id ?? null
 
-    const logPayload = {
+    await supabase.from("whatsapp_logs").insert({
       reservation_id: body.reservation_id ?? body.reservationId ?? null,
       customer_id: body.customer_id ?? body.customerId ?? null,
       template_id: template.id,
       phone: targetPhone,
-      message_rendered: rendered,
-      status: response.ok ? "sent" : "failed",
+      message_rendered: payloadSent?.template
+        ? `[template:${template.meta_template_name}] ${bodyParams.join(" | ")}`
+        : String((payloadSent as { text?: { body?: string } }).text?.body ?? ""),
+      status: metaResponse.ok ? "sent" : "failed",
       provider: "meta_cloud_api",
-      provider_response: response.data ?? {},
-      sent_at: response.ok ? new Date().toISOString() : null,
+      provider_response: { ...(metaResponse.data ?? {}), message_id: wamid },
+      payload_sent: payloadSent,
+      meta_template_name: template.meta_template_name,
+      meta_template_status: template.meta_template_status,
+      meta_language: template.meta_language,
+      meta_error_code: (metaErr as { code?: number })?.code ?? null,
+      meta_error_subcode: (metaErr as { error_subcode?: number })?.error_subcode ?? null,
+      meta_error_message: (metaErr as { message?: string })?.message ?? null,
+      window_type: windowType,
+      sent_at: metaResponse.ok ? new Date().toISOString() : null,
       created_at: new Date().toISOString(),
-      error_message: response.ok ? null : JSON.stringify(response.data),
-      event_type: body.event_type ?? body.eventType ?? template.trigger_event,
-      type: body.event_type ?? body.eventType ?? template.trigger_event,
-    }
+      error_message: metaResponse.ok ? null : JSON.stringify(metaResponse.data),
+      event_type: eventType || template.template_key,
+      type: eventType || template.template_key,
+    })
 
-    await supabase.from("whatsapp_logs").insert(logPayload)
-
-    if (!response.ok) {
-      console.error("send_whatsapp_template_message", response.data)
+    if (!metaResponse.ok) {
       return jsonResponse({
         ok: false,
-        message:
-          "Meta rechazo el mensaje. Revisa la conexion o el formato del telefono.",
+        meta_error: metaErr,
+        window_type: windowType,
       }, 400)
     }
 
     return jsonResponse({
       ok: true,
-      message: "Mensaje enviado correctamente.",
-      rendered,
-      phone: targetPhone,
-      provider_response: response.data,
+      window_type: windowType,
+      template: template.meta_template_name,
+      wamid,
+      meta: metaResponse.data,
     })
   } catch (error) {
     console.error("send_whatsapp_template_message", error)
     return jsonResponse(
-      { error: "No se pudo enviar el mensaje de plantilla." },
+      { error: (error as Error)?.message ?? "Error desconocido" },
       400,
     )
   }
@@ -123,3 +161,6 @@ serve(async (req) => {
 function serve(handler: (req: Request) => Promise<Response>) {
   return Deno.serve(handler)
 }
+
+// Re-export para uso interno opcional
+export { callMetaApi }

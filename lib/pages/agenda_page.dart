@@ -4972,6 +4972,12 @@ class _BookingDetailDialog extends StatelessWidget {
                       color: const Color(0xFF2088D8),
                       onTap: () => _updateStatus(context, 'checked_in'),
                     ),
+                  if (b.status == 'confirmed' || b.status == 'rescheduled')
+                    _DialogBtn(
+                      label: 'Reenviar WhatsApp',
+                      color: const Color(0xFF25D366),
+                      onTap: () => _resendWhatsAppConfirmation(context, b),
+                    ),
                   if (b.status == 'checked_in')
                     _DialogBtn(
                       label: 'Iniciar servicio',
@@ -5087,6 +5093,40 @@ class _BookingDetailDialog extends StatelessWidget {
         ScaffoldMessenger.of(ctx).showSnackBar(
           SnackBar(
             content: Text('Error: $e'),
+            backgroundColor: const Color(0xFF2A1010),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _resendWhatsAppConfirmation(BuildContext ctx, _Booking booking) async {
+    try {
+      final res = await Supabase.instance.client.rpc(
+        'whatsapp_resend_booking_confirmation',
+        params: {'p_booking_id': booking.id},
+      );
+      final map = Map<String, dynamic>.from(res as Map);
+      final ok = map['ok'] == true;
+      final pendingTemplate = map['pending_template'] == true;
+      final msg = (map['message'] ?? map['error'] ?? 'Acción ejecutada').toString();
+      if (!ctx.mounted) return;
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        SnackBar(
+          content: Text(msg),
+          backgroundColor: ok
+              ? const Color(0xFF1A9E65)
+              : pendingTemplate
+                  ? const Color(0xFFC68A17)
+                  : const Color(0xFFB32D2D),
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    } catch (e) {
+      if (ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(
+          SnackBar(
+            content: Text('Error al reenviar WhatsApp: $e'),
             backgroundColor: const Color(0xFF2A1010),
           ),
         );

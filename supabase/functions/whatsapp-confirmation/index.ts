@@ -1,139 +1,127 @@
+// Sahara Club Spa - Trigger Webhook DB → envío de "confirmación de cita"
+// Recibe payload de Supabase Database Webhook sobre tabla bookings.
+// Solo dispara cuando status pasa a 'confirmed'.
+// Usa templates Meta oficiales desde whatsapp_templates (Fase 2).
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import {
+  corsHeaders,
+  createAdminClient,
+  DEFAULT_BRANCH_ID,
+  loadBusinessSettings,
+  normalizePhone,
+} from "../_shared/whatsapp_business.ts"
+import {
+  bodyParamsForTemplateKey,
+  buildMetaTemplatePayload,
+  resolveTemplateForEvent,
+  sendMetaTemplate,
+} from "../_shared/meta_templates.ts"
 
-const DEFAULT_BRANCH_ID = "11111111-1111-1111-1111-111111111111"
-const DEFAULT_BRANCH_NAME = "Sahara Club Spa"
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    status,
+  })
 }
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders })
   }
 
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    const supabase = createAdminClient()
+    const payload = await req.json().catch(() => ({})) as {
+      record?: { id?: string; status?: string }
+      old_record?: { status?: string }
+    }
+    const record = payload.record ?? {}
+    const oldRecord = payload.old_record ?? {}
+
+    if (record.status !== "confirmed" || oldRecord.status === "confirmed") {
+      return jsonResponse({ message: "No action needed" })
+    }
+    if (!record.id) {
+      return jsonResponse({ error: "missing booking id" }, 400)
+    }
+
+    const settings = await loadBusinessSettings(supabase, DEFAULT_BRANCH_ID)
+    if (!settings || !settings.accessToken || !settings.row.phone_number_id) {
+      return jsonResponse({ error: "WhatsApp config missing" }, 200)
+    }
+
+    const template = await resolveTemplateForEvent(
+      supabase,
+      "reservation_confirmed",
+      DEFAULT_BRANCH_ID,
+      null,
     )
-
-    const payload = await req.json()
-    const { record, old_record } = payload
-
-    // 1. Validar que el estado cambió a 'confirmed'
-    if (record.status !== 'confirmed' || old_record?.status === 'confirmed') {
-      return new Response(JSON.stringify({ message: 'No action needed' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200,
-      })
+    if (!template) {
+      return jsonResponse({ error: "Template reservation_confirmed no existe" }, 200)
+    }
+    if (template.meta_template_status !== "approved" || !template.meta_template_name) {
+      return jsonResponse({
+        error: "Template reservation_confirmed no aprobado en Meta",
+        status: template.meta_template_status,
+      }, 200)
     }
 
-    // 2. OBTENER CONFIGURACIÓN DINÁMICA DE WHATSAPP
-    const { data: config, error: cError } = await supabase
-      .from('configuracion_sistema')
-      .select('whatsapp_access_token, whatsapp_phone_number_id')
-      .limit(1)
-      .single()
-
-    if (cError || !config?.whatsapp_access_token || !config?.whatsapp_phone_number_id) {
-      console.error('Configuración de WhatsApp incompleta o no encontrada');
-      return new Response(JSON.stringify({ error: 'WhatsApp config missing' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200, // No detenemos el flujo, pero no enviamos
-      })
-    }
-
-    // 3. Obtener datos completos de la reserva
-    const { data: booking, error: bError } = await supabase
-      .from('bookings')
-      .select(`
-        id,
-        booking_date,
-        booking_time,
-        client_record:clients(full_name, phone),
-        sucursales(nombre, direccion_completa)
-      `)
-      .eq('id', record.id)
-      .single()
-
-    if (bError || !booking) throw new Error('Error fetching booking data')
-
-    let branchName = booking.sucursales?.nombre || ''
-    let branchAddress = booking.sucursales?.direccion_completa || ''
-
-    if (!branchName || !branchAddress) {
-      const { data: defaultBranch } = await supabase
-        .from('sucursales')
-        .select('nombre, direccion_completa')
-        .eq('id', DEFAULT_BRANCH_ID)
-        .maybeSingle()
-
-      branchName = branchName || defaultBranch?.nombre || DEFAULT_BRANCH_NAME
-      branchAddress = branchAddress || defaultBranch?.direccion_completa || ''
-    }
-
-    const clientName = booking.client_record?.full_name || 'Cliente'
-    const clientPhone = (booking.client_record?.phone || '').replace(/\D/g, '')
-    
-    // 4. Formatear Fecha y Hora
-    const dateObj = new Date(booking.booking_date + 'T' + booking.booking_time)
-    const formattedDate = dateObj.toLocaleDateString('es-MX', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long',
+    // Reusa build_whatsapp_context para construir todas las variables del booking
+    const { data: ctx, error: ctxErr } = await supabase.rpc("build_whatsapp_context", {
+      p_reservation_id: record.id,
+      p_payload: {},
     })
-    const formattedTime = dateObj.toLocaleTimeString('es-MX', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    }).toUpperCase()
+    if (ctxErr) throw ctxErr
+    const vars = (ctx ?? {}) as Record<string, unknown>
 
-    // 5. Enviar a Meta WhatsApp API (Datos Dinámicos)
-    const waResponse = await fetch(
-      `https://graph.facebook.com/v17.0/${config.whatsapp_phone_number_id}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${config.whatsapp_access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messaging_product: "whatsapp",
-          to: clientPhone.length === 10 ? `52${clientPhone}` : clientPhone,
-          type: "template",
-          template: {
-            name: "confirmacion_cita_sucursal",
-            language: { code: "es_MX" },
-            components: [
-              {
-                type: "body",
-                parameters: [
-                  { type: "text", text: clientName },
-                  { type: "text", text: formattedDate },
-                  { type: "text", text: formattedTime },
-                  { type: "text", text: branchAddress || branchName },
-                ]
-              }
-            ]
-          }
-        })
-      }
+    const phone = normalizePhone(String(vars.telefono ?? ""))
+    if (!phone) return jsonResponse({ error: "Cliente sin telefono" }, 200)
+
+    const bodyParams = bodyParamsForTemplateKey(template.template_key, vars)
+    const tmplPayload = buildMetaTemplatePayload(template, phone, { bodyParams })
+    const res = await sendMetaTemplate(
+      settings.accessToken,
+      settings.row.phone_number_id,
+      tmplPayload,
     )
+    const wamid = (res.data as { messages?: Array<{ id?: string }> })?.messages?.[0]?.id ?? null
+    const metaErr = !res.ok
+      ? ((res.data as { error?: Record<string, unknown> })?.error ?? {})
+      : {}
 
-    const waData = await waResponse.json()
-
-    return new Response(JSON.stringify({ success: true, waData }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
+    await supabase.from("whatsapp_logs").insert({
+      booking_id: record.id,
+      reservation_id: record.id,
+      template_id: template.id,
+      phone,
+      message_rendered: `[template:${template.meta_template_name}] ${bodyParams.join(" | ")}`,
+      status: res.ok ? "sent" : "failed",
+      provider: "meta_cloud_api",
+      provider_response: { ...(res.data ?? {}), message_id: wamid },
+      payload_sent: tmplPayload,
+      meta_template_name: template.meta_template_name,
+      meta_template_status: template.meta_template_status,
+      meta_language: template.meta_language,
+      meta_error_code: (metaErr as { code?: number })?.code ?? null,
+      meta_error_subcode: (metaErr as { error_subcode?: number })?.error_subcode ?? null,
+      meta_error_message: (metaErr as { message?: string })?.message ?? null,
+      window_type: "template",
+      sent_at: res.ok ? new Date().toISOString() : null,
+      created_at: new Date().toISOString(),
+      error_message: res.ok ? null : JSON.stringify(res.data),
+      event_type: "reservation_confirmed",
+      type: "reservation_confirmed",
     })
 
+    return jsonResponse({
+      ok: res.ok,
+      wamid,
+      template: template.meta_template_name,
+      meta: res.data,
+    }, res.ok ? 200 : 400)
   } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 400,
-    })
+    console.error("whatsapp-confirmation", error)
+    return jsonResponse({ error: (error as Error)?.message ?? String(error) }, 400)
   }
 })
