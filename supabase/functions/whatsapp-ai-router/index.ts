@@ -255,7 +255,322 @@ async function execTool(name: string, input: Record<string, unknown>) {
 }
 
 // ---------------------------------------------------------------------------
-// System prompt
+// Admin tools (READ-ONLY) - solo accesibles para números en ai_admin_numbers
+// ---------------------------------------------------------------------------
+const ADMIN_TOOLS = [
+  {
+    name: "get_today_summary",
+    description: "Resumen operativo de HOY (zona Tijuana): total citas, confirmadas, canceladas, pendientes, completadas, ingresos pagados.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "get_appointments_summary",
+    description: "Conteo de citas por status para una fecha específica (YYYY-MM-DD, hora Tijuana).",
+    input_schema: {
+      type: "object",
+      properties: { date: { type: "string" } },
+      required: ["date"],
+    },
+  },
+  {
+    name: "get_tomorrow_appointments",
+    description: "Lista compacta de las citas de MAÑANA (Tijuana): hora, servicio, terapeuta, status. NO devuelve nombre completo del cliente, solo inicial.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "get_pending_confirmations",
+    description: "Lista citas próximas 7 días que están en estado pending o scheduled (esperando confirmar).",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "get_revenue_summary",
+    description: "Ingresos pagados de una fecha específica: total y desglose por método de pago.",
+    input_schema: {
+      type: "object",
+      properties: { date: { type: "string" } },
+      required: ["date"],
+    },
+  },
+  {
+    name: "get_cancellations_summary",
+    description: "Cancelaciones de una fecha + porcentaje sobre el total de citas del día.",
+    input_schema: {
+      type: "object",
+      properties: { date: { type: "string" } },
+      required: ["date"],
+    },
+  },
+  {
+    name: "get_top_services",
+    description: "Top 5 servicios más reservados en un rango de fechas (date_from, date_to en YYYY-MM-DD).",
+    input_schema: {
+      type: "object",
+      properties: {
+        date_from: { type: "string" },
+        date_to: { type: "string" },
+      },
+      required: ["date_from", "date_to"],
+    },
+  },
+  {
+    name: "get_staff_schedule_summary",
+    description: "Citas por terapeuta para una fecha específica.",
+    input_schema: {
+      type: "object",
+      properties: { date: { type: "string" } },
+      required: ["date"],
+    },
+  },
+  {
+    name: "get_whatsapp_status_summary",
+    description: "Estado del canal WhatsApp últimas 24h: enviados, entregados, fallidos, en cola, dead-letter, latencia.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "get_ai_usage_summary",
+    description: "Métricas IA: conversaciones activas hoy, mensajes, costo USD, latencia promedio, escaladas a recepción.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "get_first_visit_clients_count",
+    description: "Cuántos clientes nuevos (primera visita) tuvimos en una fecha.",
+    input_schema: {
+      type: "object",
+      properties: { date: { type: "string" } },
+      required: ["date"],
+    },
+  },
+  {
+    name: "get_no_shows_summary",
+    description: "Citas que no se presentaron (no_show) en una fecha específica.",
+    input_schema: {
+      type: "object",
+      properties: { date: { type: "string" } },
+      required: ["date"],
+    },
+  },
+  {
+    name: "get_daily_operations_summary",
+    description: "Resumen extendido del día: citas + cancelaciones + ingresos + WhatsApp + IA en una sola llamada.",
+    input_schema: {
+      type: "object",
+      properties: { date: { type: "string" } },
+    },
+  },
+]
+
+function todayTjDate(): string {
+  return new Date(new Date().toLocaleString("en-US", { timeZone: "America/Tijuana" }))
+    .toISOString().slice(0, 10)
+}
+
+async function execAdminTool(name: string, input: Record<string, unknown>) {
+  switch (name) {
+    case "get_today_summary": {
+      const { data, error } = await supabase
+        .from("admin_today_summary").select().maybeSingle()
+      if (error) return { error: error.message }
+      return data ?? { error: "sin datos" }
+    }
+    case "get_appointments_summary": {
+      const date = String(input.date ?? todayTjDate())
+      const { data, error } = await supabase
+        .from("bookings").select("status").eq("booking_date", date)
+      if (error) return { error: error.message }
+      const counts: Record<string, number> = {}
+      for (const r of (data ?? []) as Array<{ status: string }>) {
+        counts[r.status] = (counts[r.status] ?? 0) + 1
+      }
+      return { date, total: data?.length ?? 0, by_status: counts }
+    }
+    case "get_tomorrow_appointments": {
+      const { data, error } = await supabase
+        .from("admin_tomorrow_appointments").select()
+      if (error) return { error: error.message }
+      return { count: data?.length ?? 0, appointments: data ?? [] }
+    }
+    case "get_pending_confirmations": {
+      const from = todayTjDate()
+      const toDate = new Date(new Date(from).getTime() + 7 * 86400000).toISOString().slice(0, 10)
+      const { data, error } = await supabase
+        .from("bookings")
+        .select("booking_date, booking_time, service_name, status")
+        .in("status", ["pending", "scheduled"])
+        .gte("booking_date", from)
+        .lte("booking_date", toDate)
+        .order("booking_date").order("booking_time")
+      if (error) return { error: error.message }
+      return { count: data?.length ?? 0, items: data ?? [], range: { from, to: toDate } }
+    }
+    case "get_revenue_summary": {
+      const date = String(input.date ?? todayTjDate())
+      const { data, error } = await supabase
+        .from("sales").select("total, payment_method, payment_status")
+        .gte("created_at", `${date}T00:00:00-07:00`)
+        .lt("created_at", `${date}T23:59:59-07:00`)
+        .eq("payment_status", "paid")
+      if (error) return { error: error.message }
+      const byMethod: Record<string, number> = {}
+      let total = 0
+      for (const r of (data ?? []) as Array<{ total: number; payment_method?: string }>) {
+        total += Number(r.total ?? 0)
+        const m = r.payment_method ?? "otro"
+        byMethod[m] = (byMethod[m] ?? 0) + Number(r.total ?? 0)
+      }
+      return { date, total_paid_mxn: total, by_method: byMethod, transactions: data?.length ?? 0 }
+    }
+    case "get_cancellations_summary": {
+      const date = String(input.date ?? todayTjDate())
+      const { data, error } = await supabase
+        .from("bookings").select("status").eq("booking_date", date)
+      if (error) return { error: error.message }
+      const total = data?.length ?? 0
+      const cancelled = (data ?? []).filter((r: { status: string }) => r.status === "cancelled").length
+      return {
+        date, total, cancelled,
+        cancellation_rate_pct: total > 0 ? Math.round((cancelled / total) * 1000) / 10 : 0,
+      }
+    }
+    case "get_top_services": {
+      const from = String(input.date_from ?? todayTjDate())
+      const to = String(input.date_to ?? todayTjDate())
+      const { data, error } = await supabase
+        .from("bookings").select("service_id, service_name")
+        .gte("booking_date", from).lte("booking_date", to)
+        .in("status", ["confirmed", "completed", "paid", "checked_in"])
+      if (error) return { error: error.message }
+      const counts: Record<string, { name: string; count: number }> = {}
+      for (const r of (data ?? []) as Array<{ service_id: string; service_name: string }>) {
+        const k = r.service_id ?? r.service_name ?? "desconocido"
+        if (!counts[k]) counts[k] = { name: r.service_name ?? "sin nombre", count: 0 }
+        counts[k].count += 1
+      }
+      const top5 = Object.values(counts).sort((a, b) => b.count - a.count).slice(0, 5)
+      return { range: { from, to }, top: top5 }
+    }
+    case "get_staff_schedule_summary": {
+      const date = String(input.date ?? todayTjDate())
+      const { data, error } = await supabase
+        .from("bookings").select("therapist_id")
+        .eq("booking_date", date)
+        .not("therapist_id", "is", null)
+      if (error) return { error: error.message }
+      const counts: Record<string, number> = {}
+      for (const r of (data ?? []) as Array<{ therapist_id: string }>) {
+        counts[r.therapist_id] = (counts[r.therapist_id] ?? 0) + 1
+      }
+      // Resolver nombres staff
+      const ids = Object.keys(counts)
+      if (ids.length === 0) return { date, by_therapist: [] }
+      const { data: staff } = await supabase
+        .from("staff").select("id, full_name").in("id", ids)
+      const result = (staff ?? []).map((s: { id: string; full_name: string }) => ({
+        therapist: s.full_name, count: counts[s.id] ?? 0,
+      })).sort((a, b) => b.count - a.count)
+      return { date, by_therapist: result }
+    }
+    case "get_whatsapp_status_summary": {
+      const { data, error } = await supabase
+        .from("whatsapp_metrics_24h").select().maybeSingle()
+      if (error) return { error: error.message }
+      return data ?? { error: "sin métricas" }
+    }
+    case "get_ai_usage_summary": {
+      const { data, error } = await supabase
+        .from("ai_metrics_dashboard").select().maybeSingle()
+      if (error) return { error: error.message }
+      return data ?? { error: "sin métricas" }
+    }
+    case "get_first_visit_clients_count": {
+      const date = String(input.date ?? todayTjDate())
+      const { data, error } = await supabase
+        .from("clients").select("id, created_at")
+        .gte("created_at", `${date}T00:00:00-07:00`)
+        .lt("created_at", `${date}T23:59:59-07:00`)
+      if (error) return { error: error.message }
+      return { date, new_clients: data?.length ?? 0 }
+    }
+    case "get_no_shows_summary": {
+      const date = String(input.date ?? todayTjDate())
+      const { data, error } = await supabase
+        .from("bookings").select("status").eq("booking_date", date)
+      if (error) return { error: error.message }
+      const noShows = (data ?? []).filter((r: { status: string }) => r.status === "no_show").length
+      return { date, no_shows: noShows, total: data?.length ?? 0 }
+    }
+    case "get_daily_operations_summary": {
+      // Composición de varias vistas para un overview completo
+      const date = String(input.date ?? todayTjDate())
+      const [today, wa, ai] = await Promise.all([
+        supabase.from("admin_today_summary").select().maybeSingle(),
+        supabase.from("whatsapp_metrics_24h").select().maybeSingle(),
+        supabase.from("ai_metrics_dashboard").select().maybeSingle(),
+      ])
+      return {
+        date,
+        bookings: today.data ?? {},
+        whatsapp: wa.data ?? {},
+        ai: ai.data ?? {},
+      }
+    }
+    default:
+      return { error: `admin tool desconocida: ${name}` }
+  }
+}
+
+function buildAdminSystemPrompt() {
+  const days = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"]
+  const tjNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Tijuana" }))
+  const tjDate = tjNow.toISOString().slice(0, 10)
+  const tjTime = tjNow.toTimeString().slice(0, 5)
+  const tjWeekday = days[tjNow.getDay()]
+  const tjTomorrowDate = new Date(tjNow.getTime() + 86400000).toISOString().slice(0, 10)
+  const tjTomorrowName = days[(tjNow.getDay() + 1) % 7]
+
+  return `Eres Sahara, asistente del ADMINISTRADOR de Sahara Club Spa.
+Este usuario es admin autorizado y puede consultarte resúmenes operativos por WhatsApp.
+
+REGLAS DURAS (admin):
+1. Solo LECTURA. Nunca creas, modificas ni cancelas nada.
+2. NUNCA reveles nombres completos, teléfonos, emails ni detalles personales
+   de clientes. Solo conteos, agregados, iniciales.
+3. Si admin pide "cancela X", "modifica X", "elimina X", "cambia pago", "edita",
+   responde: "Por seguridad, solo lecturas por WhatsApp. Acciones en el panel admin."
+4. Si admin pide datos personales (teléfono, email, dirección, notas privadas):
+   "Por seguridad, solo puedo darte un resumen general. Revisa el panel admin para detalles."
+5. NUNCA inventes números. Si una tool falla o devuelve vacío, dilo: "No hay datos para esa consulta."
+6. Tono ejecutivo, conciso, formato bullet list para WhatsApp.
+7. Máximo 6 líneas por respuesta.
+8. Fechas SIEMPRE en America/Tijuana usando tools.
+
+FORMATO RECOMENDADO:
+"📊 Resumen [periodo]:
+• Citas: N
+• Confirmadas: N
+• Canceladas: N
+• Ingresos: $N MXN"
+
+Usa máximo 1 emoji sutil por bullet o título: 📊 📅 💰 ⏰ ⚠️ 🤖 👥 🔝
+
+CONTEXTO TEMPORAL:
+- Zona horaria: America/Tijuana
+- Hoy es: ${tjWeekday} ${tjDate} (hora actual: ${tjTime})
+- Mañana es: ${tjTomorrowName} ${tjTomorrowDate}
+
+EJEMPLOS DE RESPUESTA:
+Pregunta: "Resumen de hoy"
+→ Llama get_today_summary, formatea como bullets, máximo 6 líneas.
+
+Pregunta: "Cancela la cita de las 4pm"
+→ "Por seguridad, solo lecturas por WhatsApp. Las cancelaciones se hacen desde la agenda en saharaclubspa.com."
+
+Pregunta: "Dame el teléfono de Rodrigo"
+→ "Por seguridad, solo puedo darte un resumen general. Revisa el panel admin para detalles."
+`
+}
+
+// ---------------------------------------------------------------------------
+// System prompt (customer)
 // ---------------------------------------------------------------------------
 function buildSystemPrompt(clientKnown: string | null) {
   // SIEMPRE en zona horaria del negocio
@@ -313,6 +628,7 @@ type AnthropicMessage = {
 async function callAnthropic(
   apiKey: string, model: string, system: string,
   messages: AnthropicMessage[], temperature: number, maxTokens: number,
+  tools: unknown[],
 ) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -323,7 +639,7 @@ async function callAnthropic(
     },
     body: JSON.stringify({
       model, max_tokens: maxTokens, temperature, system,
-      tools: TOOLS, messages,
+      tools, messages,
     }),
   })
   const json = await res.json()
@@ -382,12 +698,17 @@ Deno.serve(async (req) => {
       convId = created.id as string
     }
 
+    // Detectar modo admin temprano para marcar correctamente el mensaje user
+    const { data: isAdminEarly } = await supabase.rpc("is_ai_admin", { p_phone: phone })
+    const isAdminUser = Boolean(isAdminEarly)
+
     // Persistir mensaje user SIEMPRE (auditoría)
     await supabase.from("ai_messages").insert({
       conversation_id: convId,
       role: "user",
       content: messageText,
       wamid,
+      is_admin_query: isAdminUser,
     })
 
     // Guardrail centralizado vía can_ai_respond (revisa modo, piloto, pausa, horario,
@@ -448,12 +769,19 @@ Deno.serve(async (req) => {
     // Cargar API key Anthropic desde Vault
     const apiKey = await loadAnthropicKey()
 
-    // Identificar cliente (para system prompt)
+    // Modo admin ya resuelto al insertar user message
+    const isAdmin = isAdminUser
+    const activeTools = isAdmin ? [...TOOLS, ...ADMIN_TOOLS] : TOOLS
+
+    // Identificar cliente (para system prompt customer)
     const last10 = phone.replace(/\D/g, "").slice(-10)
-    const { data: client } = await supabase
-      .from("clients").select("full_name")
-      .ilike("phone", `%${last10}%`).limit(1).maybeSingle()
-    const system = buildSystemPrompt(client?.full_name ?? null)
+    const { data: client } = isAdmin
+      ? { data: null }
+      : await supabase.from("clients").select("full_name")
+          .ilike("phone", `%${last10}%`).limit(1).maybeSingle()
+    const system = isAdmin
+      ? buildAdminSystemPrompt()
+      : buildSystemPrompt(client?.full_name ?? null)
 
     // Cargar historia últimos 20 mensajes (excluyendo system)
     const { data: history } = await supabase
@@ -484,6 +812,7 @@ Deno.serve(async (req) => {
       const resp = await callAnthropic(
         apiKey, (settings.active_model || settings.llm_model), system, messages,
         settings.temperature, settings.max_output_tokens,
+        activeTools,
       )
       totalIn += resp.usage.input_tokens
       totalOut += resp.usage.output_tokens
@@ -512,12 +841,20 @@ Deno.serve(async (req) => {
       messages.push({ role: "assistant", content: resp.content })
 
       // Ejecutar tools y push tool_result
+      const adminToolNames = new Set(ADMIN_TOOLS.map((t) => t.name))
       const results: Array<Record<string, unknown>> = []
       for (const t of toolCalls) {
-        const out = await execTool(t.name, t.input)
+        const isAdminCall = adminToolNames.has(t.name)
+        // Hard block: si un número NO admin llama una admin tool (por seguridad belt-and-suspenders)
+        const out = isAdminCall && !isAdmin
+          ? { error: "tool_restricted_to_admin" }
+          : isAdminCall
+            ? await execAdminTool(t.name, t.input)
+            : await execTool(t.name, t.input)
         await supabase.from("ai_messages").insert({
           conversation_id: convId, role: "tool",
           tool_name: t.name, tool_input: t.input, tool_output: out,
+          is_admin_query: isAdmin,
         })
         results.push({
           type: "tool_result", tool_use_id: t.id,
@@ -540,10 +877,12 @@ Deno.serve(async (req) => {
       tokens_in: totalIn, tokens_out: totalOut,
       latency_ms: elapsed, llm_model: (settings.active_model || settings.llm_model),
       stop_reason: stopReason,
+      is_admin_query: isAdmin,
       tool_output: {
         server_now_utc: new Date().toISOString(),
         server_now_tijuana: tjNowIso,
         timezone: "America/Tijuana",
+        mode: isAdmin ? "admin" : "customer",
       },
     })
 

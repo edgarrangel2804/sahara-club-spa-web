@@ -19,16 +19,20 @@ class _Metrics {
   final String aiMode;
   final String activeModel;
   final List<String> allowedNumbers;
+  final List<String> adminNumbers;
   final bool pauseAll;
   final bool handoffPriority;
   final bool allowAfterHours;
   final num maxDailyCost;
+  final num maxAdminDailyCost;
+  final bool adminReportEnabled;
   final num costToday;
   final int activeConversations;
   final int userMessagesToday;
   final int assistantMessagesToday;
   final int? avgLatencyMs;
   final int escalatedTotal;
+  final int adminQueriesToday;
 
   _Metrics.fromMap(Map<String, dynamic> m)
       : aiEnabled = (m['ai_enabled'] as bool?) ?? false,
@@ -37,10 +41,15 @@ class _Metrics {
         allowedNumbers = ((m['allowed_test_numbers'] as List?) ?? [])
             .map((e) => e.toString())
             .toList(),
+        adminNumbers = ((m['ai_admin_numbers'] as List?) ?? [])
+            .map((e) => e.toString())
+            .toList(),
         pauseAll = (m['ai_pause_all_conversations'] as bool?) ?? false,
         handoffPriority = (m['handoff_human_priority'] as bool?) ?? true,
         allowAfterHours = (m['allow_after_hours_responses'] as bool?) ?? false,
         maxDailyCost = (m['max_daily_cost_usd'] as num?) ?? 25,
+        maxAdminDailyCost = (m['max_admin_daily_cost_usd'] as num?) ?? 5,
+        adminReportEnabled = (m['admin_daily_report_enabled'] as bool?) ?? false,
         costToday = (m['cost_today_usd'] as num?) ?? 0,
         activeConversations =
             (m['active_conversations_24h'] as num?)?.toInt() ?? 0,
@@ -48,7 +57,9 @@ class _Metrics {
         assistantMessagesToday =
             (m['assistant_messages_today'] as num?)?.toInt() ?? 0,
         avgLatencyMs = (m['avg_latency_ms_24h'] as num?)?.toInt(),
-        escalatedTotal = (m['escalated_total'] as num?)?.toInt() ?? 0;
+        escalatedTotal = (m['escalated_total'] as num?)?.toInt() ?? 0,
+        adminQueriesToday =
+            (m['admin_queries_today'] as num?)?.toInt() ?? 0;
 }
 
 class _AuditRow {
@@ -175,6 +186,49 @@ class _AiControlPanelState extends State<AiControlPanel> {
     if (_metrics == null) return;
     final next = _metrics!.allowedNumbers.where((x) => x != n).toList();
     await _updateField({'allowed_test_numbers': next});
+  }
+
+  Future<void> _addAdminNumber() async {
+    final ctrl = TextEditingController();
+    final phone = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Agregar número administrador'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: 'Ej. 6462882480'),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              '⚠ Los administradores pueden consultar datos internos del negocio por WhatsApp (resúmenes, ingresos, citas). No revela datos personales de clientes.',
+              style: TextStyle(fontSize: 11),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFB32D2D)),
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('Agregar admin'),
+          ),
+        ],
+      ),
+    );
+    if (phone == null || phone.isEmpty || _metrics == null) return;
+    final next = [..._metrics!.adminNumbers, phone];
+    await _updateField({'ai_admin_numbers': next});
+  }
+
+  Future<void> _removeAdminNumber(String n) async {
+    if (_metrics == null) return;
+    final next = _metrics!.adminNumbers.where((x) => x != n).toList();
+    await _updateField({'ai_admin_numbers': next});
   }
 
   // ----------------------------------------------------------- Render --------
@@ -478,6 +532,86 @@ class _AiControlPanelState extends State<AiControlPanel> {
                 'En modo PILOT solo estos números reciben respuesta de la IA. '
                 'En READ_ONLY responde a todos.',
                 style: GoogleFonts.inter(fontSize: 11, color: Colors.black54),
+              ),
+            ],
+          ),
+        ),
+
+        // ----- Números administradores (modo admin IA por WhatsApp)
+        _section(
+          title: 'Números administradores',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                margin: const EdgeInsets.only(bottom: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFB32D2D).withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: const Color(0xFFB32D2D).withValues(alpha: 0.25),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.shield_outlined,
+                        size: 18, color: Color(0xFFB32D2D)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Estos números pueden consultar datos internos del negocio '
+                        '(resúmenes, ingresos, citas) por WhatsApp. NO revela datos '
+                        'personales de clientes. Solo lectura.',
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          color: const Color(0xFF6B1F1F),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  ...m.adminNumbers.map((n) => Chip(
+                        avatar: const Icon(
+                          Icons.admin_panel_settings_outlined,
+                          size: 16,
+                          color: Color(0xFFB32D2D),
+                        ),
+                        label: Text(n),
+                        onDeleted: () => _removeAdminNumber(n),
+                        backgroundColor:
+                            const Color(0xFFB32D2D).withValues(alpha: 0.10),
+                      )),
+                  ActionChip(
+                    avatar: const Icon(Icons.add, size: 16),
+                    label: const Text('Agregar admin'),
+                    onPressed: _addAdminNumber,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Consultas admin hoy: ${m.adminQueriesToday}',
+                      style: GoogleFonts.inter(
+                        fontSize: 11, color: Colors.black54,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    'Cap admin: \$${m.maxAdminDailyCost.toStringAsFixed(2)} USD/día',
+                    style: GoogleFonts.inter(
+                      fontSize: 11, color: Colors.black54,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

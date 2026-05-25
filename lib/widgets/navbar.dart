@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../pages/reception_login_page.dart';
 import '../features/store/store_page.dart';
 import '../features/store/orders_page.dart';
-import '../services/whatsapp_link.dart';
 
 class Navbar extends StatefulWidget {
   final bool isScrolled;
@@ -98,8 +97,6 @@ class _NavbarState extends State<Navbar> {
                     _navItem("NOTICIAS", 3),
                     _navItem("CONTACTO", 4),
                     const SizedBox(width: 20),
-                    _conciergeButton(),
-                    const SizedBox(width: 12),
                     _storeButton(context),
                     const SizedBox(width: 12),
                     _ordersButton(context),
@@ -143,8 +140,6 @@ class _NavbarState extends State<Navbar> {
                 ],
               ),
               const SizedBox(height: 12),
-              _conciergeMobileButton(),
-              const SizedBox(height: 12),
               _receptionMobileButton(context),
             ],
           ),
@@ -176,54 +171,6 @@ class _NavbarState extends State<Navbar> {
 
   Widget _navItem(String text, int index) {
     return _NavbarItem(text: text, index: index, onTap: widget.onTap);
-  }
-
-  Widget _conciergeButton() {
-    return ElevatedButton(
-      style: ElevatedButton.styleFrom(
-        backgroundColor: const Color(0xFFC6A76A),
-        foregroundColor: Colors.black,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
-        elevation: 0,
-      ),
-      onPressed: () => SaharaWhatsApp.openWhatsApp(),
-      child: const Text(
-        'CONCIERGE RESERVAS',
-        style: TextStyle(
-          fontSize: 11,
-          letterSpacing: 2,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    );
-  }
-
-  Widget _conciergeMobileButton() {
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFFC6A76A),
-          foregroundColor: Colors.black,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
-          padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 14),
-          elevation: 0,
-        ),
-        onPressed: () {
-          _closeMenu();
-          SaharaWhatsApp.openWhatsApp();
-        },
-        child: const Text(
-          'CONCIERGE RESERVAS',
-          style: TextStyle(
-            fontSize: 11,
-            letterSpacing: 2,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
   }
 
   Widget _receptionButton(BuildContext context) {
