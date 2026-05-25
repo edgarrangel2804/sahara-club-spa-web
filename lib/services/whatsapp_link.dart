@@ -10,7 +10,7 @@ class SaharaWhatsApp {
 
   /// Mensaje por defecto que se precarga en el chat al abrir desde la landing.
   static const String defaultMessage =
-      'Hola, me gustaría recibir asesoría sobre los servicios de Sahara Club Spa ✨';
+      'Hola, me gustaría recibir información y reservar una experiencia en Sahara Club Spa ✨';
 
   /// Construye el URL wa.me con mensaje codificado.
   static Uri buildUri({String? message}) {

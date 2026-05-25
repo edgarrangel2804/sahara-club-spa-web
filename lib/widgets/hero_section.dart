@@ -54,7 +54,7 @@ class _HeroSectionState extends State<HeroSection> {
             : 'Bienvenido de vuelta a tu ritual.\nTu cuerpo recuerda como descansar.';
         final ctaText = hero?.ctaText.trim().isNotEmpty == true
             ? hero!.ctaText
-            : 'RESERVA TU RITUAL';
+            : 'CONCIERGE RESERVAS';
         final imageUrl = hero?.imageUrl.trim() ?? '';
 
         return LayoutBuilder(

@@ -179,30 +179,21 @@ class _NavbarState extends State<Navbar> {
   }
 
   Widget _conciergeButton() {
-    return GestureDetector(
-      onTap: () => SaharaWhatsApp.openWhatsApp(),
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: const Color(0xFF25D366).withValues(alpha: 0.14),
-          border: Border.all(color: const Color(0xFF25D366), width: 1),
-        ),
-        child: const Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.chat_outlined, color: Color(0xFF25D366), size: 16),
-            SizedBox(width: 8),
-            Text(
-              'CONCIERGE',
-              style: TextStyle(
-                color: Color(0xFF25D366),
-                fontSize: 11,
-                letterSpacing: 2,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
+    return ElevatedButton(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: const Color(0xFFC6A76A),
+        foregroundColor: Colors.black,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
+        elevation: 0,
+      ),
+      onPressed: () => SaharaWhatsApp.openWhatsApp(),
+      child: const Text(
+        'CONCIERGE RESERVAS',
+        style: TextStyle(
+          fontSize: 11,
+          letterSpacing: 2,
+          fontWeight: FontWeight.bold,
         ),
       ),
     );
@@ -211,21 +202,25 @@ class _NavbarState extends State<Navbar> {
   Widget _conciergeMobileButton() {
     return SizedBox(
       width: double.infinity,
-      child: ElevatedButton.icon(
+      child: ElevatedButton(
         style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF25D366),
-          foregroundColor: Colors.white,
+          backgroundColor: const Color(0xFFC6A76A),
+          foregroundColor: Colors.black,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
           padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 14),
+          elevation: 0,
         ),
         onPressed: () {
           _closeMenu();
           SaharaWhatsApp.openWhatsApp();
         },
-        icon: const Icon(Icons.chat_outlined, size: 18),
-        label: const Text(
-          'HABLAR POR WHATSAPP',
-          style: TextStyle(fontSize: 11, letterSpacing: 2, fontWeight: FontWeight.bold),
+        child: const Text(
+          'CONCIERGE RESERVAS',
+          style: TextStyle(
+            fontSize: 11,
+            letterSpacing: 2,
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ),
     );

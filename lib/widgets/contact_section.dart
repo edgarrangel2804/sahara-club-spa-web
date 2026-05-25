@@ -112,7 +112,7 @@ class _ContactSectionState extends State<ContactSection> {
         : 'Estamos en Ensenada, Baja California, listos para recibir tu cuerpo y devolverle la calma que merece.';
     final reserveText = item?.ctaText.isNotEmpty == true
         ? item!.ctaText
-        : 'RESERVA TU RITUAL';
+        : 'CONCIERGE RESERVAS';
     // Si el CMS no trae una URL válida (o pone "#contacto"), caemos a WhatsApp
     // para que el botón "RESERVAR" SIEMPRE haga algo útil.
     final rawCtaUrl = (item?.ctaUrl ?? '').trim();
