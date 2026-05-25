@@ -325,6 +325,29 @@ async function handlePost(req: Request) {
           raw_payload: message,
           error_message: null,
         })
+
+        // Invocación fire-and-forget al agente IA (solo mensajes tipo text)
+        if (messageType === "text" && fromPhone) {
+          const textBody =
+            (message.text as { body?: string } | undefined)?.body ?? ""
+          if (textBody) {
+            const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? ""
+            const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+            // No await: dejamos correr en background, Meta espera 200 rápido
+            fetch(`${supabaseUrl}/functions/v1/whatsapp-ai-router`, {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${serviceKey}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                phone: fromPhone,
+                message_text: textBody,
+                wamid: messageId,
+              }),
+            }).catch((err) => console.error("ai-router invoke failed", err))
+          }
+        }
       }
 
       // Si el value no trae ni messages ni statuses guardamos un evento "desconocido"
