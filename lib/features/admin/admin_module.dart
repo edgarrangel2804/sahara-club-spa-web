@@ -11,8 +11,7 @@ import 'finanzas_module.dart';
 import 'reception_permissions_module.dart';
 import 'whatsapp_meta_templates_panel.dart';
 import 'whatsapp_queue_dashboard.dart';
-import 'business_hours_panel.dart';
-import 'services_ai_fields_panel.dart';
+import 'knowledge_base_panel.dart';
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Models
@@ -5588,9 +5587,7 @@ class _SettingsTabState extends State<_SettingsTab> {
               const SizedBox(height: 32),
               const WhatsAppMetaTemplatesPanel(),
               const SizedBox(height: 32),
-              const BusinessHoursPanel(),
-              const SizedBox(height: 32),
-              const ServicesAiFieldsPanel(),
+              const KnowledgeBasePanel(),
               const SizedBox(height: 32),
               const WhatsAppQueueDashboard(),
               const SizedBox(height: 32),
