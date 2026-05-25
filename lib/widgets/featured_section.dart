@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../features/web_content/web_content_models.dart';
 import '../features/web_content/web_content_repository.dart';
+import '../services/whatsapp_link.dart';
 
 class FeaturedSection extends StatefulWidget {
   const FeaturedSection({super.key});
@@ -312,7 +313,13 @@ class _FeaturedSectionState extends State<FeaturedSection> {
                         onTap: () => _openCta(item.ctaUrl),
                       )
                     else
-                      const _HoverButton(label: 'RESERVAR'),
+                      _HoverButton(
+                        label: 'RESERVAR',
+                        onTap: () => SaharaWhatsApp.openWhatsApp(
+                          message:
+                              'Hola, me interesa reservar "${item.title}" en Sahara Club Spa ✨',
+                        ),
+                      ),
                   ],
                 ),
               ],

@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../features/web_content/web_content_models.dart';
 import '../features/web_content/web_content_repository.dart';
+import '../services/whatsapp_link.dart';
 
 class Footer extends StatefulWidget {
   const Footer({super.key});
@@ -350,8 +351,9 @@ class _FooterState extends State<Footer> {
 
   String _whatsAppUrl(String raw) {
     final digits = raw.replaceAll(RegExp(r'\D'), '');
-    if (digits.isEmpty) return 'https://wa.me/526461234567';
-    return 'https://wa.me/$digits';
+    if (digits.isEmpty) return SaharaWhatsApp.buildUri().toString();
+    final encoded = Uri.encodeComponent(SaharaWhatsApp.defaultMessage);
+    return 'https://wa.me/$digits?text=$encoded';
   }
 }
 

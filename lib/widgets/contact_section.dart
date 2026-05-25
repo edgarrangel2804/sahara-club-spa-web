@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../features/web_content/web_content_models.dart';
 import '../features/web_content/web_content_repository.dart';
+import '../services/whatsapp_link.dart';
 
 class ContactSection extends StatefulWidget {
   const ContactSection({super.key});
@@ -112,7 +113,14 @@ class _ContactSectionState extends State<ContactSection> {
     final reserveText = item?.ctaText.isNotEmpty == true
         ? item!.ctaText
         : 'RESERVA TU RITUAL';
-    final reserveUrl = item?.ctaUrl ?? '#contacto';
+    // Si el CMS no trae una URL válida (o pone "#contacto"), caemos a WhatsApp
+    // para que el botón "RESERVAR" SIEMPRE haga algo útil.
+    final rawCtaUrl = (item?.ctaUrl ?? '').trim();
+    final reserveUrl = (rawCtaUrl.isEmpty || rawCtaUrl.startsWith('#'))
+        ? SaharaWhatsApp.buildUri(
+            message: 'Hola, me gustaría reservar mi ritual en Sahara Club Spa ✨',
+          ).toString()
+        : rawCtaUrl;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -351,9 +359,12 @@ class _ContactSectionState extends State<ContactSection> {
   String _buildWhatsAppUrl(String raw) {
     final digits = raw.replaceAll(RegExp(r'\D'), '');
     if (digits.isEmpty) {
-      return 'https://wa.me/526461234567';
+      // Fallback al número real de Sahara con mensaje precargado.
+      return SaharaWhatsApp.buildUri().toString();
     }
-    return 'https://wa.me/$digits';
+    // Si el CMS define un teléfono, lo respetamos pero seguimos agregando el mensaje.
+    final encoded = Uri.encodeComponent(SaharaWhatsApp.defaultMessage);
+    return 'https://wa.me/$digits?text=$encoded';
   }
 }
 

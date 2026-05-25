@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../pages/reception_login_page.dart';
 import '../features/store/store_page.dart';
 import '../features/store/orders_page.dart';
+import '../services/whatsapp_link.dart';
 
 class Navbar extends StatefulWidget {
   final bool isScrolled;
@@ -97,6 +98,8 @@ class _NavbarState extends State<Navbar> {
                     _navItem("NOTICIAS", 3),
                     _navItem("CONTACTO", 4),
                     const SizedBox(width: 20),
+                    _conciergeButton(),
+                    const SizedBox(width: 12),
                     _storeButton(context),
                     const SizedBox(width: 12),
                     _ordersButton(context),
@@ -140,6 +143,8 @@ class _NavbarState extends State<Navbar> {
                 ],
               ),
               const SizedBox(height: 12),
+              _conciergeMobileButton(),
+              const SizedBox(height: 12),
               _receptionMobileButton(context),
             ],
           ),
@@ -171,6 +176,59 @@ class _NavbarState extends State<Navbar> {
 
   Widget _navItem(String text, int index) {
     return _NavbarItem(text: text, index: index, onTap: widget.onTap);
+  }
+
+  Widget _conciergeButton() {
+    return GestureDetector(
+      onTap: () => SaharaWhatsApp.openWhatsApp(),
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFF25D366).withValues(alpha: 0.14),
+          border: Border.all(color: const Color(0xFF25D366), width: 1),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.chat_outlined, color: Color(0xFF25D366), size: 16),
+            SizedBox(width: 8),
+            Text(
+              'CONCIERGE',
+              style: TextStyle(
+                color: Color(0xFF25D366),
+                fontSize: 11,
+                letterSpacing: 2,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _conciergeMobileButton() {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF25D366),
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
+          padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 14),
+        ),
+        onPressed: () {
+          _closeMenu();
+          SaharaWhatsApp.openWhatsApp();
+        },
+        icon: const Icon(Icons.chat_outlined, size: 18),
+        label: const Text(
+          'HABLAR POR WHATSAPP',
+          style: TextStyle(fontSize: 11, letterSpacing: 2, fontWeight: FontWeight.bold),
+        ),
+      ),
+    );
   }
 
   Widget _receptionButton(BuildContext context) {

@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../features/web_content/web_content_models.dart';
 import '../features/web_content/web_content_repository.dart';
+import '../services/whatsapp_link.dart';
 import 'hero_media_background.dart';
 
 class HeroSection extends StatefulWidget {
@@ -122,7 +123,10 @@ class _HeroSectionState extends State<HeroSection> {
                               isMobile: isMobile,
                               onTap: hero?.ctaUrl.trim().isNotEmpty == true
                                   ? () => _openCta(hero!.ctaUrl)
-                                  : null,
+                                  : () => SaharaWhatsApp.openWhatsApp(
+                                        message:
+                                            'Hola, me gustaría reservar mi ritual en Sahara Club Spa ✨',
+                                      ),
                             ),
                           ],
                         ),

@@ -10,6 +10,7 @@ import '../widgets/experience_section.dart';
 import '../widgets/featured_section.dart';
 import '../widgets/contact_section.dart';
 import '../widgets/footer.dart';
+import '../widgets/floating_whatsapp_button.dart';
 
 class LandingPage extends StatefulWidget {
   const LandingPage({super.key});
@@ -165,6 +166,9 @@ class _LandingPageState extends State<LandingPage> {
               }
             },
           ),
+
+          // ── WhatsApp flotante (visible siempre) ──────────────────────────
+          const FloatingWhatsAppButton(),
         ],
       ),
     );

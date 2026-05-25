@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../services/whatsapp_link.dart';
+
 class RitualCard extends StatelessWidget {
   final String title;
 
@@ -46,7 +48,9 @@ class RitualCard extends StatelessWidget {
           ),
           const SizedBox(height: 20),
           TextButton(
-            onPressed: () {},
+            onPressed: () => SaharaWhatsApp.openWhatsApp(
+              message: 'Hola, me interesa reservar el ritual "$title" en Sahara Club Spa ✨',
+            ),
             child: const Text("RESERVAR", style: TextStyle(color: Color(0xFFC6A76A), letterSpacing: 1)),
           )
         ],
