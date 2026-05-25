@@ -12,6 +12,7 @@ import 'reception_permissions_module.dart';
 import 'whatsapp_meta_templates_panel.dart';
 import 'whatsapp_queue_dashboard.dart';
 import 'knowledge_base_panel.dart';
+import 'ai_control_panel.dart';
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Models
@@ -5588,6 +5589,8 @@ class _SettingsTabState extends State<_SettingsTab> {
               const WhatsAppMetaTemplatesPanel(),
               const SizedBox(height: 32),
               const KnowledgeBasePanel(),
+              const SizedBox(height: 32),
+              const AiControlPanel(),
               const SizedBox(height: 32),
               const WhatsAppQueueDashboard(),
               const SizedBox(height: 32),

@@ -13,15 +13,21 @@ import {
 
 type Settings = {
   ai_enabled: boolean
+  ai_mode: "disabled" | "pilot" | "read_only" | "assisted"
   pilot_mode: boolean
   pilot_phones: string[]
+  allowed_test_numbers: string[]
   llm_model: string
+  active_model: string
   temperature: number
   max_output_tokens: number
   cost_per_million_input_usd: number
   cost_per_million_output_usd: number
   max_msgs_per_phone_24h: number
   max_tokens_per_conversation: number
+  ai_pause_all_conversations: boolean
+  handoff_human_priority: boolean
+  allow_after_hours_responses: boolean
 }
 
 const supabase = createClient(
@@ -312,14 +318,10 @@ Deno.serve(async (req) => {
 
     const settings = await loadSettings()
 
-    // Guardrail: solo responder a piloto si pilot_mode=true
-    const { data: shouldRespond } = await supabase.rpc("ai_should_respond", { p_phone: phone })
-    const allowed = Boolean(shouldRespond)
-
     // Resolver o crear conversación
     const { data: existing } = await supabase
       .from("ai_conversations")
-      .select("id, total_tokens_in, total_tokens_out, message_count")
+      .select("id, total_tokens_in, total_tokens_out, message_count, total_cost_usd")
       .eq("customer_phone", phone)
       .eq("status", "active")
       .order("last_message_at", { ascending: false })
@@ -335,14 +337,15 @@ Deno.serve(async (req) => {
         .insert({
           customer_phone: phone,
           branch_id: DEFAULT_BRANCH_ID,
-          llm_model: settings.llm_model,
+          llm_model: (settings as { active_model?: string; llm_model: string }).active_model
+            ?? (settings.active_model || settings.llm_model),
         })
         .select("id").single()
       if (cErr) throw cErr
       convId = created.id as string
     }
 
-    // Persistir mensaje user (siempre)
+    // Persistir mensaje user SIEMPRE (auditoría)
     await supabase.from("ai_messages").insert({
       conversation_id: convId,
       role: "user",
@@ -350,16 +353,25 @@ Deno.serve(async (req) => {
       wamid,
     })
 
+    // Guardrail centralizado vía can_ai_respond (revisa modo, piloto, pausa, horario,
+    // cap costo diario, recepción tiene control, cap msgs por conversación)
+    const { data: gate } = await supabase.rpc("can_ai_respond", {
+      p_phone: phone,
+      p_conversation_id: convId,
+    })
+    const allowed = (gate as { allowed?: boolean })?.allowed === true
+    const denyReason = (gate as { reason?: string })?.reason ?? "unknown"
+
     if (!allowed) {
-      // Modo "guardar pero no responder" para números fuera del piloto
       await supabase.from("ai_conversations")
-        .update({ last_message_at: new Date().toISOString(), status: "active" })
+        .update({ last_message_at: new Date().toISOString() })
         .eq("id", convId)
       return jsonResponse({
         skipped: true,
-        reason: settings.ai_enabled ? "phone_not_in_pilot" : "ai_globally_disabled",
+        reason: denyReason,
         conversation_id: convId,
         phone,
+        gate,
       })
     }
 
@@ -433,7 +445,7 @@ Deno.serve(async (req) => {
 
     for (let i = 0; i < 5; i++) {  // máx 5 iteraciones tool_use
       const resp = await callAnthropic(
-        apiKey, settings.llm_model, system, messages,
+        apiKey, (settings.active_model || settings.llm_model), system, messages,
         settings.temperature, settings.max_output_tokens,
       )
       totalIn += resp.usage.input_tokens
@@ -488,7 +500,7 @@ Deno.serve(async (req) => {
       conversation_id: convId, role: "assistant",
       content: finalText || "(sin respuesta)",
       tokens_in: totalIn, tokens_out: totalOut,
-      latency_ms: elapsed, llm_model: settings.llm_model,
+      latency_ms: elapsed, llm_model: (settings.active_model || settings.llm_model),
       stop_reason: stopReason,
     })
 
