@@ -326,26 +326,43 @@ async function handlePost(req: Request) {
           error_message: null,
         })
 
-        // Invocación fire-and-forget al agente IA (solo mensajes tipo text)
+        // Invocación al agente IA (solo mensajes tipo text).
+        // Usamos EdgeRuntime.waitUntil para que la function NO termine antes
+        // de que el fetch al router complete (problema clásico de Deno Edge).
         if (messageType === "text" && fromPhone) {
           const textBody =
             (message.text as { body?: string } | undefined)?.body ?? ""
           if (textBody) {
             const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? ""
             const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
-            // No await: dejamos correr en background, Meta espera 200 rápido
-            fetch(`${supabaseUrl}/functions/v1/whatsapp-ai-router`, {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${serviceKey}`,
-                "Content-Type": "application/json",
+            const routerCall = fetch(
+              `${supabaseUrl}/functions/v1/whatsapp-ai-router`,
+              {
+                method: "POST",
+                headers: {
+                  "Authorization": `Bearer ${serviceKey}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  phone: fromPhone,
+                  message_text: textBody,
+                  wamid: messageId,
+                }),
               },
-              body: JSON.stringify({
-                phone: fromPhone,
-                message_text: textBody,
-                wamid: messageId,
-              }),
-            }).catch((err) => console.error("ai-router invoke failed", err))
+            )
+              .then(async (r) => {
+                const body = await r.text().catch(() => "")
+                console.log(
+                  `ai-router invoked status=${r.status} phone=${fromPhone} body=${body.slice(0, 200)}`,
+                )
+              })
+              .catch((err) => console.error("ai-router invoke failed", err))
+
+            // @ts-ignore EdgeRuntime es global en Supabase Edge Functions
+            if (typeof EdgeRuntime !== "undefined" && typeof EdgeRuntime.waitUntil === "function") {
+              // @ts-ignore
+              EdgeRuntime.waitUntil(routerCall)
+            }
           }
         }
       }

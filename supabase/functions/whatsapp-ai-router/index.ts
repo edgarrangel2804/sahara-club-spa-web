@@ -157,21 +157,41 @@ async function execTool(name: string, input: Record<string, unknown>) {
       return data
     }
     case "get_business_hours": {
+      const days = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"]
+      // Calculamos today/tomorrow SIEMPRE en America/Tijuana (timezone del negocio)
+      const tjNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Tijuana" }))
+      const tjToday = tjNow.toISOString().slice(0, 10)
+      const tjTomorrow = new Date(tjNow.getTime() + 86400000).toISOString().slice(0, 10)
+      const todayName = days[tjNow.getDay()]
+      const tomorrowName = days[(tjNow.getDay() + 1) % 7]
+
       if (input.date) {
         const at = `${input.date}T12:00:00-07:00`
         const { data, error } = await supabase.rpc("is_business_open", {
           p_at: at, p_branch_id: DEFAULT_BRANCH_ID,
         })
         if (error) return { error: error.message }
-        return { date: input.date, ...data?.[0] }
+        return {
+          date: input.date,
+          ...((data?.[0]) ?? {}),
+          timezone: "America/Tijuana",
+          server_today_date: tjToday,
+          server_today_name: todayName,
+          server_tomorrow_date: tjTomorrow,
+          server_tomorrow_name: tomorrowName,
+        }
       }
       const { data, error } = await supabase
         .from("business_hours")
         .select("weekday, opens_at, closes_at, is_closed")
         .order("weekday")
       if (error) return { error: error.message }
-      const days = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"]
       return {
+        timezone: "America/Tijuana",
+        today_date: tjToday,
+        today_name: todayName,
+        tomorrow_date: tjTomorrow,
+        tomorrow_name: tomorrowName,
         weekly: (data ?? []).map((r: Record<string, unknown>) => ({
           day: days[r.weekday as number],
           ...r,
@@ -238,7 +258,15 @@ async function execTool(name: string, input: Record<string, unknown>) {
 // System prompt
 // ---------------------------------------------------------------------------
 function buildSystemPrompt(clientKnown: string | null) {
-  const now = new Date().toLocaleString("es-MX", { timeZone: "America/Tijuana" })
+  // SIEMPRE en zona horaria del negocio
+  const days = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"]
+  const tjNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Tijuana" }))
+  const tjDate = tjNow.toISOString().slice(0, 10)
+  const tjTime = tjNow.toTimeString().slice(0, 5)
+  const tjWeekday = days[tjNow.getDay()]
+  const tjTomorrowDate = new Date(tjNow.getTime() + 86400000).toISOString().slice(0, 10)
+  const tjTomorrowName = days[(tjNow.getDay() + 1) % 7]
+
   return `Eres Sahara, asistente virtual de Sahara Club Spa (spa de bienestar en Ensenada, BC).
 Tu rol: asesorar al cliente con información real del spa. Recepción confirma toda cita.
 
@@ -252,9 +280,18 @@ REGLAS DURAS (no negociables):
 7. Responde en español MX. Si el cliente escribe en inglés, responde en inglés.
 8. Si no puedes ayudar con datos disponibles: "Recepción te atenderá pronto por aquí mismo."
 
-CONTEXTO:
+REGLAS DE FECHAS (CRÍTICO):
+9. NUNCA calcules fechas manualmente. Usa EXCLUSIVAMENTE las fechas devueltas por las tools (campos today_date, today_name, tomorrow_date, tomorrow_name).
+10. Si el cliente dice "mañana", "hoy", "el lunes", etc → llama get_business_hours() PRIMERO y usa los campos server_today/tomorrow para resolver.
+11. Zona horaria oficial del negocio: America/Tijuana. Nunca uses otra.
+
+CONTEXTO TEMPORAL (provisto por el sistema, NO calcules, solo cita):
+- Zona horaria: America/Tijuana
+- Hoy es: ${tjWeekday} ${tjDate} (hora actual Tijuana: ${tjTime})
+- Mañana es: ${tjTomorrowName} ${tjTomorrowDate}
+
+CONTEXTO NEGOCIO:
 - Sahara Club Spa, Ensenada
-- Hora actual Tijuana: ${now}
 - Cliente conocido en sistema: ${clientKnown ?? "(desconocido, primera interacción)"}
 
 FLUJO TÍPICO:
@@ -495,13 +532,19 @@ Deno.serve(async (req) => {
       (totalIn / 1_000_000) * settings.cost_per_million_input_usd +
       (totalOut / 1_000_000) * settings.cost_per_million_output_usd
 
-    // Insertar respuesta del assistant
+    // Insertar respuesta del assistant + observabilidad fechas
+    const tjNowIso = new Date().toLocaleString("en-US", { timeZone: "America/Tijuana" })
     await supabase.from("ai_messages").insert({
       conversation_id: convId, role: "assistant",
       content: finalText || "(sin respuesta)",
       tokens_in: totalIn, tokens_out: totalOut,
       latency_ms: elapsed, llm_model: (settings.active_model || settings.llm_model),
       stop_reason: stopReason,
+      tool_output: {
+        server_now_utc: new Date().toISOString(),
+        server_now_tijuana: tjNowIso,
+        timezone: "America/Tijuana",
+      },
     })
 
     // Actualizar totales conversación
