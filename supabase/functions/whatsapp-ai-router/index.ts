@@ -42,6 +42,74 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
+// ---------------------------------------------------------------------------
+// Soft closings: cierre cálido sin consumir tokens del LLM.
+// Devuelve "soft_closing" | "ignore" | "normal"
+// ---------------------------------------------------------------------------
+function classifyShortMessage(rawText: string): "soft_closing" | "ignore" | "normal" {
+  const text = (rawText || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "") // sin acentos
+    .replace(/[¿¡!?.,;:]/g, "")      // sin signos
+    .trim()
+    .toLowerCase()
+
+  if (text.length === 0) return "ignore"
+
+  // Soft closings: agradecimientos / aceptaciones explícitas
+  const softClosings = new Set([
+    "gracias", "gracias!", "muchas gracias", "mil gracias",
+    "ok gracias", "okay gracias", "sale gracias",
+    "perfecto", "perfecto gracias", "excelente",
+    "muy bien", "muy bien gracias", "buenisimo", "buenisimo gracias",
+    "entendido", "entendido gracias",
+    "listo", "listo gracias",
+    "sale", "ok sale",
+    "genial", "genial gracias",
+  ])
+
+  // Quita emojis y trims múltiples espacios para matchear
+  const cleaned = text
+    .replace(/[\u{1F300}-\u{1FAFF}\u{1F000}-\u{1F02F}\u{2600}-\u{27BF}✨🌿💆‍♀️]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim()
+
+  if (softClosings.has(cleaned)) return "soft_closing"
+
+  // Ignorar (no responder)
+  // - Solo emojis
+  // - "ok" o "okay" pelado (sin gracias)
+  // - jajaja / hahaha / lol
+  // - Hasta 2 chars
+  const onlyEmojis = /^[\s\u{1F300}-\u{1FAFF}\u{1F000}-\u{1F02F}\u{2600}-\u{27BF}✨🌿💆‍♀️👍👌🙏❤️♥️💕😊😀😁]+$/u
+    .test(rawText.trim())
+  if (onlyEmojis) return "ignore"
+
+  if (cleaned === "ok" || cleaned === "okay" || cleaned === "k") return "ignore"
+  if (/^(ja|ha|je)+$/.test(cleaned)) return "ignore"
+  if (cleaned === "lol" || cleaned === "lmao") return "ignore"
+
+  return "normal"
+}
+
+// Pool de cierres cálidos. Variación por seed (no random puro para auditar).
+const SOFT_CLOSING_REPLIES: ReadonlyArray<string> = [
+  "Con mucho gusto ✨",
+  "Estoy para ayudarte cuando lo necesites ✨",
+  "Será un placer ayudarte 🌿",
+  "Cuando gustes, aquí estaré ✨",
+  "Que tengas excelente día ✨",
+  "Para servirte 🌿",
+  "Un placer 🌿",
+  "A la orden ✨",
+]
+
+function pickSoftClosing(seed: string): string {
+  let h = 0
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0
+  return SOFT_CLOSING_REPLIES[h % SOFT_CLOSING_REPLIES.length]
+}
+
 async function loadAnthropicKey(): Promise<string> {
   const { data, error } = await supabase.rpc("get_anthropic_api_key")
   if (error || !data) throw new Error("No se pudo leer anthropic_api_key del Vault")
@@ -710,6 +778,58 @@ Deno.serve(async (req) => {
       wamid,
       is_admin_query: isAdminUser,
     })
+
+    // Clasificación de mensaje corto (antes de gastar tokens en Anthropic)
+    const shortMsgKind = classifyShortMessage(messageText)
+
+    if (shortMsgKind === "ignore") {
+      await supabase.from("ai_conversations")
+        .update({ last_message_at: new Date().toISOString() })
+        .eq("id", convId)
+      return jsonResponse({
+        ok: true, conversation_id: convId,
+        skipped_short: true, kind: "ignore",
+        reason: "emoji_or_filler_no_reply",
+      })
+    }
+
+    if (shortMsgKind === "soft_closing") {
+      // Verifica que can_ai_respond no esté en pausa/disabled (admin bypass aplica igual)
+      const { data: gateSc } = await supabase.rpc("can_ai_respond", {
+        p_phone: phone, p_conversation_id: convId,
+      })
+      const allowedSc = (gateSc as { allowed?: boolean })?.allowed === true
+      if (!allowedSc) {
+        return jsonResponse({ skipped: true, reason: "soft_closing_gated", gate: gateSc })
+      }
+
+      const reply = pickSoftClosing(`${phone}:${new Date().toISOString().slice(0,10)}:${messageText}`)
+
+      // Insertar assistant directo, sin tokens LLM
+      await supabase.from("ai_messages").insert({
+        conversation_id: convId, role: "assistant",
+        content: reply,
+        tokens_in: 0, tokens_out: 0, latency_ms: 0,
+        llm_model: null,
+        stop_reason: "soft_closing",
+        is_admin_query: isAdminUser,
+        tool_output: { soft_closing_sent: true, mode: isAdminUser ? "admin" : "customer" },
+      })
+
+      await supabase.from("ai_conversations")
+        .update({
+          last_message_at: new Date().toISOString(),
+          message_count: (existing?.message_count ?? 0) + 2,
+        })
+        .eq("id", convId)
+
+      await sendTextToMeta(phone, reply)
+
+      return jsonResponse({
+        ok: true, conversation_id: convId,
+        reply, soft_closing_sent: true, tokens_in: 0, tokens_out: 0, cost_usd: 0,
+      })
+    }
 
     // Guardrail centralizado vía can_ai_respond (revisa modo, piloto, pausa, horario,
     // cap costo diario, recepción tiene control, cap msgs por conversación)
