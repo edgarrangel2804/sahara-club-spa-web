@@ -287,9 +287,24 @@ const TOOLS = [
     },
   },
   {
+    name: "check_availability_for_booking",
+    description:
+      "OBLIGATORIO antes de create_pending_booking. Verifica disponibilidad real del slot solicitado contra business_hours, días cerrados, schedule_blocks y bookings existentes (incluye pending_reception). Si está libre, available=true. Si NO está libre, devuelve suggested_slots con 3 alternativas reales del mismo día o de los siguientes días. NUNCA crees una pending_reception sin haber llamado primero esta tool y haber recibido available=true.",
+    input_schema: {
+      type: "object",
+      properties: {
+        service_id: { type: "string", description: "UUID del servicio (de list_services)" },
+        requested_date: { type: "string", description: "YYYY-MM-DD zona Tijuana" },
+        requested_time: { type: "string", description: "HH:MM 24h" },
+        duration_min: { type: "number", description: "Duración minutos (opcional, default servicio)" },
+      },
+      required: ["service_id", "requested_date", "requested_time"],
+    },
+  },
+  {
     name: "create_pending_booking",
     description:
-      "Crea una solicitud de reserva en la agenda real con status='pending_reception'. SOLO usa esta herramienta cuando ya tengas: servicio, fecha y hora explícitos del cliente, y haya intención clara de reservar. La recepción humana valida la disponibilidad real y confirma después. Es idempotente: si ya creaste una solicitud idéntica en los últimos 10 minutos, devuelve la misma sin duplicar.",
+      "Crea solicitud en agenda real con status='pending_reception'. SOLO usa esta tool DESPUÉS de check_availability_for_booking con available=true. La recepción valida y confirma después. Idempotente: dedup 10 min por cliente+servicio+fecha+hora.",
     input_schema: {
       type: "object",
       properties: {
@@ -445,6 +460,94 @@ async function execTool(
         note: "Read-only. Recepción confirma la disponibilidad final.",
       }
     }
+    case "check_availability_for_booking": {
+      const serviceId = String(input.service_id ?? "").trim()
+      const date = String(input.requested_date ?? "").trim()
+      const time = String(input.requested_time ?? "").trim()
+      if (!serviceId || !date || !time) {
+        return { error: "missing_service_or_datetime" }
+      }
+      const timeNorm = time.length === 5 ? `${time}:00` : time
+      const { data, error } = await supabase.rpc("check_availability_for_booking_from_ai", {
+        p_service_id: serviceId,
+        p_requested_date: date,
+        p_requested_time: timeNorm,
+        p_duration_min: input.duration_min ? Number(input.duration_min) : null,
+      })
+      if (error) return { error: error.message }
+      const result = (data ?? {}) as Record<string, unknown>
+      // 🔒 Si está disponible, encadenamos AUTOMÁTICAMENTE la creación del
+      // booking. Esto garantiza que si el cliente eligió fecha/hora libres,
+      // se crea sí o sí, aunque el modelo olvide llamar create_pending_booking.
+      // La idempotencia del RPC evita duplicados.
+      const phone = String(ctx.phone ?? "").trim()
+      if (result.available === true && phone) {
+        try {
+          const { data: created, error: createErr } = await supabase.rpc("create_pending_booking_from_ai", {
+            p_phone: phone,
+            p_client_name: String(ctx.clientName ?? ""),
+            p_service_id: serviceId,
+            p_booking_date: date,
+            p_booking_time: timeNorm,
+            p_duration_min: input.duration_min ? Number(input.duration_min) : null,
+            p_notes: "Solicitud creada por IA (auto-create al verificar disponibilidad)",
+            p_ai_conversation_id: ctx.conversationId ?? null,
+            p_ai_confidence_score: 0.9,
+          })
+          if (!createErr && created) {
+            const createdResult = created as Record<string, unknown>
+            result.booking_id = createdResult.booking_id
+            result.booking_created = createdResult.created
+            result.duplicate_prevented = createdResult.duplicate_prevented
+            result.status = createdResult.status
+            // Alerta interna a recepción solo si fue creado por primera vez
+            if (createdResult.created === true && createdResult.booking_id) {
+              try {
+                const { data: svc } = await supabase
+                  .from("services")
+                  .select("name")
+                  .eq("id", serviceId)
+                  .maybeSingle()
+                const serviceName = (svc as { name?: string } | null)?.name ?? "Servicio"
+                const customerName = String(ctx.clientName ?? "Cliente WhatsApp")
+                const alert = [
+                  "📅 *Nueva solicitud IA*",
+                  "",
+                  `*Cliente:* ${customerName}`,
+                  `*Teléfono:* ${phone}`,
+                  `*Servicio:* ${serviceName}`,
+                  `*Fecha:* ${date}`,
+                  `*Hora:* ${time}`,
+                  "",
+                  "Pendiente de validación en agenda Sahara.",
+                ].join("\n")
+                const { data: settingsRow } = await supabase
+                  .from("ai_settings")
+                  .select("human_backup_numbers, human_backup_enabled")
+                  .eq("id", 1)
+                  .maybeSingle()
+                const enabled = (settingsRow as { human_backup_enabled?: boolean } | null)?.human_backup_enabled === true
+                const targets = ((settingsRow as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
+                if (enabled && Array.isArray(targets)) {
+                  for (const target of targets) {
+                    try {
+                      await sendTextToMeta(normalizePhone(String(target)), alert)
+                    } catch (e) {
+                      console.warn("reception alert failed for", target, (e as Error).message)
+                    }
+                  }
+                }
+              } catch (e) {
+                console.warn("auto-create alert build failed:", (e as Error).message)
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("auto-create after available=true failed:", (e as Error).message)
+        }
+      }
+      return result
+    }
     case "create_pending_booking": {
       const phone = String(ctx.phone ?? "").trim()
       if (!phone) return { error: "phone_missing_from_context" }
@@ -456,6 +559,23 @@ async function execTool(
       }
       // Normalizar HH:MM → HH:MM:00 para tipo time
       const timeNorm = time.length === 5 ? `${time}:00` : time
+      // Safety net: re-verificar disponibilidad. La IA debió llamar
+      // check_availability_for_booking antes, pero validamos por si acaso.
+      const { data: availCheck } = await supabase.rpc("check_availability_for_booking_from_ai", {
+        p_service_id: serviceId,
+        p_requested_date: date,
+        p_requested_time: timeNorm,
+        p_duration_min: input.duration_min ? Number(input.duration_min) : null,
+      })
+      if (availCheck && (availCheck as { available?: boolean }).available !== true) {
+        return {
+          ok: false,
+          error: "slot_not_available",
+          reason: (availCheck as { reason?: string }).reason,
+          suggested_slots: (availCheck as { suggested_slots?: unknown[] }).suggested_slots ?? [],
+          note: "Slot ocupado o fuera de horario. Sugiere las alternativas al cliente.",
+        }
+      }
       const { data, error } = await supabase.rpc("create_pending_booking_from_ai", {
         p_phone: phone,
         p_client_name: String(input.client_name ?? ctx.clientName ?? ""),
@@ -907,13 +1027,16 @@ VOCABULARIO PERMITIDO (úsalo activamente):
 ✅ "pendiente de confirmación", "sujeto a validación"
 ✅ "te confirmará por aquí en breve"
 
-VOCABULARIO PROHIBIDO (mientras la IA hable, ANTES de confirmación de recepción):
-❌ "confirmada", "confirmado", "quedó", "apartado", "reservado", "está reservada"
-❌ "ya tienes tu cita", "listo, tu cita es..."
+VOCABULARIO PROHIBIDO:
+❌ "confirmada", "confirmado", "quedó confirmada", "apartado", "reservado"
+❌ "ya tienes tu cita confirmada", "listo, está confirmada"
 ❌ "entra a", "ve a la landing", "agenda en línea"
-Nota: "agendada" SÍ es permitida solo en mensajes de sistema/template oficial
-post-confirmación de recepción. La IA misma no debe decir "tu cita ya quedó
-agendada" porque eso es trabajo de recepción.
+
+VOCABULARIO PERMITIDO solo cuando create_pending_booking devuelve created=true:
+✅ "Registramos tu solicitud y ha sido agendada para [servicio]..."
+   (porque SÍ se creó un row real en la agenda con status pending_reception,
+    aunque no esté confirmada por recepción).
+   NO digas "tu cita está agendada y confirmada" — la confirmación es de recepción.
 
 EMOJIS PERMITIDOS:
 ✅ ✨  🌿  (úsalos con moderación, máximo 1 por mensaje)
@@ -926,38 +1049,76 @@ PASO 1 — Cliente pregunta por servicio o expresa interés:
   • Sugiere días/horarios aproximados (sin prometer).
   • Pregunta su preferencia.
 
-PASO 2 — Cliente elige día/hora específico (ej. "jueves 4pm"):
-  ACCIÓN OBLIGATORIA: llama la tool create_pending_booking con:
-    service_id = UUID del servicio elegido (del list_services anterior)
-    booking_date = YYYY-MM-DD (zona Tijuana, usa server_today/tomorrow)
-    booking_time = HH:MM en 24h (ej. 16:00 para 4pm)
-    duration_min = del servicio si lo conoces
-    notes = preferencias del cliente si las dijo
-    confidence = 0.85 si la intención es clara y completa, 0.6 si dudosa
+PASO 2 — Cliente elige día/hora específico (ej. "jueves 4pm") O elige
+  una de las alternativas que tú sugeriste antes:
+  OBLIGATORIO: llama check_availability_for_booking con:
+    service_id = UUID del servicio elegido (de list_services)
+    requested_date = YYYY-MM-DD (zona Tijuana, usa server_today/tomorrow)
+    requested_time = HH:MM 24h (ej. 16:00 para 4pm)
+    duration_min = duración del servicio si la conoces
 
-  El tool crea automáticamente una solicitud en la agenda real con
-  status='pending_reception' y alerta a recepción. Es idempotente: si el
-  cliente repite, NO duplica.
+  ESTA TOOL: si available=true, AUTOMÁTICAMENTE crea el booking y manda
+  alerta a recepción. NO necesitas llamar create_pending_booking aparte
+  (la tool ya lo hace internamente). Verás en el output: booking_created=true,
+  booking_id=<uuid>, status='pending_reception'.
 
-  Después de la tool, responde EXACTAMENTE así (adapta servicio/fecha/hora):
+  CASO A — available=true (booking creado automáticamente):
+    Responde EXACTAMENTE así (adapta servicio/duración/fecha/hora):
 
-  "Perfecto ✨
+    "Perfecto ✨
 
-  Registramos tu solicitud para:
-  • [Servicio]
-  • [Día, fecha]
-  • [Hora]
+    Registramos tu solicitud y ha sido agendada para [Servicio] ([N] minutos),
+    [día de la semana] [N] de [mes], a las [HH] horas.
 
-  Recepción validará disponibilidad y te confirmará por aquí en breve 🌿
+    Recepción validará disponibilidad y te confirmará por aquí en breve 🌿"
 
-  Los horarios están sujetos a validación de disponibilidad."
+    Si la tool devuelve duplicate_prevented=true, NO repitas el mensaje
+    largo: di "Ya registramos tu solicitud hace un momento ✨
+    Recepción validará y te confirmará por aquí en breve 🌿".
 
-  Si el tool devuelve duplicate_prevented=true, NO repitas el mensaje
-  largo; di: "Ya registramos tu solicitud hace un momento ✨ Recepción
-  validará disponibilidad y te confirmará por aquí en breve 🌿"
+  CASO B — available=false:
+    NO LLAMES create_pending_booking. Sugiere los suggested_slots devueltos
+    por check_availability_for_booking. Formato:
 
-  Si el tool devuelve error, di: "Tuvimos un problema registrando tu
-  solicitud. Recepción se pondrá en contacto contigo en breve."
+    "Ese horario ya no está disponible 🌿
+
+    Tengo estas opciones cercanas:
+    • [día] [hora]
+    • [día] [hora]
+    • [día] [hora]
+
+    ¿Cuál te gustaría que enviemos a recepción?"
+
+    Si reason='closed_day': "Ese día estamos cerrados. Tengo opciones para [día]:..."
+    Si reason='outside_business_hours': "Ese horario está fuera de nuestro
+    servicio (abrimos [opens_at] a [closes_at]). Te sugiero:..."
+    Si suggested_slots viene vacío: "No tengo horarios libres por ahora
+    en esa fecha. Recepción te ayudará a encontrar el mejor día 🌿"
+
+    🚨 REGLA ABSOLUTA — NO NEGOCIABLE:
+    Cuando el cliente elija una de las opciones que sugeriste (ej.
+    "mejor a las 11am", "la primera", "sí esa") DEBES en ese mismo turno:
+      (1) llamar check_availability_for_booking con la nueva hora
+      (2) llamar create_pending_booking con la nueva hora
+      (3) DESPUÉS responder al cliente con el wording "Registramos tu
+          solicitud y ha sido agendada para..."
+
+    PROHIBIDO ABSOLUTAMENTE escribir "Registramos tu solicitud" o "ha
+    sido agendada" en tu respuesta de texto SIN haber recibido un
+    tool_result de create_pending_booking con created=true en el MISMO
+    turno actual. Si lo haces, mientes al cliente: él cree que tiene
+    reserva pero recepción NO ve nada en la agenda real.
+
+    El historial NO cuenta. Si en un turno anterior llamaste la tool,
+    no significa que esta nueva elección ya esté creada. Cada nueva
+    elección requiere su propia llamada a create_pending_booking.
+
+  Si create_pending_booking devuelve error="slot_not_available" (significa
+  que cambió entre check y create), trata el suggested_slots devuelto como
+  CASO B y sugiere alternativas.
+
+  Si cualquier tool devuelve error inesperado: "Tuvimos un problema
+  registrando tu solicitud. Recepción se pondrá en contacto contigo en breve."
 
 PASO 3 — Cliente pregunta "¿ya quedó?", "¿ya está confirmada?", "¿ya está pagada?":
   Responde con calma:
@@ -998,7 +1159,13 @@ async function callAnthropic(
   apiKey: string, model: string, system: string,
   messages: AnthropicMessage[], temperature: number, maxTokens: number,
   tools: unknown[],
+  toolChoice?: Record<string, unknown>,
 ) {
+  const payload: Record<string, unknown> = {
+    model, max_tokens: maxTokens, temperature, system,
+    tools, messages,
+  }
+  if (toolChoice) payload.tool_choice = toolChoice
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -1006,10 +1173,7 @@ async function callAnthropic(
       "anthropic-version": "2023-06-01",
       "content-type": "application/json",
     },
-    body: JSON.stringify({
-      model, max_tokens: maxTokens, temperature, system,
-      tools, messages,
-    }),
+    body: JSON.stringify(payload),
   })
   const json = await res.json()
   if (!res.ok) throw new Error(`Anthropic ${res.status}: ${JSON.stringify(json)}`)
@@ -1237,20 +1401,73 @@ Deno.serve(async (req) => {
     // Cargar historia últimos 20 mensajes (excluyendo system)
     const { data: history } = await supabase
       .from("ai_messages")
-      .select("role, content, tool_name, tool_input, tool_output")
+      .select("role, content, tool_name, tool_input, tool_output, id")
       .eq("conversation_id", convId)
       .order("created_at", { ascending: true })
       .limit(40)
 
-    // Convertir historia a formato Anthropic
+    // Convertir historia a formato Anthropic. Inyectamos como CONTEXTO TEXTUAL
+    // los últimos tool_outputs relevantes (servicios, disponibilidad) en un
+    // pseudo-mensaje user, para que el modelo recuerde UUIDs y suggested_slots
+    // al volver al turno actual.
     const messages: AnthropicMessage[] = []
+    let lastToolContext = ""
     for (const m of (history ?? []) as Array<Record<string, unknown>>) {
+      if (m.role === "tool" && m.tool_output) {
+        const toolName = String(m.tool_name ?? "")
+        if (toolName === "list_services" || toolName === "check_availability_for_booking") {
+          try {
+            const snippet = JSON.stringify(m.tool_output).slice(0, 1500)
+            lastToolContext += `\n[Tool ${toolName} output: ${snippet}]`
+          } catch { /* skip */ }
+        }
+        continue
+      }
       if (m.role === "user") {
         messages.push({ role: "user", content: String(m.content ?? "") })
       } else if (m.role === "assistant" && m.content) {
         messages.push({ role: "assistant", content: String(m.content) })
       }
-      // Las llamadas de tool no se reconstruyen del historial: el LLM las verá si necesita
+    }
+    // Agrega el contexto de tool como referencia al final si existe
+    if (lastToolContext && messages.length > 0) {
+      const lastIdx = messages.length - 1
+      const last = messages[lastIdx]
+      if (last.role === "user" && typeof last.content === "string") {
+        messages[lastIdx] = {
+          role: "user",
+          content: `${last.content}\n\n---\nCONTEXTO DE TOOLS PREVIOS (datos reales que ya consultaste, úsalos si aplica):${lastToolContext}`,
+        }
+      }
+    }
+
+    // Detección: si la última respuesta del assistant en esta conversación
+    // sugirió alternativas de horario (tool check_availability_for_booking con
+    // available=false + suggested_slots), entonces el cliente probablemente
+    // está eligiendo una de esas opciones AHORA. Forzamos al modelo a usar
+    // la tool check_availability_for_booking en lugar de responder texto plano.
+    let forceToolChoice: Record<string, unknown> | undefined = undefined
+    if (!isAdmin) {
+      try {
+        const { data: lastTool } = await supabase
+          .from("ai_messages")
+          .select("tool_name, tool_output, created_at")
+          .eq("conversation_id", convId)
+          .eq("role", "tool")
+          .eq("tool_name", "check_availability_for_booking")
+          .order("created_at", { ascending: false })
+          .limit(1)
+        const recent = (lastTool ?? []) as Array<{ tool_output: Record<string, unknown> | null; created_at: string }>
+        if (recent.length > 0) {
+          const out = recent[0].tool_output as Record<string, unknown> | null
+          const slots = out && Array.isArray(out.suggested_slots) ? out.suggested_slots : []
+          if (out && out.available === false && slots.length > 0) {
+            forceToolChoice = { type: "tool", name: "check_availability_for_booking" }
+          }
+        }
+      } catch (e) {
+        console.warn("force tool detection failed:", (e as Error).message)
+      }
     }
 
     // Loop tool_use
@@ -1264,6 +1481,8 @@ Deno.serve(async (req) => {
         apiKey, (settings.active_model || settings.llm_model), system, messages,
         settings.temperature, settings.max_output_tokens,
         activeTools,
+        // Solo forzamos en la PRIMERA iteración; después dejamos al modelo libre
+        i === 0 ? forceToolChoice : undefined,
       )
       totalIn += resp.usage.input_tokens
       totalOut += resp.usage.output_tokens
