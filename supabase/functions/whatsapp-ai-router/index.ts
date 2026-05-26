@@ -60,12 +60,16 @@ function classifyShortMessage(rawText: string): "soft_closing" | "ignore" | "nor
   const softClosings = new Set([
     "gracias", "gracias!", "muchas gracias", "mil gracias",
     "ok gracias", "okay gracias", "sale gracias",
+    "ok muchas gracias", "okay muchas gracias", "ok mil gracias", "okay mil gracias",
     "perfecto", "perfecto gracias", "excelente",
+    "perfecto muchas gracias", "excelente gracias", "excelente muchas gracias",
     "muy bien", "muy bien gracias", "buenisimo", "buenisimo gracias",
     "entendido", "entendido gracias",
     "listo", "listo gracias",
     "sale", "ok sale",
     "genial", "genial gracias",
+    "a la orden", "de nada",
+    "todo bien", "todo bien gracias",
   ])
 
   // Quita emojis y trims múltiples espacios para matchear
@@ -1464,7 +1468,7 @@ Deno.serve(async (req) => {
     // Cap de tokens por conversación
     if ((existing?.total_tokens_in ?? 0) + (existing?.total_tokens_out ?? 0)
         > settings.max_tokens_per_conversation) {
-      const cap = "Esta conversación se atenderá ahora por recepción para darte mejor seguimiento."
+      const cap = "Recepción te dará seguimiento personal en breve ✨ Cualquier duda urgente, escríbenos directo. ¡Gracias por elegir Sahara! 🌿"
       await sendTextToMeta(phone, cap)
       await supabase.from("ai_messages").insert({
         conversation_id: convId, role: "assistant", content: cap,
