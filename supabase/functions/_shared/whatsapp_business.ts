@@ -161,9 +161,26 @@ export function maskSecret(value: string, keep = 4) {
   return `••••${tail}`
 }
 
+/**
+ * Normaliza teléfonos para WhatsApp Cloud API.
+ *
+ * REGLA MX (default): los celulares mexicanos requieren el prefijo "521"
+ * (52 = país + 1 = móvil). Si solo va "52" sin "1", Meta devuelve `accepted`
+ * pero algunos mensajes nunca se entregan (sin status callback).
+ *
+ * - 10 dígitos        → 521 + número  (asume MX celular)
+ * - 12 dígitos 52...  → 521 + últimos 10 (corrige falta del "1")
+ * - 13 dígitos 521... → tal cual
+ * - 11 dígitos 1...   → US/Canadá, tal cual (no agrega 52)
+ * - cualquier otro    → tal cual
+ */
 export function normalizePhone(phone: string) {
   const clean = (phone || "").replace(/\D/g, "")
-  if (clean.length === 10) return `52${clean}`
+  if (clean.length === 0) return clean
+  if (clean.length === 13 && clean.startsWith("521")) return clean
+  if (clean.length === 12 && clean.startsWith("52")) return `521${clean.slice(2)}`
+  if (clean.length === 10) return `521${clean}`
+  if (clean.length === 11 && clean.startsWith("1")) return clean
   return clean
 }
 

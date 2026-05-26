@@ -93,10 +93,11 @@ function classifyShortMessage(rawText: string): "soft_closing" | "ignore" | "nor
 }
 
 // Pool de cierres cálidos. Variación por seed (no random puro para auditar).
+// Tus dos preferidas primero, el resto como variación.
 const SOFT_CLOSING_REPLIES: ReadonlyArray<string> = [
+  "Es un placer ayudarte ✨",
+  "Estoy aquí para lo que necesites ✨",
   "Con mucho gusto ✨",
-  "Estoy para ayudarte cuando lo necesites ✨",
-  "Será un placer ayudarte 🌿",
   "Cuando gustes, aquí estaré ✨",
   "Que tengas excelente día ✨",
   "Para servirte 🌿",
@@ -108,6 +109,96 @@ function pickSoftClosing(seed: string): string {
   let h = 0
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0
   return SOFT_CLOSING_REPLIES[h % SOFT_CLOSING_REPLIES.length]
+}
+
+// ---------------------------------------------------------------------------
+// Human backup: alerta a número operativo cuando IA no responde.
+// Dedup: una sola alerta por phone cada N min (config en ai_settings).
+// ---------------------------------------------------------------------------
+async function notifyHumanBackup(
+  customerPhone: string,
+  customerMessage: string,
+  reason: string,
+): Promise<{ sent: boolean; reason?: string; recipients?: number }> {
+  const { data: s } = await supabase
+    .from("ai_settings")
+    .select("human_backup_enabled, human_backup_numbers, human_backup_dedup_minutes")
+    .eq("id", 1).maybeSingle()
+  const enabled = (s as { human_backup_enabled?: boolean })?.human_backup_enabled === true
+  const numbers = ((s as { human_backup_numbers?: string[] })?.human_backup_numbers ?? []) as string[]
+  const dedupMinutes = (s as { human_backup_dedup_minutes?: number })?.human_backup_dedup_minutes ?? 15
+
+  if (!enabled || numbers.length === 0) {
+    return { sent: false, reason: "disabled_or_no_recipients" }
+  }
+
+  // Dedup: ¿ya se envió alerta por ESTE phone (cliente) en los últimos N min?
+  const since = new Date(Date.now() - dedupMinutes * 60 * 1000).toISOString()
+  const { data: recent } = await supabase
+    .from("whatsapp_logs")
+    .select("id")
+    .eq("event_type", "human_backup_alert")
+    .ilike("message_rendered", `%${customerPhone}%`)
+    .gte("created_at", since)
+    .limit(1)
+  if ((recent ?? []).length > 0) {
+    return { sent: false, reason: "deduped" }
+  }
+
+  const businessSettings = await loadBusinessSettings(supabase, DEFAULT_BRANCH_ID)
+  if (!businessSettings) return { sent: false, reason: "no_business_settings" }
+
+  const alertText =
+    `🚨 Nuevo mensaje sin respuesta IA\n\n` +
+    `Cliente: ${customerPhone}\n` +
+    `Mensaje:\n"${customerMessage.slice(0, 500)}"\n\n` +
+    `Motivo:\n${reason}\n\n` +
+    `Responder manualmente desde recepción si es necesario.`
+
+  let okCount = 0
+  for (const raw of numbers) {
+    const to = normalizePhone(raw)
+    if (!to) continue
+    try {
+      const res = await callMetaApi<Record<string, unknown>>(
+        `${businessSettings.row.phone_number_id}/messages`,
+        businessSettings.accessToken,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to,
+            type: "text",
+            text: { body: alertText },
+          }),
+        },
+      )
+      const wamid = (res.data as { messages?: Array<{ id?: string }> })?.messages?.[0]?.id ?? null
+      const metaErr = !res.ok
+        ? ((res.data as { error?: Record<string, unknown> })?.error ?? {}) as { message?: string; code?: number }
+        : {}
+
+      await supabase.from("whatsapp_logs").insert({
+        phone: to,
+        message_rendered: alertText,
+        status: res.ok ? "sent" : "failed",
+        provider: "meta_cloud_api",
+        provider_response: { ...(res.data ?? {}), message_id: wamid },
+        meta_error_code: metaErr.code ?? null,
+        meta_error_message: metaErr.message ?? null,
+        window_type: "free_text_within_24h",
+        sent_at: res.ok ? new Date().toISOString() : null,
+        created_at: new Date().toISOString(),
+        event_type: "human_backup_alert",
+        type: "human_backup_alert",
+      })
+      if (res.ok) okCount += 1
+    } catch (e) {
+      console.error("notifyHumanBackup send failed", e)
+    }
+  }
+  return { sent: okCount > 0, recipients: okCount }
 }
 
 async function loadAnthropicKey(): Promise<string> {
@@ -449,7 +540,20 @@ async function execAdminTool(name: string, input: Record<string, unknown>) {
       for (const r of (data ?? []) as Array<{ status: string }>) {
         counts[r.status] = (counts[r.status] ?? 0) + 1
       }
-      return { date, total: data?.length ?? 0, by_status: counts }
+      // Derivado: "pendientes por confirmar" = pending + scheduled + rescheduled
+      const pendingToConfirm =
+        (counts["pending"] ?? 0) +
+        (counts["scheduled"] ?? 0) +
+        (counts["rescheduled"] ?? 0)
+      return {
+        date,
+        total: data?.length ?? 0,
+        by_status: counts,
+        pending_to_confirm: pendingToConfirm,
+        confirmed: counts["confirmed"] ?? 0,
+        cancelled: counts["cancelled"] ?? 0,
+        completed: counts["completed"] ?? 0,
+      }
     }
     case "get_tomorrow_appointments": {
       const { data, error } = await supabase
@@ -611,12 +715,17 @@ REGLAS DURAS (admin):
 7. Máximo 6 líneas por respuesta.
 8. Fechas SIEMPRE en America/Tijuana usando tools.
 
-FORMATO RECOMENDADO:
-"📊 Resumen [periodo]:
-• Citas: N
+FORMATO RECOMENDADO PARA RESUMEN DE DÍA:
+"📊 Resumen de hoy:
+• Citas totales: N
 • Confirmadas: N
 • Canceladas: N
-• Ingresos: $N MXN"
+• Completadas: N
+• Pendientes por confirmar: N
+• Ingresos registrados: $N MXN"
+
+NOTA: "Pendientes por confirmar" se toma del campo pending_to_confirm que ya
+incluye status pending + scheduled + rescheduled. NO sumes manualmente.
 
 Usa máximo 1 emoji sutil por bullet o título: 📊 📅 💰 ⏰ ⚠️ 🤖 👥 🔝
 
@@ -650,26 +759,76 @@ function buildSystemPrompt(clientKnown: string | null) {
   const tjTomorrowDate = new Date(tjNow.getTime() + 86400000).toISOString().slice(0, 10)
   const tjTomorrowName = days[(tjNow.getDay() + 1) % 7]
 
-  return `Eres Sahara, asistente virtual de Sahara Club Spa (spa de bienestar en Ensenada, BC).
-Tu rol: asesorar al cliente con información real del spa. Recepción confirma toda cita.
+  return `Eres Sahara, asistente concierge de Sahara Club Spa (spa de bienestar en Ensenada, BC).
+Tu rol: asesorar al cliente y CAPTAR su intención de reserva. Recepción confirma toda cita oficialmente.
+
+ROL EXACTO:
+- Eres un CONCIERGE de PRE-RESERVA.
+- NO eres sistema de booking automático.
+- NO eres confirmador de citas.
+- Capturas interés, sugieres opciones, registras solicitud. Recepción decide y confirma.
 
 REGLAS DURAS (no negociables):
-1. NUNCA confirmas, agendas, cancelas ni reagendas citas. Solo das información.
-2. NUNCA inventes servicios, precios, horarios, beneficios ni terapeutas. Si no aparece en tools, di "déjame verificar con recepción".
-3. NUNCA des consejo médico ni diagnóstico. Si mencionan condición médica, sugiere consultar con su médico y con recepción.
-4. NO ofrezcas descuentos. Si los piden: "déjame consultar con recepción".
-5. Si el cliente quiere agendar/reservar, responde EXACTAMENTE: "Con gusto te puedo orientar. Recepción confirmará disponibilidad y te avisará por aquí." (puedes adaptar tono pero ese sentido).
-6. Tono cálido, profesional, breve. MÁXIMO 4 LÍNEAS por mensaje.
-7. Responde en español MX. Si el cliente escribe en inglés, responde en inglés.
-8. Si no puedes ayudar con datos disponibles: "Recepción te atenderá pronto por aquí mismo."
+1. NUNCA digas "tu cita confirmada", "reserva confirmada", "tu cita quedó confirmada", "ya quedó tu cita",
+   "tu cita está agendada", "queda apartado", "te aparto", "está reservado".
+   PROHIBIDO totalmente. Esa palabra solo la usa recepción.
+2. Never claim an appointment is confirmed unless reception or the booking system explicitly confirms it.
+3. NUNCA inventes servicios, precios, horarios, beneficios ni terapeutas. Si no aparece en tools, di "déjame verificar con recepción".
+4. NUNCA des consejo médico ni diagnóstico. Si mencionan condición médica, sugiere consultar con su médico y con recepción.
+5. NO ofrezcas descuentos. Si los piden: "déjame consultar con recepción".
+6. NUNCA digas "entra a la landing", "agenda en línea", "ve a la web a finalizar". El flujo es WhatsApp → recepción → confirmación.
+7. Tono cálido, profesional, breve. MÁXIMO 4 LÍNEAS por mensaje (5 si registras solicitud con bullets).
+8. Responde en español MX. Si el cliente escribe en inglés, responde en inglés.
+
+VOCABULARIO PERMITIDO (úsalo activamente):
+✅ "solicitud registrada", "registramos tu solicitud", "registramos tu interés"
+✅ "pre-reserva", "intención de reserva"
+✅ "recepción validará disponibilidad", "recepción confirmará"
+✅ "pendiente de confirmación", "sujeto a validación"
+✅ "te confirmará por aquí en breve"
+
+VOCABULARIO PROHIBIDO:
+❌ "confirmada", "confirmado", "quedó", "agendada", "apartado", "reservado", "está reservada"
+❌ "ya tienes tu cita", "listo, tu cita es..."
+❌ "entra a", "ve a la landing", "agenda en línea"
+
+EMOJIS PERMITIDOS:
+✅ ✨  🌿  (úsalos con moderación, máximo 1 por mensaje)
+❌ 🎯  (NO usar)
+
+FLUJO CUANDO EL CLIENTE QUIERE RESERVAR:
+
+PASO 1 — Cliente pregunta por servicio o expresa interés:
+  • Recomienda 2-3 opciones reales (usa list_services).
+  • Sugiere días/horarios aproximados (sin prometer).
+  • Pregunta su preferencia.
+
+PASO 2 — Cliente elige día/hora específico (ej. "jueves 4pm"):
+  Responde EXACTAMENTE así (adapta servicio/fecha/hora):
+
+  "Perfecto ✨
+
+  Registramos tu solicitud para:
+  • [Servicio]
+  • [Día, fecha]
+  • [Hora]
+
+  Recepción validará disponibilidad y te confirmará por aquí en breve 🌿
+
+  Los horarios están sujetos a validación de disponibilidad."
+
+PASO 3 — Cliente pregunta "¿ya quedó?", "¿ya está confirmada?", "¿ya está pagada?":
+  Responde con calma:
+  "Aún no. Recepción validará disponibilidad y te confirmará por aquí en breve ✨"
+  o:
+  "Aún no se ha pagado. Recepción te apoyará con los siguientes pasos 🌿"
 
 REGLAS DE FECHAS (CRÍTICO):
-9. NUNCA calcules fechas manualmente. Usa EXCLUSIVAMENTE las fechas devueltas por las tools (campos today_date, today_name, tomorrow_date, tomorrow_name).
-10. Si el cliente dice "mañana", "hoy", "el lunes", etc → llama get_business_hours() PRIMERO y usa los campos server_today/tomorrow para resolver.
-11. Zona horaria oficial del negocio: America/Tijuana. Nunca uses otra.
+- NUNCA calcules fechas manualmente. Usa EXCLUSIVAMENTE las fechas devueltas por las tools (today_date, today_name, tomorrow_date, tomorrow_name).
+- Si el cliente dice "mañana", "hoy", "el lunes", etc → llama get_business_hours() PRIMERO y usa los campos server_today/tomorrow.
+- Zona horaria oficial: America/Tijuana.
 
-CONTEXTO TEMPORAL (provisto por el sistema, NO calcules, solo cita):
-- Zona horaria: America/Tijuana
+CONTEXTO TEMPORAL (sistema, NO calcules):
 - Hoy es: ${tjWeekday} ${tjDate} (hora actual Tijuana: ${tjTime})
 - Mañana es: ${tjTomorrowName} ${tjTomorrowDate}
 
@@ -680,8 +839,8 @@ CONTEXTO NEGOCIO:
 FLUJO TÍPICO:
 - Saluda en primer mensaje, ofrece ayuda.
 - Usa tools para responder con DATOS REALES.
-- No prometas disponibilidad final.
-- Si terminas de informar, cierra con "¿te puedo ayudar con algo más?".
+- No prometas disponibilidad final. Nunca confirmes.
+- Cierra con apertura suave ("¿algo más?" o "¿te puedo ayudar con algo más?").
 `
 }
 
@@ -844,12 +1003,19 @@ Deno.serve(async (req) => {
       await supabase.from("ai_conversations")
         .update({ last_message_at: new Date().toISOString() })
         .eq("id", convId)
+
+      // Notificar al número humano de respaldo (con dedup 15 min).
+      // NO se dispara para soft closings (esos no llegan aquí porque retornan antes).
+      // NO se dispara para mensajes admin con acceso (no entran a esta rama).
+      const backup = await notifyHumanBackup(phone, messageText, denyReason)
+
       return jsonResponse({
         skipped: true,
         reason: denyReason,
         conversation_id: convId,
         phone,
         gate,
+        human_backup: backup,
       })
     }
 

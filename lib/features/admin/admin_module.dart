@@ -4430,7 +4430,7 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
 
   Map<String, dynamic> _normalizedStaffPayload(Map<String, dynamic> payload) {
     const requiredKeys = {
-      'name',
+      'full_name',
       'role',
       'active',
       'phone',
@@ -4545,7 +4545,10 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
           : (_canLogin ? accessEmail : '');
 
       final payload = {
-        'name': _nameCtrl.text.trim(),
+        // Columna en DB es full_name (NOT NULL). Antes se enviaba 'name' y el
+        // helper _insertStaffWithCompatiblePayload lo descartaba al no existir
+        // → violación NOT NULL. El modelo _Staff.fromMap ya lee full_name.
+        'full_name': _nameCtrl.text.trim(),
         'role': _role,
         'active': _active,
         'phone': _phoneCtrl.text.trim(),

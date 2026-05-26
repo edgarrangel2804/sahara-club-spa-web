@@ -6382,6 +6382,28 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
           ),
         );
       }
+
+      // Aviso operativo sobre WhatsApp automático.
+      // Las citas creadas desde recepción (esta pantalla) tienen booking_source='reception'
+      // y disparan confirmacion_cita al cliente si nacen confirmed.
+      // Las citas que vienen de landing/app/IA llegan como pending — recepción debe
+      // confirmarlas manualmente para que se envíe el WhatsApp.
+      if (mounted && result != null && widget.editBooking == null) {
+        final isConfirmed = _status == 'confirmed';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              isConfirmed
+                  ? '✓ Cita agendada. WhatsApp de notificación enviado al cliente.'
+                  : 'ℹ Cita guardada como pendiente. Agéndala para notificar al cliente por WhatsApp.',
+            ),
+            backgroundColor: isConfirmed
+                ? const Color(0xFF1A9E65)
+                : const Color(0xFF2D6DB3),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
       return result;
     } catch (e) {
       if (mounted) {

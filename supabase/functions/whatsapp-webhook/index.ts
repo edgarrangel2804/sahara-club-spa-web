@@ -326,45 +326,10 @@ async function handlePost(req: Request) {
           error_message: null,
         })
 
-        // Invocación al agente IA (solo mensajes tipo text).
-        // Usamos EdgeRuntime.waitUntil para que la function NO termine antes
-        // de que el fetch al router complete (problema clásico de Deno Edge).
-        if (messageType === "text" && fromPhone) {
-          const textBody =
-            (message.text as { body?: string } | undefined)?.body ?? ""
-          if (textBody) {
-            const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? ""
-            const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
-            const routerCall = fetch(
-              `${supabaseUrl}/functions/v1/whatsapp-ai-router`,
-              {
-                method: "POST",
-                headers: {
-                  "Authorization": `Bearer ${serviceKey}`,
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                  phone: fromPhone,
-                  message_text: textBody,
-                  wamid: messageId,
-                }),
-              },
-            )
-              .then(async (r) => {
-                const body = await r.text().catch(() => "")
-                console.log(
-                  `ai-router invoked status=${r.status} phone=${fromPhone} body=${body.slice(0, 200)}`,
-                )
-              })
-              .catch((err) => console.error("ai-router invoke failed", err))
-
-            // @ts-ignore EdgeRuntime es global en Supabase Edge Functions
-            if (typeof EdgeRuntime !== "undefined" && typeof EdgeRuntime.waitUntil === "function") {
-              // @ts-ignore
-              EdgeRuntime.waitUntil(routerCall)
-            }
-          }
-        }
+        // NOTA: la invocación al ai-router se hace ahora vía trigger DB
+        // (on_whatsapp_inbound_invoke_ai sobre whatsapp_webhook_events) que usa
+        // pg_net.http_post. Esto es más robusto que el fetch interno de Edge
+        // Functions (que falla con 401 entre functions). Aquí ya no hacemos nada.
       }
 
       // Si el value no trae ni messages ni statuses guardamos un evento "desconocido"

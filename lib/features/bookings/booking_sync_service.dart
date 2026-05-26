@@ -335,6 +335,10 @@ class BookingSyncService {
           .insert({
             ...payload,
             'created_by': currentUserId,
+            // Origen: por default recepción (this service se llama desde la agenda).
+            // Si una integración externa quiere crear citas, debe poner su propio
+            // booking_source en el payload (landing, mobile_app, whatsapp_ai, external).
+            'booking_source': payload['booking_source'] ?? 'reception',
           })
           .select('''
             id, client_id, client_record_id, service_id, sucursal_id, booking_date, booking_time,

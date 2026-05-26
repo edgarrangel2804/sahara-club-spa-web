@@ -231,7 +231,25 @@ export async function isWithinCustomerServiceWindow(
   return Boolean(data)
 }
 
-/** Sincroniza el catálogo de templates desde Meta hacia DB local. */
+/** Normaliza un código de idioma para comparar (es ≡ es_MX ≡ es_mx). */
+function normLang(lang: string): string {
+  return (lang || "").trim().toLowerCase().split(/[_-]/)[0]
+}
+function normName(name: string): string {
+  return (name || "").trim().toLowerCase()
+}
+
+/**
+ * Sincroniza el catálogo de templates desde Meta hacia DB local.
+ *
+ * Reglas críticas (post-bug 2026-05-25):
+ *   - Si Meta devuelve 0 templates o error, ABORTA la sync sin tocar la DB.
+ *     Es peligrosísimo marcar todos como deleted por una respuesta vacía.
+ *   - El match name+language es case-insensitive y normaliza el idioma
+ *     (Meta puede devolver "es" mientras la DB tiene "es_MX" — ambos son el mismo).
+ *   - Solo marca deleted los templates que estaban presentes en una sync previa
+ *     Y que esta sync confirma como ausentes con catálogo válido.
+ */
 export async function syncMetaTemplates(
   supabase: AdminClient,
   accessToken: string,
@@ -245,7 +263,6 @@ export async function syncMetaTemplates(
   let url = `${META_GRAPH_BASE_URL}/${wabaId}/message_templates?fields=id,name,language,status,category,components,quality_score&limit=200`
 
   // Pagina hasta agotar
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -264,71 +281,110 @@ export async function syncMetaTemplates(
     url = next
   }
 
+  // ⚠️ SAFETY: si Meta devolvió catálogo vacío, ABORTA sin tocar nada.
+  if (all.length === 0) {
+    return {
+      fetched: 0,
+      updated: 0,
+      skipped_no_match: 0,
+      marked_deleted: 0,
+      aborted: true,
+      reason: "empty_catalog_from_meta",
+      synced_at: new Date().toISOString(),
+    }
+  }
+
   const nowIso = new Date().toISOString()
   let updated = 0
   let skipped = 0
-  const seen: Array<{ name: string; language: string }> = []
+  const seen: Array<{ nameKey: string; langKey: string }> = []
+  const allowedStatus = new Set([
+    "approved","pending","rejected","disabled","paused","deleted",
+  ])
+
+  // Cargamos todas las filas locales para matchear in-memory (case/lang insensitive)
+  const { data: localRows, error: localErr } = await supabase
+    .from("whatsapp_templates")
+    .select("id, meta_template_name, meta_language")
+    .not("meta_template_name", "is", null)
+  if (localErr) throw localErr
+  const localList = (localRows ?? []) as Array<{
+    id: string; meta_template_name: string; meta_language: string
+  }>
 
   for (const tmpl of all) {
     const name = String(tmpl.name ?? "")
-    const lang = String(tmpl.language ?? "es_MX")
+    const lang = String(tmpl.language ?? "es")
+    const nameKey = normName(name)
+    const langKey = normLang(lang)
+    if (!nameKey) continue
+    seen.push({ nameKey, langKey })
+
     const status = String(tmpl.status ?? "UNKNOWN").toLowerCase()
     const category = String(tmpl.category ?? "UTILITY").toUpperCase()
     const components = (tmpl.components ?? []) as Array<Record<string, unknown>>
     const id = tmpl.id ? String(tmpl.id) : null
-    if (!name) continue
-    seen.push({ name, language: lang })
 
-    // Calcula variables esperadas a partir del body
     const bodyComp = components.find((c) => String(c.type ?? "").toUpperCase() === "BODY")
     const bodyText = String((bodyComp as { text?: string } | undefined)?.text ?? "")
     const varCount = (bodyText.match(/\{\{\d+\}\}/g) ?? []).length
     const headerComp = components.find((c) => String(c.type ?? "").toUpperCase() === "HEADER")
     const headerFormat = headerComp ? String((headerComp as { format?: string }).format ?? "") : null
 
-    const allowedStatus = new Set([
-      "approved","pending","rejected","disabled","paused","deleted",
-    ])
     const dbStatus = allowedStatus.has(status) ? status : "unknown"
 
-    const { error: updErr, count } = await supabase
-      .from("whatsapp_templates")
-      .update({
-        meta_template_status: dbStatus,
-        meta_language: lang,
-        meta_category: category,
-        meta_components_schema: components,
-        meta_variables_count: varCount,
-        meta_template_id: id,
-        meta_header_format: headerFormat,
-        approved_at: dbStatus === "approved" ? nowIso : null,
-        rejected_reason: dbStatus === "rejected"
-          ? String((tmpl as { rejected_reason?: string }).rejected_reason ?? "")
-          : null,
-        last_sync_at: nowIso,
-      }, { count: "exact" })
-      .eq("meta_template_name", name)
-      .eq("meta_language", lang)
+    // Match in-memory case + language insensitive
+    const matching = localList.filter(
+      (r) => normName(r.meta_template_name) === nameKey &&
+             normLang(r.meta_language) === langKey,
+    )
 
-    if (updErr) {
-      console.error("sync update failed", updErr)
+    if (matching.length === 0) {
+      skipped += 1
       continue
     }
-    if ((count ?? 0) > 0) updated += 1
-    else skipped += 1
+
+    for (const row of matching) {
+      const { error: updErr } = await supabase
+        .from("whatsapp_templates")
+        .update({
+          meta_template_status: dbStatus,
+          meta_language: lang,
+          meta_category: category,
+          meta_components_schema: components,
+          meta_variables_count: varCount,
+          meta_template_id: id,
+          meta_header_format: headerFormat,
+          approved_at: dbStatus === "approved" ? nowIso : null,
+          rejected_reason: dbStatus === "rejected"
+            ? String((tmpl as { rejected_reason?: string }).rejected_reason ?? "")
+            : null,
+          last_sync_at: nowIso,
+        })
+        .eq("id", row.id)
+
+      if (updErr) {
+        console.error("sync update failed", updErr)
+      } else {
+        updated += 1
+      }
+    }
   }
 
-  // Marca como 'deleted' los templates en DB con meta_template_name pero NO presentes en Meta
-  const seenKeys = new Set(seen.map((s) => `${s.name}::${s.language}`))
-  const { data: dbRows } = await supabase
+  // Marca deleted SOLO si:
+  //   1. La respuesta de Meta fue válida (lo confirmamos arriba: all.length>0)
+  //   2. El template local NO aparece en el catálogo de Meta (comparación normalizada)
+  //   3. Y NO está ya marcado como deleted
+  const seenKeys = new Set(seen.map((s) => `${s.nameKey}::${s.langKey}`))
+  const { data: dbRowsForDelete } = await supabase
     .from("whatsapp_templates")
     .select("id, meta_template_name, meta_language, meta_template_status")
     .not("meta_template_name", "is", null)
   let markedDeleted = 0
-  for (const row of (dbRows ?? []) as Array<{
+  for (const row of (dbRowsForDelete ?? []) as Array<{
     id: string; meta_template_name: string; meta_language: string; meta_template_status: string
   }>) {
-    const key = `${row.meta_template_name}::${row.meta_language}`
+    const key = `${normName(row.meta_template_name)}::${normLang(row.meta_language)}`
     if (!seenKeys.has(key) && row.meta_template_status !== "deleted") {
       const { error } = await supabase
         .from("whatsapp_templates")
@@ -343,6 +399,7 @@ export async function syncMetaTemplates(
     updated,
     skipped_no_match: skipped,
     marked_deleted: markedDeleted,
+    aborted: false,
     synced_at: nowIso,
   }
 }
