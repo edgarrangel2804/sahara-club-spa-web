@@ -148,6 +148,10 @@ export function bodyParamsForTemplateKey(
   switch (templateKey) {
     case "reservation_confirmed":
       return [v("nombre_cliente"), v("nombre_servicio"), v("fecha_reserva"), v("hora_reserva"), v("nombre_terapeuta")]
+    case "cita_agendada_recepcion":
+      // Template Meta cita_agendada_recepcion:
+      // {{1}} nombre_cliente, {{2}} fecha_reserva, {{3}} hora_reserva
+      return [v("nombre_cliente"), v("fecha_reserva"), v("hora_reserva")]
     case "reminder_24h":
       return [v("nombre_cliente"), v("nombre_servicio"), v("fecha_reserva"), v("hora_reserva")]
     case "reminder_3h":

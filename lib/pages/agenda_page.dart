@@ -6074,7 +6074,11 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
   String? _therapistId;
   String? _sucursalId;
   String? _serviceId;
-  String _status = 'pending';
+  // Default 'confirmed': recepción/admin creando cita en persona o por teléfono
+  // SIEMPRE agenda ya confirmada (dispara WhatsApp inmediato vía trigger
+  // handle_booking_whatsapp_events). El status pending solo aplica a citas
+  // que nacen desde landing/app/IA/externo, donde recepción luego valida.
+  String _status = 'confirmed';
   bool _saving = false;
   bool _showInfo = false;
   bool _serviceOpen = false;
@@ -6152,7 +6156,7 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
         ? (widget.editBooking?.sucursalId ?? widget.initialBranchId)
         : kDefaultBranchId;
     _serviceId = widget.editBooking?.serviceId;
-    _status = widget.editBooking?.status ?? 'pending';
+    _status = widget.editBooking?.status ?? 'confirmed';
     
     if (widget.editBooking != null) {
       _clientCtrl.text = widget.editBooking!.clientName;
@@ -6462,7 +6466,7 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
       _clientId = null;
       _therapistId = null;
       _serviceId = null;
-      _status = 'pending';
+      _status = 'confirmed';
     });
     messenger.showSnackBar(
       const SnackBar(
