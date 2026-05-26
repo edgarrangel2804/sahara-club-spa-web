@@ -4983,7 +4983,8 @@ class _BookingDetailDialog extends StatelessWidget {
                 runSpacing: 8,
                 children: [
                   if (b.status == 'scheduled' ||
-                      b.status == 'pending')
+                      b.status == 'pending' ||
+                      b.status == 'pending_reception')
                     _DialogBtn(
                       label: 'Confirmar',
                       color: const Color(0xFF1A9E65),
@@ -5614,14 +5615,21 @@ class _DetailRow extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 10),
     child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, color: color ?? Colors.black38, size: 15),
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(icon, color: color ?? Colors.black38, size: 15),
+        ),
         const SizedBox(width: 10),
-        Text(
-          text,
-          style: GoogleFonts.inter(
-            color: color ?? Colors.black54,
-            fontSize: 13,
+        Expanded(
+          child: Text(
+            text,
+            style: GoogleFonts.inter(
+              color: color ?? Colors.black54,
+              fontSize: 13,
+              height: 1.35,
+            ),
           ),
         ),
       ],

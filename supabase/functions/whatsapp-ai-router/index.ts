@@ -494,7 +494,7 @@ async function execTool(
             p_booking_date: date,
             p_booking_time: timeNorm,
             p_duration_min: input.duration_min ? Number(input.duration_min) : null,
-            p_notes: "Solicitud creada por IA (auto-create al verificar disponibilidad)",
+            p_notes: "Solicitud creada por IA WhatsApp.",
             p_ai_conversation_id: ctx.conversationId ?? null,
             p_ai_confidence_score: 0.9,
           })
