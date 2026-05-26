@@ -983,12 +983,27 @@ Pregunta: "Dame el teléfono de Rodrigo"
 function buildSystemPrompt(clientKnown: string | null) {
   // SIEMPRE en zona horaria del negocio
   const days = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"]
+  const monthsEs = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"]
   const tjNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Tijuana" }))
   const tjDate = tjNow.toISOString().slice(0, 10)
   const tjTime = tjNow.toTimeString().slice(0, 5)
   const tjWeekday = days[tjNow.getDay()]
   const tjTomorrowDate = new Date(tjNow.getTime() + 86400000).toISOString().slice(0, 10)
   const tjTomorrowName = days[(tjNow.getDay() + 1) % 7]
+
+  // Tabla autoritativa de los próximos 14 días: nombre + fecha exacta.
+  // El modelo NUNCA debe calcular; solo hacer lookup en esta tabla.
+  const upcomingLines: string[] = []
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(tjNow.getTime() + i * 86400000)
+    const dateStr = d.toISOString().slice(0, 10)
+    const wname = days[d.getDay()]
+    const dd = d.getDate()
+    const mname = monthsEs[d.getMonth()]
+    const tag = i === 0 ? " (HOY)" : i === 1 ? " (mañana)" : ""
+    upcomingLines.push(`  ${wname} ${dd} de ${mname} → ${dateStr}${tag}`)
+  }
+  const upcomingTable = upcomingLines.join("\n")
 
   return `Eres Sahara, asistente concierge de Sahara Club Spa (spa de bienestar en Ensenada, BC).
 Tu rol: asesorar al cliente y CAPTAR su intención de reserva. Recepción confirma toda cita oficialmente.
@@ -1138,13 +1153,21 @@ PASO 3 — Cliente pregunta "¿ya quedó?", "¿ya está confirmada?", "¿ya est�
   "Aún no se ha pagado. Recepción te apoyará con los siguientes pasos 🌿"
 
 REGLAS DE FECHAS (CRÍTICO):
-- NUNCA calcules fechas manualmente. Usa EXCLUSIVAMENTE las fechas devueltas por las tools (today_date, today_name, tomorrow_date, tomorrow_name).
-- Si el cliente dice "mañana", "hoy", "el lunes", etc → llama get_business_hours() PRIMERO y usa los campos server_today/tomorrow.
+- NUNCA calcules fechas manualmente. Usa SIEMPRE la TABLA AUTORITATIVA de abajo.
+- Cuando el cliente dice un día ("jueves", "el sábado", "mañana"), haz lookup
+  en la tabla y usa la fecha exacta que aparece junto al día. Esa es la
+  ÚNICA fuente de verdad.
+- Si el cliente dice un número de día sin nombre (ej. "el 30"), busca en la
+  tabla qué día de la semana es el 30 y úsalo. Si dice "jueves 30" pero
+  jueves NO es 30 según la tabla, PREGUNTA al cliente: "¿Te refieres al
+  jueves [fecha real] o al sábado [fecha real, si el 30 es sábado]?".
+  NUNCA inventes una fecha donde día y número no coincidan.
 - Zona horaria oficial: America/Tijuana.
 
-CONTEXTO TEMPORAL (sistema, NO calcules):
-- Hoy es: ${tjWeekday} ${tjDate} (hora actual Tijuana: ${tjTime})
-- Mañana es: ${tjTomorrowName} ${tjTomorrowDate}
+CONTEXTO TEMPORAL — TABLA AUTORITATIVA (próximos 14 días):
+${upcomingTable}
+
+Hora actual Tijuana: ${tjTime}.
 
 CONTEXTO NEGOCIO:
 - Sahara Club Spa, Ensenada
