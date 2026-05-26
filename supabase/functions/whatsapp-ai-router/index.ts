@@ -980,7 +980,53 @@ Pregunta: "Dame el teléfono de Rodrigo"
 // ---------------------------------------------------------------------------
 // System prompt (customer)
 // ---------------------------------------------------------------------------
-function buildSystemPrompt(clientKnown: string | null) {
+// Carga el catálogo completo de servicios activos para inyectarlo en el
+// system prompt como única fuente de verdad. Evita que el modelo invente
+// precios o diga "no existe" un servicio que sí está en DB.
+async function buildServiceCatalog(): Promise<string> {
+  try {
+    const { data, error } = await supabase
+      .from("services")
+      .select("id, name, category, duration_min, price, tagline")
+      .eq("is_active", true)
+      .order("category", { ascending: true })
+      .order("name", { ascending: true })
+      .order("duration_min", { ascending: true })
+    if (error) {
+      console.warn("buildServiceCatalog error:", error.message)
+      return "(catálogo no disponible — usa list_services como fallback)"
+    }
+    const rows = (data ?? []) as Array<{
+      id: string; name: string; category: string | null;
+      duration_min: number | null; price: number | string | null;
+      tagline: string | null
+    }>
+    if (rows.length === 0) return "(sin servicios activos)"
+    const byCat = new Map<string, typeof rows>()
+    for (const r of rows) {
+      const c = r.category ?? "Otros"
+      if (!byCat.has(c)) byCat.set(c, [])
+      byCat.get(c)!.push(r)
+    }
+    const lines: string[] = []
+    for (const [cat, items] of byCat) {
+      lines.push(`[${cat}]`)
+      for (const s of items) {
+        const price = s.price != null ? `$${Number(s.price).toFixed(0)}` : "precio sin definir"
+        const dur = s.duration_min != null ? `${s.duration_min} min` : "duración sin definir"
+        const tag = s.tagline ? ` · ${s.tagline}` : ""
+        lines.push(`  • ${s.name} · ${dur} · ${price} · id:${s.id}${tag}`)
+      }
+      lines.push("")
+    }
+    return lines.join("\n").trim()
+  } catch (e) {
+    console.warn("buildServiceCatalog threw:", (e as Error).message)
+    return "(catálogo no disponible — usa list_services como fallback)"
+  }
+}
+
+function buildSystemPrompt(clientKnown: string | null, serviceCatalog: string = "") {
   // SIEMPRE en zona horaria del negocio
   const days = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"]
   const monthsEs = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"]
@@ -1172,6 +1218,21 @@ Hora actual Tijuana: ${tjTime}.
 CONTEXTO NEGOCIO:
 - Sahara Club Spa, Ensenada
 - Cliente conocido en sistema: ${clientKnown ?? "(desconocido, primera interacción)"}
+
+CATÁLOGO COMPLETO DE SERVICIOS (ÚNICA FUENTE DE VERDAD):
+Cada línea tiene formato: nombre · duración · precio · id:UUID · tagline.
+NUNCA inventes precios; copia el exacto de la línea correspondiente.
+NUNCA digas que un servicio "no existe" si está listado aquí.
+NUNCA mezcles el precio de una variante de duración con otra.
+Cuando el cliente diga el nombre de un servicio (parcial o completo),
+busca aquí PRIMERO antes de usar list_services. El UUID que necesitas
+para check_availability_for_booking está justo en cada línea.
+
+${serviceCatalog}
+
+Si el cliente nombra algo que NO está en el catálogo, di: "Ese servicio
+no lo ofrecemos. Te muestro lo que sí tenemos:" y sugiere 2-3 opciones
+reales del catálogo de arriba.
 
 FLUJO TÍPICO:
 - Saluda en primer mensaje, ofrece ayuda.
@@ -1428,9 +1489,11 @@ Deno.serve(async (req) => {
       ? { data: null }
       : await supabase.from("clients").select("full_name")
           .ilike("phone", `%${last10}%`).limit(1).maybeSingle()
+    // Cargar catálogo completo solo si NO es admin (admin tiene otro contexto)
+    const serviceCatalog = isAdmin ? "" : await buildServiceCatalog()
     const system = isAdmin
       ? buildAdminSystemPrompt()
-      : buildSystemPrompt(client?.full_name ?? null)
+      : buildSystemPrompt(client?.full_name ?? null, serviceCatalog)
 
     // Cargar historia últimos 20 mensajes (excluyendo system)
     const { data: history } = await supabase
