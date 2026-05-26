@@ -358,10 +358,14 @@ async function execTool(name: string, input: Record<string, unknown>) {
       }
     }
     case "get_faqs": {
+      // Scope lock: solo FAQs activas Y curadas como 'sahara'.
+      // Cualquier FAQ marcada out_of_scope (otro spa, clima, recetas, etc.)
+      // queda invisible para el router aunque alguien la haya creado en admin.
       let q = supabase
         .from("faqs")
-        .select("question, answer, category, tags")
+        .select("question, answer, category, tags, scope_category")
         .eq("is_active", true)
+        .eq("scope_category", "sahara")
         .limit(10)
       if (input.category) q = q.eq("category", String(input.category))
       const { data, error } = await q
@@ -373,7 +377,12 @@ async function execTool(name: string, input: Record<string, unknown>) {
           `${r.question} ${r.answer}`.toLowerCase().includes(term),
         )
       }
-      return { faqs: rows.slice(0, 6) }
+      // Defensa en profundidad: aunque vengan con scope='sahara', revalidamos
+      // por si futuras filas tienen un valor inesperado.
+      rows = rows.filter((r) => (r.scope_category ?? "sahara") === "sahara")
+      return { faqs: rows.slice(0, 6).map((r) => ({
+        question: r.question, answer: r.answer, category: r.category, tags: r.tags,
+      })) }
     }
     case "identify_client": {
       const phone = normalizePhone(String(input.phone ?? ""))
@@ -714,6 +723,11 @@ REGLAS DURAS (admin):
 6. Tono ejecutivo, conciso, formato bullet list para WhatsApp.
 7. Máximo 6 líneas por respuesta.
 8. Fechas SIEMPRE en America/Tijuana usando tools.
+9. ALCANCE EXCLUSIVO — SOLO datos operativos de Sahara Club Spa (REGLA MÁS IMPORTANTE):
+   - Toda respuesta DEBE basarse en datos devueltos por tools de la DB de Sahara Club Spa.
+   - PROHIBIDO usar conocimiento general, comparaciones con otros negocios o información externa.
+   - PROHIBIDO responder temas ajenos: noticias, finanzas personales, tecnología, traducciones, código, consejos médicos, etc.
+   - Si preguntan algo fuera del scope: "Solo manejo datos operativos de Sahara Club Spa. Revisa el panel admin para análisis adicionales."
 
 FORMATO RECOMENDADO PARA RESUMEN DE DÍA:
 "📊 Resumen de hoy:
@@ -779,6 +793,15 @@ REGLAS DURAS (no negociables):
 6. NUNCA digas "entra a la landing", "agenda en línea", "ve a la web a finalizar". El flujo es WhatsApp → recepción → confirmación.
 7. Tono cálido, profesional, breve. MÁXIMO 4 LÍNEAS por mensaje (5 si registras solicitud con bullets).
 8. Responde en español MX. Si el cliente escribe en inglés, responde en inglés.
+9. ALCANCE EXCLUSIVO — SOLO Sahara Club Spa (REGLA MÁS IMPORTANTE):
+   - SOLO puedes dar información que esté EN LA BASE DE DATOS de Sahara Club Spa (devuelta por tools: list_services, get_business_hours, get_therapists, etc.).
+   - PROHIBIDO usar conocimiento general, entrenamiento previo, internet, suposiciones o memoria de modelos.
+   - PROHIBIDO recomendar otros spas, salones, clínicas, marcas, hoteles, restaurantes, gimnasios o cualquier negocio que no sea Sahara Club Spa.
+   - PROHIBIDO responder temas ajenos al spa: clima, recetas, rutinas genéricas de skincare/maquillaje, consejos médicos/nutricionales, política, deportes, noticias, viajes, finanzas, tecnología, entretenimiento, traducciones generales, tareas, código, etc.
+   - Si te preguntan algo fuera de Sahara responde EXACTAMENTE en este espíritu:
+     "Solo puedo orientarte con experiencias y servicios de Sahara Club Spa ✨ ¿Te ayudo con algún ritual, facial o reserva?"
+   - Si preguntan por algo de spa que NO existe en nuestra DB: "Ese servicio no lo ofrecemos en Sahara. Déjame mostrarte lo que sí tenemos 🌿" + sugiere alternativas reales con list_services.
+   - Ante CUALQUIER duda sobre un dato: "déjame verificar con recepción" antes que inventar.
 
 VOCABULARIO PERMITIDO (úsalo activamente):
 ✅ "solicitud registrada", "registramos tu solicitud", "registramos tu interés"

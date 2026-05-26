@@ -22,6 +22,7 @@ class _Faq {
   bool isActive;
   int order;
   List<String> tags;
+  String scopeCategory;
   bool dirty;
   bool saving;
 
@@ -33,6 +34,7 @@ class _Faq {
     required this.isActive,
     required this.order,
     required this.tags,
+    required this.scopeCategory,
     this.dirty = false,
     this.saving = false,
   });
@@ -45,6 +47,7 @@ class _Faq {
         isActive: (m['is_active'] as bool?) ?? true,
         order: (m['display_order'] as num?)?.toInt() ?? 100,
         tags: ((m['tags'] as List?) ?? []).map((e) => e.toString()).toList(),
+        scopeCategory: (m['scope_category'] as String?) ?? 'sahara',
       );
 }
 
@@ -135,6 +138,7 @@ class _FaqsPanelState extends State<FaqsPanel> {
         'category': f.category,
         'is_active': f.isActive,
         'tags': f.tags,
+        'scope_category': f.scopeCategory,
       }).eq('id', f.id);
       f.dirty = false;
       _flash = '✓ FAQ guardada';
@@ -171,15 +175,20 @@ class _FaqsPanelState extends State<FaqsPanel> {
   }
 
   Widget _faqCard(_Faq f) {
+    final outOfScope = f.scopeCategory != 'sahara';
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: outOfScope ? const Color(0xFFFFF5F5) : Colors.white,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: f.dirty ? const Color(0xFFC68A17) : const Color(0xFFECE9E4),
-          width: f.dirty ? 2 : 1,
+          color: f.dirty
+              ? const Color(0xFFC68A17)
+              : outOfScope
+                  ? const Color(0xFFB32D2D)
+                  : const Color(0xFFECE9E4),
+          width: f.dirty || outOfScope ? 2 : 1,
         ),
       ),
       child: Column(
@@ -194,6 +203,38 @@ class _FaqsPanelState extends State<FaqsPanel> {
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(f.category, style: const TextStyle(fontSize: 11)),
+              ),
+              const SizedBox(width: 6),
+              // Chip de scope. Toggle Sahara <-> Fuera de scope.
+              GestureDetector(
+                onTap: () => setState(() {
+                  f.scopeCategory = outOfScope ? 'sahara' : 'out_of_scope';
+                  f.dirty = true;
+                }),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: outOfScope
+                        ? const Color(0xFFFFE5E5)
+                        : const Color(0xFFE5F4E8),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: outOfScope
+                          ? const Color(0xFFB32D2D)
+                          : const Color(0xFF2D8A4F),
+                    ),
+                  ),
+                  child: Text(
+                    outOfScope ? '⚠ fuera de scope' : '✓ sahara',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: outOfScope
+                          ? const Color(0xFFB32D2D)
+                          : const Color(0xFF2D8A4F),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
               ),
               const SizedBox(width: 8),
               Switch(

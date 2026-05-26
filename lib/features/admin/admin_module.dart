@@ -4604,9 +4604,52 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
         }
       }
 
+      // Vincular acceso al sistema (Supabase Auth) si aplica.
+      // Invoca Edge Function admin_create_staff_user (service_role) que:
+      //  - crea user en auth.users con email_confirm=true
+      //  - si email ya existe, vincula sin duplicar (no resetea password)
+      //  - actualiza staff.auth_user_id y can_login=true
+      String? accessMessage;
+      if (_canLogin && accessEmail.isNotEmpty) {
+        final bool isInsert = widget.staff == null;
+        final hasPassword = _accessPassCtrl.text.trim().isNotEmpty;
+        if (isInsert || hasPassword) {
+          try {
+            final fn = await Supabase.instance.client.functions.invoke(
+              'admin_create_staff_user',
+              body: {
+                'staff_id': staffId,
+                'email': accessEmail,
+                'password': _accessPassCtrl.text.trim(),
+                'full_name': _nameCtrl.text.trim(),
+                'role': _role,
+              },
+            );
+            final data = fn.data is Map ? Map<String, dynamic>.from(fn.data as Map) : null;
+            if (fn.status >= 400) {
+              final err = data?['error']?.toString() ?? 'desconocido';
+              accessMessage = 'Staff guardado, pero acceso falló: $err';
+            } else {
+              final linked = data?['linked'] == true;
+              accessMessage = linked
+                  ? 'Acceso vinculado al usuario existente (password no cambiado).'
+                  : 'Acceso creado correctamente.';
+            }
+          } catch (e) {
+            debugPrint('admin_create_staff_user invoke failed: $e');
+            accessMessage = 'Staff guardado, pero acceso falló: $e';
+          }
+        }
+      }
+
       if (mounted) {
         Navigator.pop(context);
         widget.onSaved();
+        if (accessMessage != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(accessMessage)),
+          );
+        }
       }
     } catch (e) {
       debugPrint('Error saving staff: $e');

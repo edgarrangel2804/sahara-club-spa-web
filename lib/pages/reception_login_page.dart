@@ -15,11 +15,37 @@ class _ReceptionLoginPageState extends State<ReceptionLoginPage> {
 
   Future<void> _signIn() async {
     setState(() => _isLoading = true);
+    final supa = Supabase.instance.client;
     try {
-      await Supabase.instance.client.auth.signInWithPassword(
+      final res = await supa.auth.signInWithPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
+      final user = res.user;
+      if (user == null) {
+        throw Exception('Credenciales inválidas.');
+      }
+
+      // Verificar que el auth user esté vinculado a un staff activo con login habilitado.
+      // Esto bloquea: clientes, admins de IA, usuarios huérfanos y staff desactivado.
+      final staff = await supa
+          .from('staff')
+          .select('id, role, active, can_login')
+          .eq('auth_user_id', user.id)
+          .maybeSingle();
+
+      final isActive = staff != null && (staff['active'] == true);
+      final canLogin = staff != null && (staff['can_login'] == true);
+      final role = staff?['role']?.toString();
+      const allowedRoles = {'admin', 'reception', 'therapist'};
+
+      if (staff == null || !isActive || !canLogin || !allowedRoles.contains(role)) {
+        await supa.auth.signOut();
+        throw Exception(
+          'Tu cuenta no tiene acceso al portal de staff. Contacta al administrador.',
+        );
+      }
+
       if (mounted) {
         Navigator.pushReplacementNamed(context, '/agenda');
       }

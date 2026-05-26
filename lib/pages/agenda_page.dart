@@ -500,6 +500,7 @@ class _AgendaPageState extends State<AgendaPage> {
   String? _agendaChatConversationId;
   _Booking? _agendaChatBooking;
   String _userRole = 'reception';
+  String _userDisplayName = '';
   int _messagesUnreadCount = 0;
 
   Future<void> _logout() async {
@@ -699,19 +700,34 @@ class _AgendaPageState extends State<AgendaPage> {
     final userId = Supabase.instance.client.auth.currentUser?.id;
     if (userId == null) return;
     try {
-      final profile = await Supabase.instance.client
+      final supa = Supabase.instance.client;
+      final profile = await supa
           .from('profiles')
           .select('role')
           .eq('id', userId)
           .maybeSingle();
+      // staff.full_name es la fuente de verdad del nombre del usuario logueado.
+      Map<String, dynamic>? staffRow;
+      try {
+        staffRow = await supa
+            .from('staff')
+            .select('full_name')
+            .eq('auth_user_id', userId)
+            .maybeSingle();
+      } catch (_) {}
       if (!mounted) return;
       final role = RolePermissions.normalize(profile?['role'] as String?);
       await RolePermissions.warmup(role, forceRefresh: true);
       await _loadUnreadMessagesCount();
       if (!mounted) return;
+      final fullName = (staffRow?['full_name'] as String?)?.trim() ?? '';
+      final firstName = fullName.isEmpty
+          ? ''
+          : fullName.split(RegExp(r'\s+')).first;
       setState(() {
         final visibleModules = RolePermissions.visibleModulesFor(role);
         _userRole = role;
+        _userDisplayName = firstName;
         if (visibleModules.isEmpty) {
           _activeModule = '';
         } else if (!visibleModules.contains(_activeModule)) {
@@ -1199,6 +1215,7 @@ class _AgendaPageState extends State<AgendaPage> {
                                 selectedBranchId: _selectedBranchId,
                                 statusFilter: _statusFilter,
                                 weekStart: _weekStart,
+                                userDisplayName: _userDisplayName,
                                 onBranch: (v) async {
                                   setState(() => _selectedBranchId = v);
                                   await _loadCalendarSettings();
@@ -2823,6 +2840,7 @@ class _Sidebar extends StatefulWidget {
     required this.onStatus,
     required this.onDateTap,
     required this.onLogout,
+    this.userDisplayName = '',
   });
 
   final List<_Therapist> therapists;
@@ -2836,6 +2854,7 @@ class _Sidebar extends StatefulWidget {
   final ValueChanged<String?> onStatus;
   final ValueChanged<DateTime> onDateTap;
   final Future<void> Function() onLogout;
+  final String userDisplayName;
 
   @override
   State<_Sidebar> createState() => _SidebarState();
@@ -2888,11 +2907,16 @@ class _SidebarState extends State<_Sidebar> {
                 ),
                 const Spacer(),
                 Text(
-                  'RECEPCIÓN',
+                  widget.userDisplayName.isEmpty
+                      ? 'RECEPCIÓN'
+                      : 'HOLA, ${widget.userDisplayName.toUpperCase()}',
                   style: GoogleFonts.inter(
-                    color: Colors.black26,
+                    color: widget.userDisplayName.isEmpty
+                        ? Colors.black26
+                        : SaharaTheme.gold,
                     fontSize: 9,
                     letterSpacing: 2,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ],

@@ -1,0 +1,9 @@
+# Supabase project config for Sahara Club Spa.
+# El campo crítico aquí es verify_jwt=false para whatsapp-webhook: Meta
+# entrega webhooks sin Authorization Bearer; si verify_jwt queda en true
+# (default), Supabase rechaza con 401 y Meta deshabilita la suscripción.
+
+project_id = "sahara-club-spa"
+
+[functions.whatsapp-webhook]
+verify_jwt = false
