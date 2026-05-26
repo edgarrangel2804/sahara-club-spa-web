@@ -286,9 +286,37 @@ const TOOLS = [
       required: ["service_id", "date_from", "date_to"],
     },
   },
+  {
+    name: "create_pending_booking",
+    description:
+      "Crea una solicitud de reserva en la agenda real con status='pending_reception'. SOLO usa esta herramienta cuando ya tengas: servicio, fecha y hora explícitos del cliente, y haya intención clara de reservar. La recepción humana valida la disponibilidad real y confirma después. Es idempotente: si ya creaste una solicitud idéntica en los últimos 10 minutos, devuelve la misma sin duplicar.",
+    input_schema: {
+      type: "object",
+      properties: {
+        service_id: { type: "string", description: "UUID del servicio (de list_services)" },
+        booking_date: { type: "string", description: "YYYY-MM-DD en zona Tijuana" },
+        booking_time: { type: "string", description: "HH:MM 24h (ej. 14:00)" },
+        duration_min: { type: "number", description: "Duración en minutos (opcional, default 60)" },
+        client_name: { type: "string", description: "Nombre del cliente si lo conoces; opcional" },
+        notes: { type: "string", description: "Notas opcionales (preferencias, contexto)" },
+        confidence: { type: "number", description: "Confianza 0-1 en que la intención es real" },
+      },
+      required: ["service_id", "booking_date", "booking_time"],
+    },
+  },
 ]
 
-async function execTool(name: string, input: Record<string, unknown>) {
+type ToolContext = {
+  phone?: string
+  conversationId?: string
+  clientName?: string | null
+}
+
+async function execTool(
+  name: string,
+  input: Record<string, unknown>,
+  ctx: ToolContext = {},
+) {
   switch (name) {
     case "list_services": {
       const limit = Math.min(Number(input.limit ?? 5), 10)
@@ -416,6 +444,75 @@ async function execTool(name: string, input: Record<string, unknown>) {
         weekly_hours: hours ?? [],
         note: "Read-only. Recepción confirma la disponibilidad final.",
       }
+    }
+    case "create_pending_booking": {
+      const phone = String(ctx.phone ?? "").trim()
+      if (!phone) return { error: "phone_missing_from_context" }
+      const serviceId = String(input.service_id ?? "").trim()
+      const date = String(input.booking_date ?? "").trim()
+      const time = String(input.booking_time ?? "").trim()
+      if (!serviceId || !date || !time) {
+        return { error: "missing_service_or_datetime" }
+      }
+      // Normalizar HH:MM → HH:MM:00 para tipo time
+      const timeNorm = time.length === 5 ? `${time}:00` : time
+      const { data, error } = await supabase.rpc("create_pending_booking_from_ai", {
+        p_phone: phone,
+        p_client_name: String(input.client_name ?? ctx.clientName ?? ""),
+        p_service_id: serviceId,
+        p_booking_date: date,
+        p_booking_time: timeNorm,
+        p_duration_min: input.duration_min ? Number(input.duration_min) : null,
+        p_notes: String(input.notes ?? ""),
+        p_ai_conversation_id: ctx.conversationId ?? null,
+        p_ai_confidence_score: input.confidence != null ? Number(input.confidence) : null,
+      })
+      if (error) return { error: error.message }
+      const result = data as Record<string, unknown> | null
+      // Alerta interna a recepción solo si REALMENTE se creó (no en dup)
+      if (result?.created === true && result?.booking_id) {
+        try {
+          // Construir mensaje con datos del booking (servicio, etc.)
+          const { data: svc } = await supabase
+            .from("services")
+            .select("name")
+            .eq("id", serviceId)
+            .maybeSingle()
+          const serviceName = (svc as { name?: string } | null)?.name ?? "Servicio"
+          const customerName = String(input.client_name ?? ctx.clientName ?? "Cliente WhatsApp")
+          const alert = [
+            "📅 *Nueva solicitud IA*",
+            "",
+            `*Cliente:* ${customerName}`,
+            `*Teléfono:* ${phone}`,
+            `*Servicio:* ${serviceName}`,
+            `*Fecha:* ${date}`,
+            `*Hora:* ${time}`,
+            "",
+            "Pendiente de validación en agenda Sahara.",
+          ].join("\n")
+          // Cargamos human_backup_numbers de ai_settings
+          const { data: settingsRow } = await supabase
+            .from("ai_settings")
+            .select("human_backup_numbers, human_backup_enabled")
+            .eq("id", 1)
+            .maybeSingle()
+          const enabled = (settingsRow as { human_backup_enabled?: boolean } | null)?.human_backup_enabled === true
+          const targets = ((settingsRow as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
+          if (enabled && Array.isArray(targets)) {
+            for (const target of targets) {
+              try {
+                await sendTextToMeta(normalizePhone(String(target)), alert)
+              } catch (e) {
+                console.warn("reception alert failed for", target, (e as Error).message)
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("pending_booking alert build failed:", (e as Error).message)
+        }
+      }
+      return result ?? { ok: false, error: "rpc_returned_null" }
     }
     default:
       return { error: `tool desconocida: ${name}` }
@@ -810,10 +907,13 @@ VOCABULARIO PERMITIDO (úsalo activamente):
 ✅ "pendiente de confirmación", "sujeto a validación"
 ✅ "te confirmará por aquí en breve"
 
-VOCABULARIO PROHIBIDO:
-❌ "confirmada", "confirmado", "quedó", "agendada", "apartado", "reservado", "está reservada"
+VOCABULARIO PROHIBIDO (mientras la IA hable, ANTES de confirmación de recepción):
+❌ "confirmada", "confirmado", "quedó", "apartado", "reservado", "está reservada"
 ❌ "ya tienes tu cita", "listo, tu cita es..."
 ❌ "entra a", "ve a la landing", "agenda en línea"
+Nota: "agendada" SÍ es permitida solo en mensajes de sistema/template oficial
+post-confirmación de recepción. La IA misma no debe decir "tu cita ya quedó
+agendada" porque eso es trabajo de recepción.
 
 EMOJIS PERMITIDOS:
 ✅ ✨  🌿  (úsalos con moderación, máximo 1 por mensaje)
@@ -827,7 +927,19 @@ PASO 1 — Cliente pregunta por servicio o expresa interés:
   • Pregunta su preferencia.
 
 PASO 2 — Cliente elige día/hora específico (ej. "jueves 4pm"):
-  Responde EXACTAMENTE así (adapta servicio/fecha/hora):
+  ACCIÓN OBLIGATORIA: llama la tool create_pending_booking con:
+    service_id = UUID del servicio elegido (del list_services anterior)
+    booking_date = YYYY-MM-DD (zona Tijuana, usa server_today/tomorrow)
+    booking_time = HH:MM en 24h (ej. 16:00 para 4pm)
+    duration_min = del servicio si lo conoces
+    notes = preferencias del cliente si las dijo
+    confidence = 0.85 si la intención es clara y completa, 0.6 si dudosa
+
+  El tool crea automáticamente una solicitud en la agenda real con
+  status='pending_reception' y alerta a recepción. Es idempotente: si el
+  cliente repite, NO duplica.
+
+  Después de la tool, responde EXACTAMENTE así (adapta servicio/fecha/hora):
 
   "Perfecto ✨
 
@@ -839,6 +951,13 @@ PASO 2 — Cliente elige día/hora específico (ej. "jueves 4pm"):
   Recepción validará disponibilidad y te confirmará por aquí en breve 🌿
 
   Los horarios están sujetos a validación de disponibilidad."
+
+  Si el tool devuelve duplicate_prevented=true, NO repitas el mensaje
+  largo; di: "Ya registramos tu solicitud hace un momento ✨ Recepción
+  validará disponibilidad y te confirmará por aquí en breve 🌿"
+
+  Si el tool devuelve error, di: "Tuvimos un problema registrando tu
+  solicitud. Recepción se pondrá en contacto contigo en breve."
 
 PASO 3 — Cliente pregunta "¿ya quedó?", "¿ya está confirmada?", "¿ya está pagada?":
   Responde con calma:
@@ -1182,7 +1301,11 @@ Deno.serve(async (req) => {
           ? { error: "tool_restricted_to_admin" }
           : isAdminCall
             ? await execAdminTool(t.name, t.input)
-            : await execTool(t.name, t.input)
+            : await execTool(t.name, t.input, {
+                phone,
+                conversationId: convId,
+                clientName: client?.full_name ?? null,
+              })
         await supabase.from("ai_messages").insert({
           conversation_id: convId, role: "tool",
           tool_name: t.name, tool_input: t.input, tool_output: out,

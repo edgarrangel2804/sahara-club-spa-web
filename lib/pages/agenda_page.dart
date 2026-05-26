@@ -798,6 +798,8 @@ class _AgendaPageState extends State<AgendaPage> {
       case 'pending':
       case 'scheduled':
         return 'Pendiente';
+      case 'pending_reception':
+        return 'Solicitud IA';
       case 'confirmed':
         return 'Confirmada';
       case 'checked_in':
@@ -826,6 +828,8 @@ class _AgendaPageState extends State<AgendaPage> {
       case 'pending':
       case 'scheduled':
         return const Color(0xFFC68A17);
+      case 'pending_reception':
+        return const Color(0xFFFF8C00);
       case 'confirmed':
         return const Color(0xFF1A9E65);
       case 'checked_in':
@@ -2057,6 +2061,8 @@ class _AgendaReservationChatDrawer extends StatelessWidget {
       case 'pending':
       case 'scheduled':
         return 'Pendiente';
+      case 'pending_reception':
+        return 'Solicitud IA';
       case 'confirmed':
         return 'Confirmada';
       case 'checked_in':
@@ -6132,6 +6138,7 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
     'attended': ('Asiste', Color(0xFFFF9899)),
     'no_show': ('No asistió', Color(0xFFFFB3B3)),
     'pending': ('Pendiente', Color(0xFFFF4444)),
+    'pending_reception': ('Solicitud IA', Color(0xFFFF8C00)),
     'waiting': ('En espera', Color(0xFF52C41A)),
     'cancelled': ('Cancelado', Color(0xFFB32D2D)),
     'rescheduled': ('Reagendado', Color(0xFF0A9AA4)),
