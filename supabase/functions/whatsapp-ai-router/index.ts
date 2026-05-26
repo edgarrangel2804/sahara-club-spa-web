@@ -1005,6 +1005,8 @@ REGLAS DURAS (no negociables):
    PROHIBIDO totalmente. Esa palabra solo la usa recepción.
 2. Never claim an appointment is confirmed unless reception or the booking system explicitly confirms it.
 3. NUNCA inventes servicios, precios, horarios, beneficios ni terapeutas. Si no aparece en tools, di "déjame verificar con recepción".
+3a. PRECIOS: usa SIEMPRE el campo "price" exacto del row de list_services que el cliente eligió. NUNCA copies un precio de otro servicio ni mezcles entre variantes de duración. Si tienes el UUID de un servicio y no recuerdas el precio, llama get_service_detail con ese UUID. PROHIBIDO inventar precios.
+3b. COHERENCIA: si en ESTA conversación dijiste que un servicio existe (lo ofreciste por nombre y precio), NUNCA digas después que "no aparece en el sistema". Si dudas, llama list_services de nuevo, pero NO te contradigas.
 4. NUNCA des consejo médico ni diagnóstico. Si mencionan condición médica, sugiere consultar con su médico y con recepción.
 5. NO ofrezcas descuentos. Si los piden: "déjame consultar con recepción".
 6. NUNCA digas "entra a la landing", "agenda en línea", "ve a la web a finalizar". El flujo es WhatsApp → recepción → confirmación.
@@ -1051,6 +1053,15 @@ PASO 1 — Cliente pregunta por servicio o expresa interés:
 
 PASO 2 — Cliente elige día/hora específico (ej. "jueves 4pm") O elige
   una de las alternativas que tú sugeriste antes:
+
+  🚨 PROHIBIDO ABSOLUTAMENTE en este punto:
+  - Preguntar trivia personal como "¿es tu primer masaje?", "¿ya nos has visitado?",
+    "¿prefieres terapeuta hombre o mujer?", "¿cómo te enteraste de nosotros?".
+    Esas preguntas DISTRAEN del cierre. Después de la reserva, recepción puede
+    preguntar lo que falte. Tu única tarea ahora es CERRAR LA RESERVA.
+  - Decir "déjame verificar con recepción" sin antes haber llamado la tool.
+    Narrar la verificación NO ES verificar. La verificación es llamar la tool.
+
   OBLIGATORIO: llama check_availability_for_booking con:
     service_id = UUID del servicio elegido (de list_services)
     requested_date = YYYY-MM-DD (zona Tijuana, usa server_today/tomorrow)
@@ -1441,28 +1452,39 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Detección: si la última respuesta del assistant en esta conversación
-    // sugirió alternativas de horario (tool check_availability_for_booking con
-    // available=false + suggested_slots), entonces el cliente probablemente
-    // está eligiendo una de esas opciones AHORA. Forzamos al modelo a usar
-    // la tool check_availability_for_booking en lugar de responder texto plano.
+    // Detección de intención de reserva con fecha+hora en el mensaje del cliente.
+    // Si el cliente menciona un día (hoy/mañana/lunes...domingo o un número de día)
+    // junto con una hora (\d{1,2} con am/pm/horas/:), entonces es señal clara de
+    // que quiere reservar → forzamos check_availability_for_booking.
+    // También se activa si el último tool_output fue suggested_slots
+    // (cliente eligiendo alternativa).
     let forceToolChoice: Record<string, unknown> | undefined = undefined
     if (!isAdmin) {
       try {
-        const { data: lastTool } = await supabase
-          .from("ai_messages")
-          .select("tool_name, tool_output, created_at")
-          .eq("conversation_id", convId)
-          .eq("role", "tool")
-          .eq("tool_name", "check_availability_for_booking")
-          .order("created_at", { ascending: false })
-          .limit(1)
-        const recent = (lastTool ?? []) as Array<{ tool_output: Record<string, unknown> | null; created_at: string }>
-        if (recent.length > 0) {
-          const out = recent[0].tool_output as Record<string, unknown> | null
-          const slots = out && Array.isArray(out.suggested_slots) ? out.suggested_slots : []
-          if (out && out.available === false && slots.length > 0) {
-            forceToolChoice = { type: "tool", name: "check_availability_for_booking" }
+        const lower = messageText.toLowerCase()
+        const dayWord = /\b(hoy|mañana|manana|lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)\b/.test(lower)
+        const dayNum = /\b\d{1,2}\s+de\s+\w+\b/.test(lower) // "29 de mayo"
+        const timeWord = /\b(\d{1,2}(:\d{2})?\s*(am|pm|a\.?m\.?|p\.?m\.?|hrs?|horas?))\b|\b(a\s+las?\s+\d{1,2})/.test(lower)
+        const hasDateTime = (dayWord || dayNum) && timeWord
+        if (hasDateTime) {
+          forceToolChoice = { type: "tool", name: "check_availability_for_booking" }
+        }
+        if (!forceToolChoice) {
+          const { data: lastTool } = await supabase
+            .from("ai_messages")
+            .select("tool_name, tool_output, created_at")
+            .eq("conversation_id", convId)
+            .eq("role", "tool")
+            .eq("tool_name", "check_availability_for_booking")
+            .order("created_at", { ascending: false })
+            .limit(1)
+          const recent = (lastTool ?? []) as Array<{ tool_output: Record<string, unknown> | null; created_at: string }>
+          if (recent.length > 0) {
+            const out = recent[0].tool_output as Record<string, unknown> | null
+            const slots = out && Array.isArray(out.suggested_slots) ? out.suggested_slots : []
+            if (out && out.available === false && slots.length > 0) {
+              forceToolChoice = { type: "tool", name: "check_availability_for_booking" }
+            }
           }
         }
       } catch (e) {
