@@ -1027,6 +1027,28 @@ Deno.serve(async (req) => {
         .update({ last_message_at: new Date().toISOString() })
         .eq("id", convId)
 
+      // Si el gate trae un auto_reply (after_hours_blocked, etc.), enviarlo
+      // al cliente para que sepa cuándo le respondemos. Solo aplica a clientes
+      // (admin no entra a esta rama). Persistimos como mensaje assistant.
+      const autoReply = (gate as { auto_reply?: string })?.auto_reply
+      let autoReplySent = false
+      if (autoReply && typeof autoReply === "string" && autoReply.trim().length > 0) {
+        try {
+          await sendTextToMeta(phone, autoReply)
+          await supabase.from("ai_messages").insert({
+            conversation_id: convId, role: "assistant", content: autoReply,
+            tokens_in: 0, tokens_out: 0, latency_ms: 0,
+            llm_model: null,
+            stop_reason: denyReason,
+            is_admin_query: false,
+            tool_output: { auto_reply: true, reason: denyReason },
+          })
+          autoReplySent = true
+        } catch (e) {
+          console.warn("after-hours auto_reply send failed:", (e as Error).message)
+        }
+      }
+
       // Notificar al número humano de respaldo (con dedup 15 min).
       // NO se dispara para soft closings (esos no llegan aquí porque retornan antes).
       // NO se dispara para mensajes admin con acceso (no entran a esta rama).
@@ -1038,6 +1060,7 @@ Deno.serve(async (req) => {
         conversation_id: convId,
         phone,
         gate,
+        auto_reply_sent: autoReplySent,
         human_backup: backup,
       })
     }

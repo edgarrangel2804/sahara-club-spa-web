@@ -13,6 +13,10 @@ import 'whatsapp_meta_templates_panel.dart';
 import 'whatsapp_queue_dashboard.dart';
 import 'knowledge_base_panel.dart';
 import 'ai_control_panel.dart';
+import 'faqs_panel.dart';
+import 'business_hours_panel.dart';
+import 'services_ai_fields_panel.dart';
+import 'staff_ai_profile_panel.dart';
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Models
@@ -344,7 +348,7 @@ class AdminModule extends StatefulWidget {
 
 class _AdminModuleState extends State<AdminModule>
     with SingleTickerProviderStateMixin {
-  late final _tab = TabController(length: 7, vsync: this);
+  late final _tab = TabController(length: 8, vsync: this);
   bool _loading = true;
   List<_Staff> _staff = [];
   List<Map<String, dynamic>> _todayBookings = [];
@@ -555,6 +559,8 @@ class _AdminModuleState extends State<AdminModule>
         return 'Finanzas';
       case 5:
         return 'Permisos Recepcion';
+      case 6:
+        return 'Configuraciones IA';
       default:
         return 'Configuracion';
     }
@@ -574,6 +580,8 @@ class _AdminModuleState extends State<AdminModule>
         return 'Metricas, flujo operativo y seguimiento financiero del negocio.';
       case 5:
         return 'Reglas de acceso y acciones permitidas para recepcion.';
+      case 6:
+        return 'Centro de control del agente IA: plantillas, FAQs, horarios, base de conocimiento y cola WhatsApp.';
       default:
         return 'Ajustes de negocio, sucursales e integraciones internas.';
     }
@@ -910,6 +918,12 @@ class _AdminModuleState extends State<AdminModule>
                       ),
                       Tab(
                         child: _AdminTabLabel(
+                          icon: Icons.smart_toy_outlined,
+                          label: 'Configuraciones IA',
+                        ),
+                      ),
+                      Tab(
+                        child: _AdminTabLabel(
                           icon: Icons.settings_outlined,
                           label: 'Configuracion',
                         ),
@@ -955,6 +969,7 @@ class _AdminModuleState extends State<AdminModule>
                       const ProductosModule(),
                       const FinanzasModule(),
                       const ReceptionPermissionsModule(),
+                      const _AiSettingsTab(),
                       _SettingsTab(branches: _branches, onRefresh: _load),
                     ],
                   ),
@@ -5491,9 +5506,50 @@ InputDecoration _deco(String? hint) => InputDecoration(
   ),
 );
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Settings Tab (WhatsApp Config + Branches CRUD)
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ---------------------------------------------------------------------------
+// AI Settings Tab — centro de control del agente IA
+// Reúne todos los paneles operativos del concierge IA: control, plantillas,
+// FAQs, horarios, base de conocimiento de servicios y staff, cola WhatsApp.
+// ---------------------------------------------------------------------------
+class _AiSettingsTab extends StatelessWidget {
+  const _AiSettingsTab();
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(32),
+      child: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 1000),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              AiControlPanel(),
+              SizedBox(height: 32),
+              BusinessHoursPanel(),
+              SizedBox(height: 32),
+              WhatsAppMetaTemplatesPanel(),
+              SizedBox(height: 32),
+              FaqsPanel(),
+              SizedBox(height: 32),
+              ServicesAiFieldsPanel(),
+              SizedBox(height: 32),
+              StaffAiProfilePanel(),
+              SizedBox(height: 32),
+              KnowledgeBasePanel(),
+              SizedBox(height: 32),
+              WhatsAppQueueDashboard(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Settings Tab (WhatsApp Connection + Stripe + Branches CRUD)
+// ---------------------------------------------------------------------------
 class _SettingsTab extends StatefulWidget {
   final List<_Branch> branches;
   final VoidCallback onRefresh;
@@ -5631,14 +5687,6 @@ class _SettingsTabState extends State<_SettingsTab> {
               _buildHeader(),
               const SizedBox(height: 24),
               _WhatsAppMetaSetup(onRefresh: widget.onRefresh),
-              const SizedBox(height: 32),
-              const WhatsAppMetaTemplatesPanel(),
-              const SizedBox(height: 32),
-              const KnowledgeBasePanel(),
-              const SizedBox(height: 32),
-              const AiControlPanel(),
-              const SizedBox(height: 32),
-              const WhatsAppQueueDashboard(),
               const SizedBox(height: 32),
               _StripeSetup(onRefresh: widget.onRefresh),
               const SizedBox(height: 32),
