@@ -104,12 +104,24 @@ class _Booking {
     this.branchName,
     this.branchAddress,
     this.branchMaps,
+    this.paymentRequirement,
+    this.waiverReason,
+    this.giftCardId,
+    this.membershipId,
+    this.depositRequiredCents,
+    this.depositPaidCents,
   });
 
   final String? sucursalId;
   final String? branchName;
   final String? branchAddress;
   final String? branchMaps;
+  final String? paymentRequirement;  // deposit_required | waived | paid
+  final String? waiverReason;        // gift_card | membership | admin_override
+  final String? giftCardId;
+  final String? membershipId;
+  final int?    depositRequiredCents;
+  final int?    depositPaidCents;
 
 
   factory _Booking.fromMap(Map<String, dynamic> m) {
@@ -150,6 +162,12 @@ class _Booking {
             (kEnableMultiBranch ? null : kDefaultBranchAddress),
         branchMaps: (m['sucursales'] as Map?)?['link_maps'] as String? ??
             (kEnableMultiBranch ? null : kDefaultBranchMaps),
+        paymentRequirement: m['payment_requirement'] as String?,
+        waiverReason: m['waiver_reason'] as String?,
+        giftCardId: m['gift_card_id'] as String?,
+        membershipId: m['membership_id'] as String?,
+        depositRequiredCents: (m['deposit_required_cents'] as num?)?.toInt(),
+        depositPaidCents: (m['deposit_paid_cents'] as num?)?.toInt(),
       );
     } catch (e) {
       debugPrint('Error parsing booking ${m['id']}: $e');
@@ -4981,6 +4999,28 @@ class _BookingCardState extends State<_BookingCard> {
                   maxLines: 1,
                 ),
               ],
+              // Chip de waiver / anticipo, solo si la cita tiene esa data
+              if (b.paymentRequirement == 'waived' && b.durationMinutes >= 30) ...[
+                const SizedBox(height: 2),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: _paymentLineColor(b).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(3),
+                    border: Border.all(color: _paymentLineColor(b).withValues(alpha: 0.5)),
+                  ),
+                  child: Text(
+                    _paymentLineLabel(b),
+                    style: GoogleFonts.inter(
+                      color: _paymentLineColor(b),
+                      fontSize: 8.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -4992,6 +5032,38 @@ class _BookingCardState extends State<_BookingCard> {
 // ═════════════════════════════════════════════════════════════════════════════
 // Booking Detail Dialog
 // ═════════════════════════════════════════════════════════════════════════════
+String _paymentLineLabel(_Booking b) {
+  if (b.paymentRequirement == 'waived') {
+    switch (b.waiverReason) {
+      case 'gift_card':
+        return 'Gift Card · sin anticipo';
+      case 'membership':
+        return 'Membresía · sin anticipo';
+      case 'admin_override':
+        return 'Sin anticipo · autorizado';
+      default:
+        return 'Sin anticipo';
+    }
+  }
+  if (b.paymentRequirement == 'paid') return 'Anticipo pagado';
+  return 'Anticipo requerido';
+}
+
+Color _paymentLineColor(_Booking b) {
+  if (b.paymentRequirement == 'waived') {
+    switch (b.waiverReason) {
+      case 'gift_card':
+        return const Color(0xFFE07B00);
+      case 'membership':
+        return const Color(0xFF6A54E0);
+      default:
+        return const Color(0xFF2D8A4F);
+    }
+  }
+  if (b.paymentRequirement == 'paid') return const Color(0xFF1A9E65);
+  return const Color(0xFFB32D2D);
+}
+
 class _BookingDetailDialog extends StatelessWidget {
   const _BookingDetailDialog({
     required this.booking,
@@ -5091,6 +5163,34 @@ class _BookingDetailDialog extends StatelessWidget {
                 text: statusLabel(b.status),
                 color: b.cardAccent,
               ),
+              // Bloque de anticipo / waiver
+              if (b.paymentRequirement != null) ...[
+                const SizedBox(height: 4),
+                _DetailRow(
+                  icon: Icons.payments_outlined,
+                  text: _paymentLineLabel(b),
+                  color: _paymentLineColor(b),
+                ),
+                if (b.depositRequiredCents != null && b.depositRequiredCents! > 0)
+                  _DetailRow(
+                    icon: Icons.attach_money_rounded,
+                    text:
+                        'Anticipo: \$${(b.depositRequiredCents! / 100).toStringAsFixed(0)} MXN'
+                        '${(b.depositPaidCents ?? 0) > 0 ? ' · pagado \$${((b.depositPaidCents ?? 0) / 100).toStringAsFixed(0)}' : ''}',
+                  ),
+                if (b.giftCardId != null)
+                  _DetailRow(
+                    icon: Icons.redeem_outlined,
+                    text: 'Gift card: ${b.giftCardId!.substring(0, 8)}…',
+                    color: const Color(0xFFE07B00),
+                  ),
+                if (b.membershipId != null)
+                  _DetailRow(
+                    icon: Icons.workspace_premium_outlined,
+                    text: 'Membresía: ${b.membershipId!.substring(0, 8)}…',
+                    color: const Color(0xFF6A54E0),
+                  ),
+              ],
               const SizedBox(height: 20),
               // Actions
               Wrap(
