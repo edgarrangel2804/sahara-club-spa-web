@@ -502,6 +502,10 @@ class _AgendaPageState extends State<AgendaPage> {
   String _userRole = 'reception';
   String _userDisplayName = '';
   int _messagesUnreadCount = 0;
+  int _pendingConfirmCount = 0;
+  RealtimeChannel? _paymentsChannel;
+  Timer? _pendingConfirmPollTimer;
+  final Set<String> _seenPaymentReceivedIds = {};
 
   Future<void> _logout() async {
     await Supabase.instance.client.auth.signOut();
@@ -528,6 +532,9 @@ class _AgendaPageState extends State<AgendaPage> {
     _subscribeToScheduleBlocksRealtime();
     _subscribeToMessagesRealtime();
     _startMessagesPolling();
+    _loadPendingConfirmCount();
+    _subscribeToPaymentReceivedRealtime();
+    _startPendingConfirmPolling();
     _timer = Timer.periodic(
       const Duration(minutes: 1),
       (_) => setState(() => _now = DateTime.now()),
@@ -552,6 +559,10 @@ class _AgendaPageState extends State<AgendaPage> {
     if (_messagesChannel != null) {
       Supabase.instance.client.removeChannel(_messagesChannel!);
     }
+    if (_paymentsChannel != null) {
+      Supabase.instance.client.removeChannel(_paymentsChannel!);
+    }
+    _pendingConfirmPollTimer?.cancel();
     super.dispose();
   }
 
@@ -636,6 +647,97 @@ class _AgendaPageState extends State<AgendaPage> {
           },
         );
       },
+    );
+  }
+
+  Future<void> _loadPendingConfirmCount() async {
+    try {
+      final rows = await Supabase.instance.client
+          .from('bookings')
+          .select('id')
+          .eq('status', 'payment_received');
+      if (!mounted) return;
+      final list = rows as List;
+      setState(() {
+        _pendingConfirmCount = list.length;
+        for (final r in list) {
+          final id = (r as Map)['id']?.toString();
+          if (id != null) _seenPaymentReceivedIds.add(id);
+        }
+      });
+    } catch (_) {}
+  }
+
+  void _subscribeToPaymentReceivedRealtime() {
+    _paymentsChannel = Supabase.instance.client
+        .channel('agenda-payments-received-realtime')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'bookings',
+          callback: (payload) async {
+            final newRow = payload.newRecord;
+            final status = newRow['status']?.toString();
+            final id = newRow['id']?.toString();
+            if (status == 'payment_received' &&
+                id != null &&
+                !_seenPaymentReceivedIds.contains(id)) {
+              _seenPaymentReceivedIds.add(id);
+              if (!mounted) return;
+              setState(() {
+                _pendingConfirmCount += 1;
+              });
+              _showNewPaymentToast(id);
+            } else if (status != 'payment_received' &&
+                id != null &&
+                _seenPaymentReceivedIds.contains(id)) {
+              // El booking pasó a confirmed o cancelled: descuenta
+              _seenPaymentReceivedIds.remove(id);
+              if (!mounted) return;
+              setState(() {
+                _pendingConfirmCount = (_pendingConfirmCount - 1).clamp(0, 99);
+              });
+            }
+          },
+        )
+        .subscribe();
+  }
+
+  void _startPendingConfirmPolling() {
+    _pendingConfirmPollTimer ??= Timer.periodic(
+      const Duration(seconds: 30),
+      (_) {
+        if (mounted) _loadPendingConfirmCount();
+      },
+    );
+  }
+
+  void _showNewPaymentToast(String bookingId) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: const Color(0xFF1A9E65),
+        duration: const Duration(seconds: 6),
+        content: Row(
+          children: [
+            const Icon(Icons.payments_outlined, color: Colors.white, size: 22),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Nuevo pago de anticipo recibido. Revisa la agenda y confirma la cita.',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+              ),
+            ),
+            TextButton(
+              onPressed: () {
+                _loadBookings();
+              },
+              style: TextButton.styleFrom(foregroundColor: Colors.white),
+              child: const Text('Refrescar'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1146,6 +1248,7 @@ class _AgendaPageState extends State<AgendaPage> {
             activeModule: effectiveModule,
             userRole: _userRole,
             messagesUnreadCount: _messagesUnreadCount,
+            pendingConfirmCount: _pendingConfirmCount,
             onModuleTap: (m) => setState(() => _activeModule = m),
             onLogout: _logout,
           ),
@@ -7562,6 +7665,7 @@ class _ModuleNav extends StatelessWidget {
     required this.activeModule,
     required this.userRole,
     required this.messagesUnreadCount,
+    required this.pendingConfirmCount,
     required this.onModuleTap,
     required this.onLogout,
   });
@@ -7569,6 +7673,7 @@ class _ModuleNav extends StatelessWidget {
   final String activeModule;
   final String userRole;
   final int messagesUnreadCount;
+  final int pendingConfirmCount;
   final ValueChanged<String> onModuleTap;
   final Future<void> Function() onLogout;
 
@@ -7667,7 +7772,9 @@ class _ModuleNav extends StatelessWidget {
                         id: m.$1,
                         label: m.$1 == 'admin' ? 'Administracion' : m.$2,
                         icon: m.$3,
-                        badgeCount: m.$1 == 'mensajes' ? messagesUnreadCount : null,
+                        badgeCount: m.$1 == 'mensajes'
+                            ? messagesUnreadCount
+                            : (m.$1 == 'agenda' ? pendingConfirmCount : null),
                         active: activeModule == m.$1,
                         onTap: () => onModuleTap(m.$1),
                       ),

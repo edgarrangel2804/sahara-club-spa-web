@@ -21,9 +21,19 @@ async function handleBookingDepositPayment(
     amount_total?: number
   },
 ) {
-  const stripeSessionId = String(object.id ?? "").trim()
-  const paymentIntentId = String(object.payment_intent ?? "").trim()
-  const amountTotal = typeof object.amount_total === "number" ? object.amount_total / 100 : null
+  // Stripe IDs según el tipo de event:
+  // - checkout.session.* → object es la Session; id de PI está en object.payment_intent
+  // - payment_intent.* → object ES el PaymentIntent; id está en object.id
+  const isPiEvent = typeof event.type === "string" && event.type.startsWith("payment_intent.")
+  const stripeSessionId = isPiEvent ? "" : String(object.id ?? "").trim()
+  const paymentIntentId = isPiEvent
+    ? String(object.id ?? "").trim()
+    : String(object.payment_intent ?? "").trim()
+  const amountTotal = typeof object.amount_total === "number"
+    ? object.amount_total / 100
+    : (typeof (object as { amount?: number }).amount === "number"
+        ? ((object as { amount?: number }).amount as number) / 100
+        : null)
 
   if (
     event.type === "checkout.session.completed" ||
@@ -58,10 +68,12 @@ async function handleBookingDepositPayment(
       .eq("id", bookingId)
       .eq("status", "pending_payment")
 
-    // Registrar en payments
-    await supabase.from("payments").insert({
+    // Registrar en payments. NOTA: payments.client_id tiene FK a profiles(id),
+    // NO a clients(id). booking.client_record_id apunta a clients. Por eso lo
+    // dejamos null aquí (la relación con cliente queda via booking_id).
+    const { error: payErr } = await supabase.from("payments").insert({
       booking_id: bookingId,
-      client_id: booking.client_record_id,
+      client_id: null,
       provider: "stripe",
       status: "paid",
       amount: finalAmount,
@@ -71,16 +83,34 @@ async function handleBookingDepositPayment(
       payment_method: "card",
       raw_response: object,
     })
+    if (payErr) {
+      console.warn("payments insert failed:", payErr.message)
+    }
 
-    // Notificar a backup humanos
+    // Notificar a backup humanos + admins IA (los 3 números admin + el backup
+    // tablet). Dedup interno: la misma persona no recibe 2 mensajes si está
+    // en ambas listas.
     try {
       const { data: settings } = await supabase
         .from("ai_settings")
-        .select("human_backup_numbers, human_backup_enabled")
+        .select("human_backup_numbers, human_backup_enabled, ai_admin_numbers")
         .eq("id", 1)
         .maybeSingle()
       const enabled = (settings as { human_backup_enabled?: boolean } | null)?.human_backup_enabled === true
-      const targets = ((settings as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
+      const backups = ((settings as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
+      const admins = ((settings as { ai_admin_numbers?: string[] } | null)?.ai_admin_numbers ?? []) as string[]
+      // Dedup por últimos 10 dígitos
+      const seen = new Set<string>()
+      const targets: string[] = []
+      for (const list of [backups, admins]) {
+        for (const n of list) {
+          const tail = String(n).replace(/\D/g, "").slice(-10)
+          if (tail.length === 10 && !seen.has(tail)) {
+            seen.add(tail)
+            targets.push(n)
+          }
+        }
+      }
       if (enabled && targets.length > 0) {
         // Cargar detalles
         const { data: full } = await supabase

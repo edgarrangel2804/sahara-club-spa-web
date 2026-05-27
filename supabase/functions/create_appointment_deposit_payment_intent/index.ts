@@ -71,23 +71,46 @@ serve(async (req) => {
       }, 400)
     }
 
-    // 2. Cargar ai_settings (monto/currency) y stripe_settings (publishable)
+    // 2. Cargar ai_settings (monto/currency/price_id) y stripe_settings (publishable)
     const { data: aiSettings } = await supabase
       .from("ai_settings")
       .select("appointment_deposit_amount, appointment_deposit_currency, " +
-        "appointment_deposit_enabled")
+        "appointment_deposit_enabled, appointment_deposit_product_id, " +
+        "appointment_deposit_price_id")
       .eq("id", 1)
       .maybeSingle()
-    const enabled = (aiSettings as { appointment_deposit_enabled?: boolean } | null)
-      ?.appointment_deposit_enabled !== false
+    const settings = (aiSettings ?? {}) as {
+      appointment_deposit_enabled?: boolean
+      appointment_deposit_amount?: number
+      appointment_deposit_currency?: string
+      appointment_deposit_product_id?: string
+      appointment_deposit_price_id?: string
+    }
+    const enabled = settings.appointment_deposit_enabled !== false
     if (!enabled) {
       return jsonResponse({ ok: false, error: "deposit_disabled" }, 400)
     }
-    const amount = booking.deposit_amount ??
-      ((aiSettings as { appointment_deposit_amount?: number } | null)?.appointment_deposit_amount ?? 200)
-    const currency = String(
-      (aiSettings as { appointment_deposit_currency?: string } | null)?.appointment_deposit_currency ?? "mxn",
-    ).toLowerCase()
+    const priceId = settings.appointment_deposit_price_id ?? ""
+    const productId = settings.appointment_deposit_product_id ?? ""
+
+    // Si hay un Stripe Price configurado, ese es la única fuente de verdad
+    // del monto y la moneda. Si no, caemos al monto local.
+    let amount = booking.deposit_amount ?? settings.appointment_deposit_amount ?? 200
+    let currency = String(settings.appointment_deposit_currency ?? "mxn").toLowerCase()
+    if (priceId) {
+      try {
+        const price = await stripeApiRequest<{
+          id: string; unit_amount: number; currency: string; active: boolean;
+          product: string;
+        }>(`/prices/${priceId}`, { method: "GET" })
+        if (price.active && typeof price.unit_amount === "number") {
+          amount = price.unit_amount / 100
+          currency = String(price.currency).toLowerCase()
+        }
+      } catch (e) {
+        console.warn("price fetch failed, using local amount:", (e as Error).message)
+      }
+    }
 
     const { data: stripeRow } = await supabase
       .from("stripe_settings")
@@ -133,6 +156,11 @@ serve(async (req) => {
         "metadata[customer_phone]": phone,
         description: `Anticipo cita Sahara · ${booking.booking_date} ${booking.booking_time}`,
       }
+      // Si tenemos Stripe Price/Product configurado, lo adjuntamos como metadata
+      // para reportes y reconciliación (PaymentIntents NO aceptan price_id directo,
+      // pero el monto/currency ya vino del Price arriba).
+      if (priceId) form["metadata[stripe_price_id]"] = priceId
+      if (productId) form["metadata[stripe_product_id]"] = productId
       const created = await stripeApiRequest<StripePaymentIntent>(
         "/payment_intents",
         { method: "POST", form },
