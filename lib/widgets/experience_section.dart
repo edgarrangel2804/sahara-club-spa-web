@@ -221,16 +221,6 @@ class ExperienceSection extends StatelessWidget {
               fontStyle: FontStyle.italic,
             ),
           ),
-          const SizedBox(height: 40),
-          Text(
-            '— Jochebed, fundadora de Sahara Club',
-            style: GoogleFonts.inter(
-              fontSize: 13,
-              color: const Color(0xFFC6A76A),
-              letterSpacing: 2,
-              fontWeight: FontWeight.w400,
-            ),
-          ),
           const SizedBox(height: 48),
           Container(
             width: 1,
