@@ -119,6 +119,8 @@ class _ClientsModuleState extends State<ClientsModule> {
   _Client?      _selected;
   bool          _loading  = true;
   String        _search   = '';
+  // Mapa por client_id → tipo de beneficio activo: 'membership' | 'gift_card' | null
+  final Map<String, String> _benefitByClient = {};
 
   @override
   void initState() {
@@ -152,9 +154,53 @@ class _ClientsModuleState extends State<ClientsModule> {
             .toList();
         _loading = false;
       });
+      await _loadBenefitsBulk();
     } catch (e) {
       debugPrint('loadClients: $e');
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loadBenefitsBulk() async {
+    try {
+      _benefitByClient.clear();
+      final today = DateTime.now().toIso8601String().split('T').first;
+      // Memberships activas con sesiones disponibles
+      final memData = await Supabase.instance.client
+          .from('client_memberships')
+          .select('client_id, sessions_total, sessions_used, end_date, status')
+          .eq('status', 'active');
+      for (final r in (memData as List)) {
+        final m = r as Map;
+        final total = (m['sessions_total'] as num?)?.toInt() ?? 0;
+        final used = (m['sessions_used'] as num?)?.toInt() ?? 0;
+        final endDate = m['end_date']?.toString() ?? '';
+        final endOk = endDate.isEmpty || endDate.compareTo(today) >= 0;
+        if (total - used > 0 && endOk) {
+          final id = m['client_id']?.toString();
+          if (id != null) _benefitByClient[id] = 'membership';
+        }
+      }
+      // Gift cards activas con saldo (no sobreescriben membresía: ya tiene prioridad)
+      final gcData = await Supabase.instance.client
+          .from('gift_cards')
+          .select('client_id, current_balance, expires_at, status')
+          .eq('status', 'active')
+          .gt('current_balance', 0);
+      final nowIso = DateTime.now().toIso8601String();
+      for (final r in (gcData as List)) {
+        final m = r as Map;
+        final exp = m['expires_at']?.toString();
+        if (exp == null || exp.compareTo(nowIso) > 0) {
+          final id = m['client_id']?.toString();
+          if (id != null && !_benefitByClient.containsKey(id)) {
+            _benefitByClient[id] = 'gift_card';
+          }
+        }
+      }
+      if (mounted) setState(() {});
+    } catch (e) {
+      debugPrint('loadBenefitsBulk: $e');
     }
   }
 
@@ -258,6 +304,7 @@ class _ClientsModuleState extends State<ClientsModule> {
                                 _ClientTile(
                                   client:   _filtered[i],
                                   selected: _selected?.id == _filtered[i].id,
+                                  benefit:  _benefitByClient[_filtered[i].id],
                                   onTap: () =>
                                       setState(() => _selected = _filtered[i]),
                                 ),
@@ -357,10 +404,13 @@ class _ClientTile extends StatefulWidget {
     required this.client,
     required this.selected,
     required this.onTap,
+    this.benefit,
   });
   final _Client      client;
   final bool         selected;
   final VoidCallback onTap;
+  // 'membership' | 'gift_card' | null (null = regular, requires deposit)
+  final String?      benefit;
 
   @override
   State<_ClientTile> createState() => _ClientTileState();
@@ -401,13 +451,23 @@ class _ClientTileState extends State<_ClientTile> {
             Expanded(child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(c.fullName,
-                    style: GoogleFonts.inter(
-                      fontSize:   13,
-                      fontWeight: widget.selected
-                          ? FontWeight.w600 : FontWeight.w500,
-                      color:      Colors.black87,
-                    )),
+                Row(children: [
+                  Expanded(
+                    child: Text(c.fullName,
+                        style: GoogleFonts.inter(
+                          fontSize:   13,
+                          fontWeight: widget.selected
+                              ? FontWeight.w600 : FontWeight.w500,
+                          color:      Colors.black87,
+                        )),
+                  ),
+                  if (widget.benefit == 'membership')
+                    const _TileBadge(label: 'M', color: Color(0xFF6A54E0), tooltip: 'Membresía activa')
+                  else if (widget.benefit == 'gift_card')
+                    const _TileBadge(label: 'GC', color: Color(0xFFE07B00), tooltip: 'Gift card activa')
+                  else
+                    const _TileBadge(label: '\$', color: Color(0xFFB32D2D), tooltip: 'Requiere anticipo'),
+                ]),
                 const SizedBox(height: 2),
                 Text(
                   c.email.isNotEmpty ? c.email
@@ -424,6 +484,29 @@ class _ClientTileState extends State<_ClientTile> {
       ),
     );
   }
+}
+
+class _TileBadge extends StatelessWidget {
+  const _TileBadge({required this.label, required this.color, required this.tooltip});
+  final String label;
+  final Color color;
+  final String tooltip;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: tooltip,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.13),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
+      child: Text(label,
+          style: GoogleFonts.inter(
+              fontSize: 9.5, fontWeight: FontWeight.w800, color: color)),
+    ),
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -452,16 +535,41 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
   int    _totalReservas  = 0;
   String _lastVisit      = '—';
 
+  Map<String, dynamic>? _benefits;
+  bool _loadingBenefits = true;
+
   @override
   void initState() {
     super.initState();
     _loadHistory();
+    _loadBenefits();
   }
 
   @override
   void didUpdateWidget(_ClientDetailPanel old) {
     super.didUpdateWidget(old);
-    if (old.client.id != widget.client.id) _loadHistory();
+    if (old.client.id != widget.client.id) {
+      _loadHistory();
+      _loadBenefits();
+    }
+  }
+
+  Future<void> _loadBenefits() async {
+    setState(() => _loadingBenefits = true);
+    try {
+      final res = await Supabase.instance.client.rpc(
+        'get_customer_benefits_summary',
+        params: {'p_client_id': widget.client.id},
+      );
+      if (!mounted) return;
+      setState(() {
+        _benefits = res is Map ? Map<String, dynamic>.from(res) : null;
+        _loadingBenefits = false;
+      });
+    } catch (e) {
+      debugPrint('loadBenefits: $e');
+      if (mounted) setState(() => _loadingBenefits = false);
+    }
   }
 
   Future<void> _loadHistory() async {
@@ -661,6 +769,17 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
 
             const SizedBox(height: 16),
 
+            // ── Benefits & saldo ────────────────────────────────────────────
+            _BenefitsCard(
+              loading: _loadingBenefits,
+              benefits: _benefits,
+              onAddGiftCard: () => _openAddGiftCardDialog(),
+              onAddMembership: () => _openAddMembershipDialog(),
+              onSeeMovements: () => _openMovementsDialog(),
+              onRefresh: _loadBenefits,
+            ),
+            const SizedBox(height: 16),
+
             // ── Notes ───────────────────────────────────────────────────────
             if (c.notes.isNotEmpty) ...[
               Container(
@@ -735,6 +854,29 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
           ],
         ),
       ),
+    );
+  }
+
+  Future<void> _openAddGiftCardDialog() async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (_) => _GiftCardFormDialog(client: widget.client),
+    );
+    if (saved == true) await _loadBenefits();
+  }
+
+  Future<void> _openAddMembershipDialog() async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (_) => _MembershipFormDialog(client: widget.client),
+    );
+    if (saved == true) await _loadBenefits();
+  }
+
+  Future<void> _openMovementsDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => _BenefitsMovementsDialog(client: widget.client),
     );
   }
 
@@ -1360,4 +1502,725 @@ class _Field extends StatelessWidget {
       ),
     ),
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Beneficios y saldo del cliente
+// ─────────────────────────────────────────────────────────────────────────────
+class _BenefitsCard extends StatelessWidget {
+  const _BenefitsCard({
+    required this.loading,
+    required this.benefits,
+    required this.onAddGiftCard,
+    required this.onAddMembership,
+    required this.onSeeMovements,
+    required this.onRefresh,
+  });
+
+  final bool loading;
+  final Map<String, dynamic>? benefits;
+  final VoidCallback onAddGiftCard;
+  final VoidCallback onAddMembership;
+  final VoidCallback onSeeMovements;
+  final VoidCallback onRefresh;
+
+  String _fmtMoney(num v) => '\$${v.toStringAsFixed(0)} MXN';
+  String _fmtDate(dynamic v) {
+    if (v == null) return '—';
+    final s = v.toString();
+    if (s.isEmpty) return '—';
+    try {
+      final d = DateTime.parse(s);
+      const m = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+      return '${d.day} ${m[d.month - 1]} ${d.year}';
+    } catch (_) { return s; }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final b = benefits ?? const {};
+    final type = (b['customer_type'] as String?) ?? 'regular';
+    final hasGc = b['has_active_gift_card'] == true;
+    final gcBalance = (b['gift_card_balance'] as num?)?.toDouble() ?? 0;
+    final gcExpires = b['gift_card_expires_at'];
+    final hasMem = b['has_active_membership'] == true;
+    final memPlan = (b['membership_plan'] as String?) ?? '—';
+    final memStart = b['membership_start_date'];
+    final memEnd = b['membership_end_date'];
+    final used = (b['sessions_used'] as num?)?.toInt() ?? 0;
+    final remaining = (b['sessions_remaining'] as num?)?.toInt() ?? 0;
+    final requiresDeposit = b['requires_deposit'] == true;
+    final waiver = b['waiver_reason'] as String?;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFECECEC)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.card_giftcard_outlined, size: 16, color: Colors.black54),
+              const SizedBox(width: 8),
+              Text('Beneficios y saldo del cliente',
+                  style: GoogleFonts.inter(
+                      fontSize: 13, fontWeight: FontWeight.w600, color: Colors.black87)),
+              const Spacer(),
+              IconButton(
+                onPressed: onRefresh,
+                icon: const Icon(Icons.refresh, size: 18, color: Colors.black54),
+                tooltip: 'Refrescar',
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          if (loading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Center(child: CircularProgressIndicator(
+                  color: SaharaTheme.gold, strokeWidth: 2)),
+            )
+          else ...[
+            // Tipo + anticipo
+            Row(children: [
+              _BenefitChip(
+                label: type == 'membership'
+                    ? 'Membresía'
+                    : type == 'gift_card'
+                        ? 'Gift Card'
+                        : 'Regular',
+                color: type == 'membership'
+                    ? const Color(0xFF6A54E0)
+                    : type == 'gift_card'
+                        ? const Color(0xFFE07B00)
+                        : const Color(0xFF8B8B8B),
+              ),
+              const SizedBox(width: 8),
+              _BenefitChip(
+                label: requiresDeposit ? 'Requiere anticipo' : 'Sin anticipo',
+                color: requiresDeposit
+                    ? const Color(0xFFB32D2D)
+                    : const Color(0xFF2D8A4F),
+              ),
+              if (!requiresDeposit && waiver != null) ...[
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    waiver == 'active_gift_card_with_balance'
+                        ? '· cubierto por gift card'
+                        : waiver == 'active_membership_with_sessions'
+                            ? '· cubierto por membresía'
+                            : '· $waiver',
+                    style: GoogleFonts.inter(fontSize: 11, color: Colors.black54),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ]),
+            const SizedBox(height: 14),
+            const Divider(height: 1, color: Color(0xFFF0EEEA)),
+            const SizedBox(height: 14),
+
+            // Gift Card
+            Row(children: [
+              Icon(Icons.redeem_outlined,
+                  size: 14,
+                  color: hasGc ? const Color(0xFFE07B00) : Colors.black26),
+              const SizedBox(width: 6),
+              Text('Gift card',
+                  style: GoogleFonts.inter(
+                      fontSize: 12, fontWeight: FontWeight.w600, color: Colors.black87)),
+            ]),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.only(left: 20),
+              child: hasGc
+                  ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('Saldo disponible: ${_fmtMoney(gcBalance)}',
+                          style: GoogleFonts.inter(fontSize: 12.5, color: Colors.black87)),
+                      const SizedBox(height: 2),
+                      Text('Vence: ${_fmtDate(gcExpires)}',
+                          style: GoogleFonts.inter(fontSize: 11.5, color: Colors.black54)),
+                    ])
+                  : Text('Sin gift card activa',
+                      style: GoogleFonts.inter(fontSize: 12, color: Colors.black38)),
+            ),
+
+            const SizedBox(height: 14),
+
+            // Membresía
+            Row(children: [
+              Icon(Icons.workspace_premium_outlined,
+                  size: 14,
+                  color: hasMem ? const Color(0xFF6A54E0) : Colors.black26),
+              const SizedBox(width: 6),
+              Text('Membresía',
+                  style: GoogleFonts.inter(
+                      fontSize: 12, fontWeight: FontWeight.w600, color: Colors.black87)),
+            ]),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.only(left: 20),
+              child: hasMem
+                  ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('Plan: $memPlan',
+                          style: GoogleFonts.inter(fontSize: 12.5, color: Colors.black87)),
+                      Text('Sesiones restantes: $remaining (usadas $used)',
+                          style: GoogleFonts.inter(fontSize: 12, color: Colors.black54)),
+                      Text('Vigencia: ${_fmtDate(memStart)} → ${_fmtDate(memEnd)}',
+                          style: GoogleFonts.inter(fontSize: 11.5, color: Colors.black54)),
+                    ])
+                  : Text('Sin membresía activa',
+                      style: GoogleFonts.inter(fontSize: 12, color: Colors.black38)),
+            ),
+
+            const SizedBox(height: 16),
+
+            // Acciones
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              _BenefitActionBtn(
+                  icon: Icons.add_card_outlined,
+                  label: 'Agregar gift card',
+                  onTap: onAddGiftCard),
+              _BenefitActionBtn(
+                  icon: Icons.workspace_premium_outlined,
+                  label: 'Agregar membresía',
+                  onTap: onAddMembership),
+              _BenefitActionBtn(
+                  icon: Icons.receipt_long_outlined,
+                  label: 'Ver movimientos',
+                  onTap: onSeeMovements),
+            ]),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _BenefitChip extends StatelessWidget {
+  const _BenefitChip({required this.label, required this.color});
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(999),
+      border: Border.all(color: color.withValues(alpha: 0.4)),
+    ),
+    child: Text(label,
+        style: GoogleFonts.inter(
+            fontSize: 11, color: color, fontWeight: FontWeight.w700)),
+  );
+}
+
+class _BenefitActionBtn extends StatelessWidget {
+  const _BenefitActionBtn({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => TextButton.icon(
+    onPressed: onTap,
+    icon: Icon(icon, size: 15, color: SaharaTheme.gold),
+    label: Text(label,
+        style: GoogleFonts.inter(
+            fontSize: 12, color: Colors.black87, fontWeight: FontWeight.w600)),
+    style: TextButton.styleFrom(
+      backgroundColor: const Color(0xFFFAF6EE),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(color: Color(0xFFE9DDC2)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    ),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Gift Card form dialog
+// ─────────────────────────────────────────────────────────────────────────────
+class _GiftCardFormDialog extends StatefulWidget {
+  const _GiftCardFormDialog({required this.client});
+  final _Client client;
+
+  @override
+  State<_GiftCardFormDialog> createState() => _GiftCardFormDialogState();
+}
+
+class _GiftCardFormDialogState extends State<_GiftCardFormDialog> {
+  final _codeCtrl = TextEditingController();
+  final _amountCtrl = TextEditingController(text: '500');
+  DateTime _expires = DateTime.now().add(const Duration(days: 365));
+  bool _saving = false;
+  String? _error;
+
+  String _genCode() {
+    final ts = DateTime.now().millisecondsSinceEpoch.toRadixString(36).toUpperCase();
+    return 'SAHARA-${ts.substring(ts.length - 6)}';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _codeCtrl.text = _genCode();
+  }
+
+  Future<void> _save() async {
+    final amount = double.tryParse(_amountCtrl.text.trim());
+    if (amount == null || amount <= 0) {
+      setState(() => _error = 'Monto inválido');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final me = Supabase.instance.client.auth.currentUser?.id;
+      final res = await Supabase.instance.client
+          .from('gift_cards')
+          .insert({
+            'code': _codeCtrl.text.trim(),
+            'initial_balance': amount,
+            'current_balance': amount,
+            'currency': 'MXN',
+            'client_id': widget.client.id,
+            'recipient_name': widget.client.fullName,
+            'valid_from': DateTime.now().toIso8601String(),
+            'expires_at': _expires.toIso8601String(),
+            'status': 'active',
+          })
+          .select('id')
+          .single();
+      final gcId = res['id'] as String;
+      await Supabase.instance.client.from('gift_card_transactions').insert({
+        'gift_card_id': gcId,
+        'client_id': widget.client.id,
+        'type': 'load',
+        'amount': amount,
+        'balance_before': 0,
+        'balance_after': amount,
+        'notes': 'Carga inicial',
+        'created_by': me,
+      });
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) setState(() {
+        _error = '$e';
+        _saving = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFFF5F3EF),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Text('Agregar gift card',
+          style: GoogleFonts.playfairDisplay(
+              fontSize: 18, fontWeight: FontWeight.bold)),
+      content: SizedBox(
+        width: 380,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(
+            controller: _codeCtrl,
+            decoration: const InputDecoration(labelText: 'Código'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _amountCtrl,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'Monto MXN'),
+          ),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(
+              child: Text('Vence: ${_expires.day}/${_expires.month}/${_expires.year}',
+                  style: GoogleFonts.inter(fontSize: 13)),
+            ),
+            TextButton(
+              onPressed: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: _expires,
+                  firstDate: DateTime.now(),
+                  lastDate: DateTime.now().add(const Duration(days: 365 * 5)),
+                );
+                if (picked != null) setState(() => _expires = picked);
+              },
+              child: const Text('Cambiar'),
+            ),
+          ]),
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+          ],
+        ]),
+      ),
+      actions: [
+        TextButton(
+            onPressed: _saving ? null : () => Navigator.pop(context, false),
+            child: const Text('Cancelar')),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          style: FilledButton.styleFrom(
+              backgroundColor: SaharaTheme.gold, foregroundColor: Colors.black),
+          child: _saving
+              ? const SizedBox(
+                  width: 16, height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Guardar'),
+        ),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Membresía form dialog
+// ─────────────────────────────────────────────────────────────────────────────
+class _MembershipFormDialog extends StatefulWidget {
+  const _MembershipFormDialog({required this.client});
+  final _Client client;
+
+  @override
+  State<_MembershipFormDialog> createState() => _MembershipFormDialogState();
+}
+
+class _MembershipFormDialogState extends State<_MembershipFormDialog> {
+  List<Map<String, dynamic>> _plans = [];
+  String? _planId;
+  final _sessionsCtrl = TextEditingController(text: '4');
+  DateTime _start = DateTime.now();
+  DateTime _end = DateTime.now().add(const Duration(days: 30));
+  bool _loading = true;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPlans();
+  }
+
+  Future<void> _loadPlans() async {
+    try {
+      final data = await Supabase.instance.client
+          .from('membership_plans')
+          .select('id, name, sessions_per_month, price_monthly')
+          .eq('is_active', true)
+          .order('display_order');
+      if (!mounted) return;
+      setState(() {
+        _plans = (data as List).cast<Map<String, dynamic>>();
+        if (_plans.isNotEmpty) {
+          _planId = _plans.first['id'] as String;
+          final spm = (_plans.first['sessions_per_month'] as num?)?.toInt();
+          if (spm != null) _sessionsCtrl.text = spm.toString();
+        }
+        _loading = false;
+      });
+    } catch (e) {
+      if (mounted) setState(() {
+        _error = '$e';
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _save() async {
+    if (_planId == null) {
+      setState(() => _error = 'Selecciona un plan');
+      return;
+    }
+    final sessions = int.tryParse(_sessionsCtrl.text.trim()) ?? 0;
+    if (sessions <= 0) {
+      setState(() => _error = 'Sesiones inválidas');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await Supabase.instance.client.from('client_memberships').insert({
+        'client_id': widget.client.id,
+        'plan_id': _planId,
+        'status': 'active',
+        'start_date': _start.toIso8601String().split('T').first,
+        'end_date': _end.toIso8601String().split('T').first,
+        'sessions_used': 0,
+        'sessions_total': sessions,
+      });
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) setState(() {
+        _error = '$e';
+        _saving = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const AlertDialog(
+        content: SizedBox(
+          width: 280, height: 80,
+          child: Center(child: CircularProgressIndicator(color: SaharaTheme.gold)),
+        ),
+      );
+    }
+    return AlertDialog(
+      backgroundColor: const Color(0xFFF5F3EF),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Text('Agregar membresía',
+          style: GoogleFonts.playfairDisplay(
+              fontSize: 18, fontWeight: FontWeight.bold)),
+      content: SizedBox(
+        width: 380,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          if (_plans.isEmpty)
+            Text('No hay planes de membresía activos.\nCréalos primero en Administración → Servicios.',
+                style: GoogleFonts.inter(fontSize: 12.5, color: Colors.black54))
+          else ...[
+            DropdownButtonFormField<String>(
+              initialValue: _planId,
+              decoration: const InputDecoration(labelText: 'Plan'),
+              items: _plans
+                  .map((p) => DropdownMenuItem<String>(
+                        value: p['id'] as String,
+                        child: Text(
+                            '${p['name']} · ${p['sessions_per_month']} ses · \$${p['price_monthly']}'),
+                      ))
+                  .toList(),
+              onChanged: (v) => setState(() {
+                _planId = v;
+                final p = _plans.firstWhere((x) => x['id'] == v);
+                final spm = (p['sessions_per_month'] as num?)?.toInt();
+                if (spm != null) _sessionsCtrl.text = spm.toString();
+              }),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _sessionsCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Sesiones totales'),
+            ),
+            const SizedBox(height: 12),
+            Row(children: [
+              Expanded(child: Text('Inicio: ${_start.day}/${_start.month}/${_start.year}')),
+              TextButton(
+                onPressed: () async {
+                  final p = await showDatePicker(
+                    context: context, initialDate: _start,
+                    firstDate: DateTime.now().subtract(const Duration(days: 30)),
+                    lastDate: DateTime.now().add(const Duration(days: 365)),
+                  );
+                  if (p != null) setState(() => _start = p);
+                },
+                child: const Text('Cambiar'),
+              ),
+            ]),
+            Row(children: [
+              Expanded(child: Text('Fin: ${_end.day}/${_end.month}/${_end.year}')),
+              TextButton(
+                onPressed: () async {
+                  final p = await showDatePicker(
+                    context: context, initialDate: _end,
+                    firstDate: _start,
+                    lastDate: _start.add(const Duration(days: 365 * 2)),
+                  );
+                  if (p != null) setState(() => _end = p);
+                },
+                child: const Text('Cambiar'),
+              ),
+            ]),
+          ],
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+          ],
+        ]),
+      ),
+      actions: [
+        TextButton(
+            onPressed: _saving ? null : () => Navigator.pop(context, false),
+            child: const Text('Cancelar')),
+        FilledButton(
+          onPressed: (_saving || _plans.isEmpty) ? null : _save,
+          style: FilledButton.styleFrom(
+              backgroundColor: SaharaTheme.gold, foregroundColor: Colors.black),
+          child: _saving
+              ? const SizedBox(
+                  width: 16, height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Guardar'),
+        ),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Movimientos (gift card transactions + membership usage) viewer
+// ─────────────────────────────────────────────────────────────────────────────
+class _BenefitsMovementsDialog extends StatefulWidget {
+  const _BenefitsMovementsDialog({required this.client});
+  final _Client client;
+
+  @override
+  State<_BenefitsMovementsDialog> createState() => _BenefitsMovementsDialogState();
+}
+
+class _BenefitsMovementsDialogState extends State<_BenefitsMovementsDialog> {
+  List<Map<String, dynamic>> _gcTx = [];
+  List<Map<String, dynamic>> _memUse = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final txs = await Supabase.instance.client
+          .from('gift_card_transactions')
+          .select('id, type, amount, balance_after, notes, created_at')
+          .eq('client_id', widget.client.id)
+          .order('created_at', ascending: false)
+          .limit(30);
+      final use = await Supabase.instance.client
+          .from('membership_usage')
+          .select('id, used_at, notes, services(name)')
+          .eq('client_id', widget.client.id)
+          .order('used_at', ascending: false)
+          .limit(30);
+      if (!mounted) return;
+      setState(() {
+        _gcTx = (txs as List).cast<Map<String, dynamic>>();
+        _memUse = (use as List).cast<Map<String, dynamic>>();
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  String _fmt(dynamic v) {
+    if (v == null) return '—';
+    try {
+      final d = DateTime.parse(v.toString()).toLocal();
+      return '${d.day}/${d.month}/${d.year} ${d.hour.toString().padLeft(2,'0')}:${d.minute.toString().padLeft(2,'0')}';
+    } catch (_) { return v.toString(); }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: const Color(0xFFF5F3EF),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Container(
+        width: 520,
+        constraints: const BoxConstraints(maxHeight: 600),
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Movimientos · ${widget.client.fullName}',
+                style: GoogleFonts.playfairDisplay(
+                    fontSize: 17, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 14),
+            if (_loading)
+              const Expanded(
+                child: Center(
+                    child: CircularProgressIndicator(color: SaharaTheme.gold)),
+              )
+            else
+              Expanded(
+                child: ListView(children: [
+                  Text('Gift card',
+                      style: GoogleFonts.inter(
+                          fontSize: 13, fontWeight: FontWeight.w700, color: const Color(0xFFE07B00))),
+                  const SizedBox(height: 6),
+                  if (_gcTx.isEmpty)
+                    Text('Sin movimientos',
+                        style: GoogleFonts.inter(fontSize: 12, color: Colors.black38))
+                  else
+                    ..._gcTx.map((t) => Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(children: [
+                            Text(t['type']?.toString() ?? '?',
+                                style: GoogleFonts.inter(
+                                    fontSize: 11, fontWeight: FontWeight.w700, color: Colors.black54)),
+                            const SizedBox(width: 8),
+                            Expanded(child: Text(
+                              '\$${t['amount']} · saldo ${t['balance_after']}',
+                              style: GoogleFonts.inter(fontSize: 12.5))),
+                            Text(_fmt(t['created_at']),
+                                style: GoogleFonts.inter(fontSize: 11, color: Colors.black54)),
+                          ]),
+                        )),
+                  const SizedBox(height: 18),
+                  Text('Membresía',
+                      style: GoogleFonts.inter(
+                          fontSize: 13, fontWeight: FontWeight.w700, color: const Color(0xFF6A54E0))),
+                  const SizedBox(height: 6),
+                  if (_memUse.isEmpty)
+                    Text('Sin sesiones consumidas',
+                        style: GoogleFonts.inter(fontSize: 12, color: Colors.black38))
+                  else
+                    ..._memUse.map((u) {
+                      final svc = u['services'];
+                      final svcName = svc is Map ? svc['name']?.toString() ?? '—' : '—';
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(children: [
+                          const Icon(Icons.check_circle_outline,
+                              size: 14, color: Color(0xFF6A54E0)),
+                          const SizedBox(width: 6),
+                          Expanded(child: Text(svcName,
+                              style: GoogleFonts.inter(fontSize: 12.5))),
+                          Text(_fmt(u['used_at']),
+                              style: GoogleFonts.inter(fontSize: 11, color: Colors.black54)),
+                        ]),
+                      );
+                    }),
+                ]),
+              ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cerrar'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
