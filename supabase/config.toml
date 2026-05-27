@@ -21,3 +21,8 @@ verify_jwt = false
 # el JWT correcto desde Vault. Para evitar el bug de formato, también sin verify.
 [functions.notify_unpaid_deposits]
 verify_jwt = false
+
+# La página HTML de anticipo embebido la llama desde el browser sin JWT.
+# Validación interna: el booking debe existir y estar en pending_payment.
+[functions.create_appointment_deposit_payment_intent]
+verify_jwt = false

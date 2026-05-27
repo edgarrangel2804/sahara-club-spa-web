@@ -507,44 +507,44 @@ async function execTool(
 
             // Si el booking fue creado por primera vez:
             //  1) Cambiar status pending_reception → pending_payment (anticipo)
-            //  2) Invocar create_booking_deposit_checkout para generar link Stripe
-            //  3) Adjuntar checkout_url al resultado para que la IA lo envíe al cliente
+            //  2) Generar URL interna saharaclubspa.com/pagar-anticipo/{id}
+            //     (el PaymentIntent se crea lazy en la HTML page al cargar)
+            //  3) Adjuntar checkout_url al resultado para que la IA lo envíe
             //  4) NO disparar alerta de recepción todavía (se dispara cuando paga)
             if (createdResult.created === true && createdResult.booking_id) {
               const bookingId = String(createdResult.booking_id)
               try {
-                await supabase
-                  .from("bookings")
-                  .update({ status: "pending_payment" })
-                  .eq("id", bookingId)
+                // Cargar monto del anticipo desde ai_settings
+                const { data: aiCfg } = await supabase
+                  .from("ai_settings")
+                  .select("appointment_deposit_amount, appointment_deposit_enabled")
+                  .eq("id", 1)
+                  .maybeSingle()
+                const enabled = (aiCfg as { appointment_deposit_enabled?: boolean } | null)
+                  ?.appointment_deposit_enabled !== false
+                const amount = enabled
+                  ? ((aiCfg as { appointment_deposit_amount?: number } | null)?.appointment_deposit_amount ?? 200)
+                  : 0
 
-                // Fetch directo a la Edge Function con service_role JWT,
-                // porque supabase.functions.invoke desde Edge Function no
-                // transmite el bearer automáticamente.
-                const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
-                const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? ""
-                const checkoutResp = await fetch(
-                  `${supabaseUrl}/functions/v1/create_booking_deposit_checkout`,
-                  {
-                    method: "POST",
-                    headers: {
-                      "content-type": "application/json",
-                      Authorization: `Bearer ${serviceRoleKey}`,
-                    },
-                    body: JSON.stringify({ booking_id: bookingId }),
-                  },
-                )
-                const checkoutData = await checkoutResp.json().catch(() => null) as Record<string, unknown> | null
-                if (checkoutData?.ok === true && checkoutData.checkout_url) {
-                  result.checkout_url = checkoutData.checkout_url
-                  result.deposit_amount = checkoutData.amount ?? 200
+                if (enabled && amount > 0) {
+                  await supabase
+                    .from("bookings")
+                    .update({
+                      status: "pending_payment",
+                      deposit_amount: amount,
+                      payment_status: "pending",
+                    })
+                    .eq("id", bookingId)
+                  result.checkout_url = `https://saharaclubspa.com/pagar-anticipo/${bookingId}`
+                  result.deposit_amount = amount
                   result.status = "pending_payment"
                 } else {
-                  result.checkout_error = checkoutData?.error ?? `http_${checkoutResp.status}`
-                  console.warn("checkout creation failed:", checkoutData)
+                  // Si anticipo está deshabilitado, dejar como pending_reception
+                  // y disparar alerta de recepción (flujo viejo)
+                  result.deposit_disabled = true
                 }
               } catch (e) {
-                console.warn("auto-create checkout failed:", (e as Error).message)
+                console.warn("auto-flip to pending_payment failed:", (e as Error).message)
                 result.checkout_error = (e as Error).message
               }
             }

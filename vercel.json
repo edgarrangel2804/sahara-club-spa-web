@@ -4,9 +4,18 @@
   "installCommand": "echo 'Skipping install, handled in build script'",
   "framework": null,
   "rewrites": [
+    { "source": "/pagar-anticipo/:bookingId", "destination": "/pagar-anticipo.html" },
+    { "source": "/pagar-anticipo", "destination": "/pagar-anticipo.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "headers": [
+    {
+      "source": "/pagar-anticipo(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "SAMEORIGIN" }
+      ]
+    },
     {
       "source": "/(.*)",
       "headers": [

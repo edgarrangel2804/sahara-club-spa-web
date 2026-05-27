@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Anticipo de cita · Sahara Club Spa</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <script src="https://js.stripe.com/v3/"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: #FBF9F4;
+      color: #4A4A4A;
+      min-height: 100vh;
+    }
+    .wrap {
+      max-width: 480px;
+      margin: 0 auto;
+      padding: 32px 20px 48px;
+    }
+    .brand {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    .brand-name {
+      font-family: 'Playfair Display', serif;
+      color: #C5A059;
+      letter-spacing: 4px;
+      font-size: 18px;
+      margin: 0;
+    }
+    .brand-tag {
+      color: #8a8a8a;
+      font-size: 11px;
+      letter-spacing: 2px;
+      margin-top: 4px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 24px 22px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+      border: 1px solid #ECE9E4;
+    }
+    h1 {
+      font-family: 'Playfair Display', serif;
+      font-weight: 600;
+      font-size: 22px;
+      margin: 0 0 6px;
+      color: #2a2a2a;
+    }
+    .subtitle {
+      color: #999;
+      font-size: 13px;
+      margin: 0 0 22px;
+    }
+    .summary {
+      background: #FAF6EE;
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-bottom: 20px;
+      font-size: 13.5px;
+    }
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 4px 0;
+    }
+    .summary-label { color: #999; }
+    .summary-value { color: #2a2a2a; font-weight: 500; }
+    .amount {
+      font-size: 28px;
+      font-weight: 700;
+      color: #C5A059;
+      text-align: right;
+      margin: 8px 0 4px;
+    }
+    .note {
+      font-size: 12px;
+      color: #888;
+      line-height: 1.5;
+      margin: 0 0 20px;
+    }
+    #payment-element {
+      margin: 12px 0 18px;
+    }
+    button.pay-btn {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      background: #C5A059;
+      color: #1a1a1a;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 1.2px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button.pay-btn:hover:not(:disabled) { background: #b88c44; }
+    button.pay-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .msg {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      font-size: 13.5px;
+      display: none;
+    }
+    .msg.error {
+      background: #FFE5E5;
+      color: #B32D2D;
+      border: 1px solid #F5C2C2;
+    }
+    .msg.success {
+      background: #E5F4E8;
+      color: #2D8A4F;
+      border: 1px solid #B5DCC0;
+    }
+    .center { text-align: center; }
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid #fff;
+      border-top: 2px solid transparent;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-right: 8px;
+      vertical-align: text-bottom;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-state {
+      text-align: center;
+      color: #999;
+      padding: 32px 0;
+      font-size: 14px;
+    }
+    .secure {
+      text-align: center;
+      color: #b0b0b0;
+      font-size: 11px;
+      margin-top: 16px;
+    }
+    .secure::before { content: "🔒  "; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">
+      <p class="brand-name">SAHARA CLUB SPA</p>
+      <p class="brand-tag">ANTICIPO DE CITA</p>
+    </div>
+
+    <div class="card">
+      <div id="loading" class="loading-state">Cargando información del pago…</div>
+
+      <div id="content" style="display:none;">
+        <h1>Confirma tu solicitud</h1>
+        <p class="subtitle">Anticipo de cita · pago seguro vía Stripe</p>
+
+        <div class="summary">
+          <div class="summary-row">
+            <span class="summary-label">Cliente</span>
+            <span class="summary-value" id="s-client">—</span>
+          </div>
+          <div class="summary-row">
+            <span class="summary-label">Servicio</span>
+            <span class="summary-value" id="s-service">—</span>
+          </div>
+          <div class="summary-row">
+            <span class="summary-label">Fecha</span>
+            <span class="summary-value" id="s-date">—</span>
+          </div>
+          <div class="summary-row">
+            <span class="summary-label">Hora</span>
+            <span class="summary-value" id="s-time">—</span>
+          </div>
+          <div class="amount" id="s-amount">$200 MXN</div>
+        </div>
+
+        <p class="note">
+          Este anticipo permite continuar con la validación de tu cita.
+          Recepción confirmará disponibilidad por WhatsApp en cuanto recibamos tu pago.
+        </p>
+
+        <form id="payment-form">
+          <div id="payment-element"></div>
+          <button id="submit-btn" class="pay-btn" type="submit">
+            <span id="btn-text">Pagar $200 MXN</span>
+            <span id="btn-spinner" style="display:none;">
+              <span class="spinner"></span>Procesando…
+            </span>
+          </button>
+          <div id="error-msg" class="msg error"></div>
+        </form>
+
+        <p class="secure">Pago procesado de forma segura por Stripe</p>
+      </div>
+
+      <div id="success" style="display:none;">
+        <h1 class="center" style="color:#2D8A4F;">¡Pago recibido! ✨</h1>
+        <div class="msg success" style="display:block;">
+          Recepción validará tu cita y te confirmará por WhatsApp en breve. Gracias por elegir Sahara Club Spa 🌿
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SUPABASE_URL = "https://fkbyxhwdcsgrrixalzwf.supabase.co";
+    const FN_URL = SUPABASE_URL + "/functions/v1/create_appointment_deposit_payment_intent";
+
+    // Extraer booking_id del path: /pagar-anticipo/{id}
+    function getBookingId() {
+      const m = window.location.pathname.match(/\/pagar-anticipo\/([0-9a-f-]+)/i);
+      return m ? m[1] : "";
+    }
+
+    function showError(text) {
+      const el = document.getElementById("error-msg");
+      el.textContent = text;
+      el.style.display = "block";
+    }
+
+    function setBtnLoading(loading) {
+      const btn = document.getElementById("submit-btn");
+      const t = document.getElementById("btn-text");
+      const s = document.getElementById("btn-spinner");
+      btn.disabled = loading;
+      t.style.display = loading ? "none" : "inline";
+      s.style.display = loading ? "inline" : "none";
+    }
+
+    async function init() {
+      const bookingId = getBookingId();
+      if (!bookingId) {
+        document.getElementById("loading").innerHTML =
+          "No encontramos la solicitud. Vuelve a WhatsApp y pide el link de nuevo.";
+        return;
+      }
+
+      let data;
+      try {
+        const res = await fetch(FN_URL, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ booking_id: bookingId }),
+        });
+        data = await res.json();
+      } catch (e) {
+        document.getElementById("loading").innerHTML =
+          "Error de conexión. Intenta de nuevo más tarde.";
+        return;
+      }
+
+      if (!data || !data.ok) {
+        document.getElementById("loading").innerHTML =
+          data && data.error === "already_paid"
+            ? "Este anticipo ya fue pagado. Recepción te confirmará por WhatsApp."
+            : "No pudimos cargar tu solicitud. Escríbenos por WhatsApp para ayudarte.";
+        return;
+      }
+
+      // Llenar resumen
+      document.getElementById("s-client").textContent = data.booking.customer_name;
+      document.getElementById("s-service").textContent = data.booking.service_name;
+      document.getElementById("s-date").textContent = formatDate(data.booking.booking_date);
+      document.getElementById("s-time").textContent = formatTime(data.booking.booking_time);
+      document.getElementById("s-amount").textContent =
+        "$" + Number(data.amount) + " " + String(data.currency).toUpperCase();
+      document.getElementById("btn-text").textContent =
+        "Pagar $" + Number(data.amount) + " " + String(data.currency).toUpperCase();
+
+      // Cambiar loading → content
+      document.getElementById("loading").style.display = "none";
+      document.getElementById("content").style.display = "block";
+
+      // Inicializar Stripe Payment Element
+      const stripe = Stripe(data.publishable_key);
+      const elements = stripe.elements({
+        clientSecret: data.client_secret,
+        appearance: {
+          theme: "stripe",
+          variables: {
+            colorPrimary: "#C5A059",
+            colorBackground: "#ffffff",
+            colorText: "#2a2a2a",
+            colorDanger: "#B32D2D",
+            fontFamily: "Inter, system-ui, sans-serif",
+            borderRadius: "8px",
+          },
+        },
+      });
+      const paymentElement = elements.create("payment");
+      paymentElement.mount("#payment-element");
+
+      // Submit
+      document.getElementById("payment-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        setBtnLoading(true);
+        document.getElementById("error-msg").style.display = "none";
+
+        const { error, paymentIntent } = await stripe.confirmPayment({
+          elements,
+          confirmParams: {
+            return_url: window.location.origin + "/pagar-anticipo/" + bookingId,
+          },
+          redirect: "if_required",
+        });
+
+        setBtnLoading(false);
+
+        if (error) {
+          showError(error.message || "No se pudo procesar tu pago. Intenta de nuevo.");
+          return;
+        }
+
+        if (paymentIntent && paymentIntent.status === "succeeded") {
+          document.getElementById("content").style.display = "none";
+          document.getElementById("success").style.display = "block";
+        } else if (paymentIntent && paymentIntent.status === "processing") {
+          document.getElementById("content").style.display = "none";
+          const s = document.getElementById("success");
+          s.innerHTML = '<h1 class="center" style="color:#C5A059;">Procesando pago ⏳</h1>' +
+            '<div class="msg success" style="display:block;">Tu pago se está procesando. Recepción te confirmará por WhatsApp cuando esté listo.</div>';
+          s.style.display = "block";
+        }
+      });
+    }
+
+    function formatDate(s) {
+      try {
+        const [y, m, d] = s.split("-").map(Number);
+        const date = new Date(y, m - 1, d);
+        return date.toLocaleDateString("es-MX", {
+          weekday: "long", day: "numeric", month: "long"
+        });
+      } catch (_) { return s; }
+    }
+    function formatTime(s) {
+      if (!s) return "";
+      return s.substring(0, 5) + " hrs";
+    }
+
+    init();
+  </script>
+</body>
+</html>
