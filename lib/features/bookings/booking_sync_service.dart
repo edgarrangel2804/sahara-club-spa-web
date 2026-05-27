@@ -108,7 +108,8 @@ class BookingSyncService {
 
     if (statusFilter == 'active') {
       query = query.or(
-        'status.eq.scheduled,status.eq.pending,status.eq.pending_reception,status.eq.confirmed,'
+        'status.eq.scheduled,status.eq.pending,status.eq.pending_reception,'
+        'status.eq.pending_payment,status.eq.payment_received,status.eq.confirmed,'
         'status.eq.checked_in,status.eq.in_progress,'
         'status.eq.completed,status.eq.awaiting_payment',
       );

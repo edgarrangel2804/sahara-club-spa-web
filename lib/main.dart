@@ -6,6 +6,7 @@ import 'theme/sahara_theme.dart';
 import 'pages/landing_page.dart';
 import 'pages/reception_login_page.dart';
 import 'pages/agenda_page.dart';
+import 'pages/deposit_result_page.dart';
 import 'services/global_audio_player.dart';
 
 
@@ -46,8 +47,10 @@ class SaharaApp extends StatelessWidget {
       ],
       home: const _AuthGate(),
       routes: {
-        '/recepcion': (_) => const ReceptionLoginPage(),
-        '/agenda':    (_) => const AgendaPage(),
+        '/recepcion':           (_) => const ReceptionLoginPage(),
+        '/agenda':              (_) => const AgendaPage(),
+        '/anticipo-ok':         (_) => const DepositSuccessPage(),
+        '/anticipo-cancelado':  (_) => const DepositCancelPage(),
       },
     );
   }

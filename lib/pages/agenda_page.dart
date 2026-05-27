@@ -800,6 +800,10 @@ class _AgendaPageState extends State<AgendaPage> {
         return 'Pendiente';
       case 'pending_reception':
         return 'Solicitud IA';
+      case 'pending_payment':
+        return 'Esperando anticipo';
+      case 'payment_received':
+        return 'Pago recibido · pdte confirmar';
       case 'confirmed':
         return 'Confirmada';
       case 'checked_in':
@@ -830,6 +834,10 @@ class _AgendaPageState extends State<AgendaPage> {
         return const Color(0xFFC68A17);
       case 'pending_reception':
         return const Color(0xFFFF8C00);
+      case 'pending_payment':
+        return const Color(0xFFC68A17);
+      case 'payment_received':
+        return const Color(0xFF1A9E65);
       case 'confirmed':
         return const Color(0xFF1A9E65);
       case 'checked_in':
@@ -2063,6 +2071,10 @@ class _AgendaReservationChatDrawer extends StatelessWidget {
         return 'Pendiente';
       case 'pending_reception':
         return 'Solicitud IA';
+      case 'pending_payment':
+        return 'Esperando anticipo';
+      case 'payment_received':
+        return 'Pago recibido · pdte confirmar';
       case 'confirmed':
         return 'Confirmada';
       case 'checked_in':
@@ -4984,7 +4996,8 @@ class _BookingDetailDialog extends StatelessWidget {
                 children: [
                   if (b.status == 'scheduled' ||
                       b.status == 'pending' ||
-                      b.status == 'pending_reception')
+                      b.status == 'pending_reception' ||
+                      b.status == 'payment_received')
                     _DialogBtn(
                       label: 'Confirmar',
                       color: const Color(0xFF1A9E65),
@@ -6147,6 +6160,8 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
     'no_show': ('No asistió', Color(0xFFFFB3B3)),
     'pending': ('Pendiente', Color(0xFFFF4444)),
     'pending_reception': ('Solicitud IA', Color(0xFFFF8C00)),
+    'pending_payment': ('Esperando anticipo', Color(0xFFC68A17)),
+    'payment_received': ('Pago recibido · pdte confirmar', Color(0xFF52C41A)),
     'waiting': ('En espera', Color(0xFF52C41A)),
     'cancelled': ('Cancelado', Color(0xFFB32D2D)),
     'rescheduled': ('Reagendado', Color(0xFF0A9AA4)),

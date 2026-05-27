@@ -7,3 +7,17 @@ project_id = "sahara-club-spa"
 
 [functions.whatsapp-webhook]
 verify_jwt = false
+
+# Stripe tampoco manda Authorization Bearer en sus webhooks.
+[functions.stripe_webhook]
+verify_jwt = false
+
+# Invocada desde whatsapp-ai-router via fetch interno (sin JWT propagable).
+# Validación de input se hace dentro: requiere booking_id que esté en pending_payment.
+[functions.create_booking_deposit_checkout]
+verify_jwt = false
+
+# Invocada por pg_cron via invoke_edge_function (service_role JWT). El cron pasa
+# el JWT correcto desde Vault. Para evitar el bug de formato, también sin verify.
+[functions.notify_unpaid_deposits]
+verify_jwt = false

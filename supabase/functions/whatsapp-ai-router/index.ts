@@ -504,45 +504,48 @@ async function execTool(
             result.booking_created = createdResult.created
             result.duplicate_prevented = createdResult.duplicate_prevented
             result.status = createdResult.status
-            // Alerta interna a recepción solo si fue creado por primera vez
+
+            // Si el booking fue creado por primera vez:
+            //  1) Cambiar status pending_reception → pending_payment (anticipo)
+            //  2) Invocar create_booking_deposit_checkout para generar link Stripe
+            //  3) Adjuntar checkout_url al resultado para que la IA lo envíe al cliente
+            //  4) NO disparar alerta de recepción todavía (se dispara cuando paga)
             if (createdResult.created === true && createdResult.booking_id) {
+              const bookingId = String(createdResult.booking_id)
               try {
-                const { data: svc } = await supabase
-                  .from("services")
-                  .select("name")
-                  .eq("id", serviceId)
-                  .maybeSingle()
-                const serviceName = (svc as { name?: string } | null)?.name ?? "Servicio"
-                const customerName = String(ctx.clientName ?? "Cliente WhatsApp")
-                const alert = [
-                  "📅 *Nueva solicitud IA*",
-                  "",
-                  `*Cliente:* ${customerName}`,
-                  `*Teléfono:* ${phone}`,
-                  `*Servicio:* ${serviceName}`,
-                  `*Fecha:* ${date}`,
-                  `*Hora:* ${time}`,
-                  "",
-                  "Pendiente de validación en agenda Sahara.",
-                ].join("\n")
-                const { data: settingsRow } = await supabase
-                  .from("ai_settings")
-                  .select("human_backup_numbers, human_backup_enabled")
-                  .eq("id", 1)
-                  .maybeSingle()
-                const enabled = (settingsRow as { human_backup_enabled?: boolean } | null)?.human_backup_enabled === true
-                const targets = ((settingsRow as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
-                if (enabled && Array.isArray(targets)) {
-                  for (const target of targets) {
-                    try {
-                      await sendTextToMeta(normalizePhone(String(target)), alert)
-                    } catch (e) {
-                      console.warn("reception alert failed for", target, (e as Error).message)
-                    }
-                  }
+                await supabase
+                  .from("bookings")
+                  .update({ status: "pending_payment" })
+                  .eq("id", bookingId)
+
+                // Fetch directo a la Edge Function con service_role JWT,
+                // porque supabase.functions.invoke desde Edge Function no
+                // transmite el bearer automáticamente.
+                const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+                const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? ""
+                const checkoutResp = await fetch(
+                  `${supabaseUrl}/functions/v1/create_booking_deposit_checkout`,
+                  {
+                    method: "POST",
+                    headers: {
+                      "content-type": "application/json",
+                      Authorization: `Bearer ${serviceRoleKey}`,
+                    },
+                    body: JSON.stringify({ booking_id: bookingId }),
+                  },
+                )
+                const checkoutData = await checkoutResp.json().catch(() => null) as Record<string, unknown> | null
+                if (checkoutData?.ok === true && checkoutData.checkout_url) {
+                  result.checkout_url = checkoutData.checkout_url
+                  result.deposit_amount = checkoutData.amount ?? 200
+                  result.status = "pending_payment"
+                } else {
+                  result.checkout_error = checkoutData?.error ?? `http_${checkoutResp.status}`
+                  console.warn("checkout creation failed:", checkoutData)
                 }
               } catch (e) {
-                console.warn("auto-create alert build failed:", (e as Error).message)
+                console.warn("auto-create checkout failed:", (e as Error).message)
+                result.checkout_error = (e as Error).message
               }
             }
           }
@@ -1138,19 +1141,32 @@ PASO 2 — Cliente elige día/hora específico (ej. "jueves 4pm") O elige
   (la tool ya lo hace internamente). Verás en el output: booking_created=true,
   booking_id=<uuid>, status='pending_reception'.
 
-  CASO A — available=true (booking creado automáticamente):
-    Responde EXACTAMENTE así (adapta servicio/duración/fecha/hora):
+  CASO A — available=true (booking creado automáticamente + checkout link generado):
+    El tool devuelve checkout_url con el link de pago del anticipo $200 MXN.
+    Responde EXACTAMENTE así (adapta servicio/duración/fecha/hora + pega el
+    checkout_url tal cual al final, en su propio renglón):
 
     "Perfecto ✨
 
-    Registramos tu solicitud y ha sido agendada para [Servicio] ([N] minutos),
+    Registramos tu solicitud para [Servicio] ([N] minutos),
     [día de la semana] [N] de [mes], a las [HH] horas.
 
-    Recepción validará disponibilidad y te confirmará por aquí en breve 🌿"
+    Para continuar con la validación de tu cita, realiza un anticipo de
+    $200 MXN aquí:
+    [checkout_url]
+
+    Una vez recibido el pago, recepción validará disponibilidad y agendará
+    tu cita por este medio 🌿"
 
     Si la tool devuelve duplicate_prevented=true, NO repitas el mensaje
     largo: di "Ya registramos tu solicitud hace un momento ✨
-    Recepción validará y te confirmará por aquí en breve 🌿".
+    Si aún no realizas el anticipo, aquí está el link nuevamente:
+    [checkout_url]
+    Recepción agendará en cuanto recibamos tu pago 🌿".
+
+    Si checkout_error está presente (falló generar link Stripe): di
+    "Tu solicitud quedó registrada pero hubo un problema generando el
+    link de anticipo. Recepción te contactará en breve para confirmar."
 
   CASO B — available=false:
     NO LLAMES create_pending_booking. Sugiere los suggested_slots devueltos
