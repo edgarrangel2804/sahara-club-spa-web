@@ -506,45 +506,130 @@ async function execTool(
             result.status = createdResult.status
 
             // Si el booking fue creado por primera vez:
-            //  1) Cambiar status pending_reception → pending_payment (anticipo)
-            //  2) Generar URL interna saharaclubspa.com/pagar-anticipo/{id}
-            //     (el PaymentIntent se crea lazy en la HTML page al cargar)
-            //  3) Adjuntar checkout_url al resultado para que la IA lo envíe
-            //  4) NO disparar alerta de recepción todavía (se dispara cuando paga)
+            //  0) Consultar check_booking_payment_requirement (gift_card / membresía)
+            //  1a) Si waiver aplica → marcar booking waived + alerta a recepción
+            //  1b) Si requiere anticipo → flip a pending_payment + URL Stripe
             if (createdResult.created === true && createdResult.booking_id) {
               const bookingId = String(createdResult.booking_id)
               try {
-                // Cargar monto del anticipo desde ai_settings
+                // ¿Aplica waiver?
+                const { data: req } = await supabase.rpc(
+                  "check_booking_payment_requirement",
+                  {
+                    p_phone: phone,
+                    p_service_id: serviceId,
+                    p_requested_date: date,
+                    p_requested_time: timeNorm,
+                    p_customer_name: ctx.clientName ?? null,
+                  },
+                )
+                const reqResult = (req ?? {}) as Record<string, unknown>
+                const requiresDeposit = reqResult.requires_deposit !== false
+                const waiverReason = String(reqResult.reason ?? "deposit_required")
+                const depositCents = Number(reqResult.deposit_required_cents ?? 20000)
+                const depositAmount = depositCents / 100
+
+                // Cargar monto/enabled de ai_settings
                 const { data: aiCfg } = await supabase
                   .from("ai_settings")
                   .select("appointment_deposit_amount, appointment_deposit_enabled")
                   .eq("id", 1)
                   .maybeSingle()
-                const enabled = (aiCfg as { appointment_deposit_enabled?: boolean } | null)
+                const depositEnabled = (aiCfg as { appointment_deposit_enabled?: boolean } | null)
                   ?.appointment_deposit_enabled !== false
-                const amount = enabled
-                  ? ((aiCfg as { appointment_deposit_amount?: number } | null)?.appointment_deposit_amount ?? 200)
-                  : 0
 
-                if (enabled && amount > 0) {
+                if (!requiresDeposit && depositEnabled) {
+                  // === WAIVER APPLIES ===
+                  const giftCardId = reqResult.gift_card_id as string | null
+                  const membershipId = reqResult.membership_id as string | null
+                  await supabase
+                    .from("bookings")
+                    .update({
+                      status: "pending_reception",
+                      payment_requirement: "waived",
+                      waiver_reason: waiverReason,
+                      gift_card_id: giftCardId,
+                      membership_id: membershipId,
+                      deposit_required_cents: depositCents,
+                    })
+                    .eq("id", bookingId)
+
+                  result.status = "pending_reception"
+                  result.payment_requirement = "waived"
+                  result.waiver_reason = waiverReason
+                  result.checkout_url = null
+                  result.deposit_amount = 0
+
+                  // Alerta a recepción / human_backup
+                  try {
+                    const { data: svc } = await supabase.from("services")
+                      .select("name").eq("id", serviceId).maybeSingle()
+                    const serviceName = (svc as { name?: string } | null)?.name ?? "Servicio"
+                    const reasonLabel = waiverReason === "gift_card"
+                      ? "Gift card activa con saldo"
+                      : waiverReason === "membership"
+                        ? "Membresía activa con sesiones"
+                        : "Override admin"
+                    const alert = [
+                      "📅 *Nueva solicitud IA (sin anticipo)*",
+                      "",
+                      `*Cliente:* ${ctx.clientName ?? "Cliente WhatsApp"}`,
+                      `*Teléfono:* ${phone}`,
+                      `*Servicio:* ${serviceName}`,
+                      `*Fecha:* ${date}`,
+                      `*Hora:* ${time}`,
+                      `*Beneficio:* ${reasonLabel}`,
+                      "",
+                      "Pendiente de validar en agenda Sahara.",
+                    ].join("\n")
+                    const { data: settingsRow } = await supabase.from("ai_settings")
+                      .select("human_backup_numbers, human_backup_enabled, ai_admin_numbers")
+                      .eq("id", 1).maybeSingle()
+                    const enabled = (settingsRow as { human_backup_enabled?: boolean } | null)
+                      ?.human_backup_enabled === true
+                    const backups = ((settingsRow as { human_backup_numbers?: string[] } | null)
+                      ?.human_backup_numbers ?? []) as string[]
+                    const admins = ((settingsRow as { ai_admin_numbers?: string[] } | null)
+                      ?.ai_admin_numbers ?? []) as string[]
+                    const seen = new Set<string>()
+                    if (enabled) {
+                      for (const list of [backups, admins]) {
+                        for (const t of list) {
+                          const tail = String(t).replace(/\D/g, "").slice(-10)
+                          if (tail.length === 10 && !seen.has(tail)) {
+                            seen.add(tail)
+                            try { await sendTextToMeta(normalizePhone(String(t)), alert) } catch {
+                              /* swallow */
+                            }
+                          }
+                        }
+                      }
+                    }
+                  } catch (e) {
+                    console.warn("waiver alert failed:", (e as Error).message)
+                  }
+                } else if (depositEnabled) {
+                  // === REQUIRES DEPOSIT ===
                   await supabase
                     .from("bookings")
                     .update({
                       status: "pending_payment",
-                      deposit_amount: amount,
+                      payment_requirement: "deposit_required",
+                      deposit_required_cents: depositCents,
+                      deposit_amount: depositAmount,
                       payment_status: "pending",
                     })
                     .eq("id", bookingId)
                   result.checkout_url = `https://saharaclubspa.com/pagar-anticipo/${bookingId}`
-                  result.deposit_amount = amount
+                  result.deposit_amount = depositAmount
                   result.status = "pending_payment"
+                  result.payment_requirement = "deposit_required"
                 } else {
-                  // Si anticipo está deshabilitado, dejar como pending_reception
-                  // y disparar alerta de recepción (flujo viejo)
+                  // anticipo deshabilitado globalmente
                   result.deposit_disabled = true
                 }
               } catch (e) {
-                console.warn("auto-flip to pending_payment failed:", (e as Error).message)
+                console.warn("auto-flip with waiver check failed:", (e as Error).message)
                 result.checkout_error = (e as Error).message
               }
             }
@@ -1141,28 +1226,42 @@ PASO 2 — Cliente elige día/hora específico (ej. "jueves 4pm") O elige
   (la tool ya lo hace internamente). Verás en el output: booking_created=true,
   booking_id=<uuid>, status='pending_reception'.
 
-  CASO A — available=true (booking creado automáticamente + checkout link generado):
-    El tool devuelve checkout_url con el link de pago del anticipo $200 MXN.
-    Responde EXACTAMENTE así (adapta servicio/duración/fecha/hora + pega el
-    checkout_url tal cual al final, en su propio renglón):
+  CASO A — available=true (booking creado automáticamente):
+    El tool puede regresar uno de DOS sub-casos según los beneficios del cliente:
 
-    "Perfecto ✨
+    SUB-CASO A1 — payment_requirement='waived' (cliente con gift card o membresía):
+      El cliente NO necesita pagar anticipo. checkout_url será null y el waiver_reason
+      indica el motivo ('gift_card' o 'membership'). Responde EXACTAMENTE así:
 
-    Registramos tu solicitud para [Servicio] ([N] minutos),
-    [día de la semana] [N] de [mes], a las [HH] horas.
+      "Perfecto ✨
 
-    Para continuar con la validación de tu cita, realiza un anticipo de
-    $200 MXN aquí:
-    [checkout_url]
+      Registramos tu solicitud para [Servicio] ([N] minutos),
+      [día de la semana] [N] de [mes], a las [HH] horas.
 
-    Una vez recibido el pago, recepción validará disponibilidad y agendará
-    tu cita por este medio 🌿"
+      Recepción validará disponibilidad y te confirmará por aquí en breve 🌿"
+
+      NO menciones el motivo del waiver al cliente — recepción ya lo ve en agenda.
+
+    SUB-CASO A2 — payment_requirement='deposit_required' (cliente regular):
+      checkout_url contiene el link a pagar el anticipo $200 MXN. Responde:
+
+      "Perfecto ✨
+
+      Registramos tu solicitud para [Servicio] ([N] minutos),
+      [día de la semana] [N] de [mes], a las [HH] horas.
+
+      Para continuar con la validación de tu cita, realiza un anticipo de
+      $200 MXN aquí:
+      [checkout_url]
+
+      Una vez recibido el pago, recepción validará disponibilidad y agendará
+      tu cita por este medio 🌿"
 
     Si la tool devuelve duplicate_prevented=true, NO repitas el mensaje
-    largo: di "Ya registramos tu solicitud hace un momento ✨
-    Si aún no realizas el anticipo, aquí está el link nuevamente:
-    [checkout_url]
-    Recepción agendará en cuanto recibamos tu pago 🌿".
+    largo: di "Ya registramos tu solicitud hace un momento ✨ Recepción
+    validará y te confirmará por aquí en breve 🌿"
+    (Si hay checkout_url disponible y la solicitud aún no se pagó, agrega:
+    "Si aún no realizas el anticipo, aquí está el link nuevamente: [checkout_url]")
 
     Si checkout_error está presente (falló generar link Stripe): di
     "Tu solicitud quedó registrada pero hubo un problema generando el
