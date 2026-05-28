@@ -353,6 +353,17 @@ const TOOLS = [
     },
   },
   {
+    name: "get_staff_day_status",
+    description:
+      "Devuelve el estado de cada terapeuta para una fecha: working / off / time_off / lunch / busy / available. Úsalo SOLO si el cliente pregunta explícitamente por una terapeuta (\"¿está Victoria?\", \"¿quién atiende hoy?\", \"¿Anita trabaja mañana?\"). NO la uses para chequear si un slot está libre — para eso usa check_availability_for_booking. Solo lectura, no reserva nada. Devuelve también start_time/end_time/lunch_start/lunch_end por si necesitas narrar horarios.",
+    input_schema: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "YYYY-MM-DD en zona Tijuana. Si se omite, usa hoy." },
+      },
+    },
+  },
+  {
     name: "create_pending_booking",
     description:
       "Crea solicitud en agenda real con status='pending_reception'. SOLO usa esta tool DESPUÉS de check_availability_for_booking con available=true. La recepción valida y confirma después. Idempotente: dedup 10 min por cliente+servicio+fecha+hora.",
@@ -512,6 +523,14 @@ async function execTool(
         note: "Read-only. Recepción confirma la disponibilidad final.",
       }
     }
+    case "get_staff_day_status": {
+      const date = String(input.date ?? "").trim()
+      const args: Record<string, unknown> = {}
+      if (date) args.p_date = date
+      const { data, error } = await supabase.rpc("get_staff_day_status", args)
+      if (error) return { error: error.message }
+      return data ?? { staff: [] }
+    }
     case "check_availability_for_booking": {
       const serviceId = String(input.service_id ?? "").trim()
       const date = String(input.requested_date ?? "").trim()
@@ -547,9 +566,12 @@ async function execTool(
             p_notes: "Solicitud creada por IA WhatsApp.",
             p_ai_conversation_id: ctx.conversationId ?? null,
             p_ai_confidence_score: 0.9,
-            p_therapist_id: String(
-              result.selected_staff_id ?? result.staff_id ?? requestedStaffId ?? "",
-            ) || null,
+            // Política: solo asignamos terapeuta si el cliente lo pidió por
+            // nombre. Si la elección la hizo el RPC automáticamente,
+            // dejamos therapist_id=null para que recepción asigne.
+            p_therapist_id: requestedStaffId
+              ? String(requestedStaffId)
+              : null,
           })
           if (!createErr && created) {
             const createdResult = created as Record<string, unknown>
@@ -733,12 +755,11 @@ async function execTool(
         p_notes: String(input.notes ?? ""),
         p_ai_conversation_id: ctx.conversationId ?? null,
         p_ai_confidence_score: input.confidence != null ? Number(input.confidence) : null,
-        p_therapist_id: String(
-          (availCheck as Record<string, unknown> | null)?.selected_staff_id ??
-            (availCheck as Record<string, unknown> | null)?.staff_id ??
-            requestedStaffId ??
-            "",
-        ) || null,
+        // Política: respetar terapeuta SOLO si el cliente lo nombró.
+        // Si no, dejar NULL para que recepción asigne.
+        p_therapist_id: requestedStaffId
+          ? String(requestedStaffId)
+          : null,
       })
       if (error) return { error: error.message }
       const result = data as Record<string, unknown> | null
