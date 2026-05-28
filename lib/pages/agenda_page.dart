@@ -250,33 +250,35 @@ class _Booking {
     }
   }
 
+  // Paleta pastel premium. Fondos suaves para legibilidad con texto negro;
+  // accents de tono medio para el borde izquierdo de la tarjeta.
   Color get cardBg {
     switch (status) {
       case 'confirmed':
-        return Colors.green.withValues(alpha: 0.4);
+        return const Color(0xFFD6EFD8); // verde menta
       case 'cancelled':
-        return Colors.red.withValues(alpha: 0.4);
+        return const Color(0xFFF4D7D7); // coral pastel suave
       case 'pending':
       case 'scheduled':
-        return Colors.amber.withValues(alpha: 0.4);
+        return const Color(0xFFFFE9B0); // amarillo crema
       case 'rescheduled':
-        return Colors.lightBlue.withValues(alpha: 0.4);
+        return const Color(0xFFD6E6F7); // azul cielo
       default:
-        return const Color(0xFFEDF4FD); // Default blueish for other states
+        return const Color(0xFFEDEAE3); // arena Sahara
     }
   }
 
   Color get cardAccent {
     switch (status) {
       case 'confirmed':
-        return Colors.green;
+        return const Color(0xFF5DAA6E); // verde medio
       case 'cancelled':
-        return Colors.red;
+        return const Color(0xFFC77878); // coral medio
       case 'pending':
       case 'scheduled':
-        return Colors.amber;
+        return const Color(0xFFD9A23B); // ámbar medio
       case 'rescheduled':
-        return Colors.lightBlue;
+        return const Color(0xFF5C8CC9); // azul medio
       default:
         return SaharaTheme.gold;
     }
