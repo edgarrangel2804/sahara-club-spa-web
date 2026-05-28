@@ -6063,58 +6063,78 @@ class _BookingCardState extends State<_BookingCard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                b.clientName,
-                style: GoogleFonts.inter(
-                  color: Colors.black,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700, // Slightly bolder for premium look
-                ),
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
+              // Línea 1: nombre (izq) + chip waiver (der) si aplica.
+              // Movemos el chip arriba para liberar la 3ra línea para la hora.
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      b.clientName,
+                      style: GoogleFonts.inter(
+                        color: Colors.black,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                  ),
+                  if (b.paymentRequirement == 'waived' &&
+                      b.durationMinutes >= 30) ...[
+                    const SizedBox(width: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 1,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _paymentLineColor(b).withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(3),
+                        border: Border.all(
+                          color: _paymentLineColor(b).withValues(alpha: 0.5),
+                        ),
+                      ),
+                      child: Text(
+                        _paymentLineLabel(b),
+                        style: GoogleFonts.inter(
+                          color: _paymentLineColor(b),
+                          fontSize: 8.5,
+                          fontWeight: FontWeight.w700,
+                          height: 1.0,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                    ),
+                  ],
+                ],
               ),
               if (b.durationMinutes >= 30) ...[
                 const SizedBox(height: 1),
                 Text(
                   b.serviceName,
-                  style: GoogleFonts.inter(color: Colors.black, fontSize: 10, fontWeight: FontWeight.w500),
+                  style: GoogleFonts.inter(
+                    color: Colors.black,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                  ),
                   overflow: TextOverflow.ellipsis,
                   maxLines: 1,
                 ),
               ],
               if (b.durationMinutes >= 45) ...[
-                const SizedBox(height: 1),
+                const SizedBox(height: 2),
                 Text(
                   '${_minuteLabel24(b.startMinute)} - ${_minuteLabel24(b.startMinute + b.durationMinutes)}',
                   style: GoogleFonts.inter(
-                    color: Colors.black54,
-                    fontSize: 9.5,
-                    fontWeight: FontWeight.w600,
+                    color: Colors.black87,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    height: 1.1,
                   ),
                   overflow: TextOverflow.ellipsis,
                   maxLines: 1,
-                ),
-              ],
-              // Chip de waiver / anticipo, solo si la cita tiene esa data
-              if (b.paymentRequirement == 'waived' && b.durationMinutes >= 30) ...[
-                const SizedBox(height: 2),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: _paymentLineColor(b).withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(3),
-                    border: Border.all(color: _paymentLineColor(b).withValues(alpha: 0.5)),
-                  ),
-                  child: Text(
-                    _paymentLineLabel(b),
-                    style: GoogleFonts.inter(
-                      color: _paymentLineColor(b),
-                      fontSize: 8.5,
-                      fontWeight: FontWeight.w700,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
-                  ),
                 ),
               ],
             ],
