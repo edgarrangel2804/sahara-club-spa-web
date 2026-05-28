@@ -19,6 +19,7 @@ import 'faqs_panel.dart';
 import 'business_hours_panel.dart';
 import 'services_ai_fields_panel.dart';
 import 'staff_ai_profile_panel.dart';
+import 'ai_monitor_tab.dart';
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Models
@@ -490,7 +491,7 @@ class AdminModule extends StatefulWidget {
 
 class _AdminModuleState extends State<AdminModule>
     with SingleTickerProviderStateMixin {
-  late final _tab = TabController(length: 8, vsync: this);
+  late final _tab = TabController(length: 9, vsync: this);
   bool _loading = true;
   List<_Staff> _staff = [];
   List<Map<String, dynamic>> _todayBookings = [];
@@ -1100,6 +1101,12 @@ class _AdminModuleState extends State<AdminModule>
                       ),
                       Tab(
                         child: _AdminTabLabel(
+                          icon: Icons.monitor_heart_outlined,
+                          label: 'Monitor IA',
+                        ),
+                      ),
+                      Tab(
+                        child: _AdminTabLabel(
                           icon: Icons.smart_toy_outlined,
                           label: 'Configuraciones IA',
                         ),
@@ -1154,6 +1161,7 @@ class _AdminModuleState extends State<AdminModule>
                       const ProductosModule(),
                       const FinanzasModule(),
                       const ReceptionPermissionsModule(),
+                      const AiMonitorTab(),
                       const _AiSettingsTab(),
                       _SettingsTab(branches: _branches, onRefresh: _load),
                     ],
@@ -6135,34 +6143,130 @@ InputDecoration _deco(String? hint) => InputDecoration(
 // Reúne todos los paneles operativos del concierge IA: control, plantillas,
 // FAQs, horarios, base de conocimiento de servicios y staff, cola WhatsApp.
 // ---------------------------------------------------------------------------
-class _AiSettingsTab extends StatelessWidget {
+class _AiSettingsTab extends StatefulWidget {
   const _AiSettingsTab();
 
   @override
+  State<_AiSettingsTab> createState() => _AiSettingsTabState();
+}
+
+class _AiSettingsTabState extends State<_AiSettingsTab> {
+  // Sub-pestañas con carga perezosa: solo el panel activo se monta.
+  // Antes se renderizaban los 8 paneles a la vez (cada uno con su initState
+  // disparando queries), lo que hacía que la pestaña sintiera lentísima.
+  int _index = 0;
+
+  static const _sections = <(IconData, String)>[
+    (Icons.tune_rounded, 'Control IA'),
+    (Icons.schedule_rounded, 'Horarios'),
+    (Icons.article_outlined, 'Plantillas'),
+    (Icons.help_outline_rounded, 'FAQs'),
+    (Icons.spa_outlined, 'Servicios IA'),
+    (Icons.badge_outlined, 'Perfiles staff'),
+    (Icons.menu_book_outlined, 'Conocimiento'),
+    (Icons.queue_play_next_outlined, 'Cola WhatsApp'),
+  ];
+
+  Widget _bodyFor(int i) {
+    switch (i) {
+      case 0:
+        return const AiControlPanel();
+      case 1:
+        return const BusinessHoursPanel();
+      case 2:
+        return const WhatsAppMetaTemplatesPanel();
+      case 3:
+        return const FaqsPanel();
+      case 4:
+        return const ServicesAiFieldsPanel();
+      case 5:
+        return const StaffAiProfilePanel();
+      case 6:
+        return const KnowledgeBasePanel();
+      case 7:
+      default:
+        return const WhatsAppQueueDashboard();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(32),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
       child: Center(
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 1000),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1100),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: const [
-              AiControlPanel(),
-              SizedBox(height: 32),
-              BusinessHoursPanel(),
-              SizedBox(height: 32),
-              WhatsAppMetaTemplatesPanel(),
-              SizedBox(height: 32),
-              FaqsPanel(),
-              SizedBox(height: 32),
-              ServicesAiFieldsPanel(),
-              SizedBox(height: 32),
-              StaffAiProfilePanel(),
-              SizedBox(height: 32),
-              KnowledgeBasePanel(),
-              SizedBox(height: 32),
-              WhatsAppQueueDashboard(),
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                height: 44,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _sections.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 8),
+                  itemBuilder: (_, i) {
+                    final selected = i == _index;
+                    final (icon, label) = _sections[i];
+                    return InkWell(
+                      onTap: () => setState(() => _index = i),
+                      borderRadius: BorderRadius.circular(22),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 140),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? SaharaTheme.gold.withValues(alpha: 0.15)
+                              : Colors.white,
+                          border: Border.all(
+                            color: selected
+                                ? SaharaTheme.gold
+                                : const Color(0xFFE9E4D8),
+                          ),
+                          borderRadius: BorderRadius.circular(22),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              icon,
+                              size: 16,
+                              color: selected
+                                  ? SaharaTheme.gold
+                                  : Colors.black54,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              label,
+                              style: GoogleFonts.inter(
+                                fontSize: 12.5,
+                                fontWeight: selected
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                                color: selected
+                                    ? const Color(0xFF8C6623)
+                                    : Colors.black54,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 18),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: KeyedSubtree(
+                    key: ValueKey('ai-sub-$_index'),
+                    child: _bodyFor(_index),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
