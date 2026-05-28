@@ -5306,26 +5306,39 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
   Color _liveStatusColor(_TherapistLiveStatus status) {
     switch (status) {
       case _TherapistLiveStatus.busy:
-        return const Color(0xFFB24A43);
+        return const Color(0xFFE08A3C); // naranja medio (en sesión)
       case _TherapistLiveStatus.breakTime:
-        return const Color(0xFFD99032);
+        return const Color(0xFFD9A23B); // ámbar (en comida)
       case _TherapistLiveStatus.available:
-        return const Color(0xFF2F8F5B);
+        return const Color(0xFF5DAA6E); // verde menta
       case _TherapistLiveStatus.off:
-        return const Color(0xFFB8B2AA);
+        return const Color(0xFFC77878); // coral pastel (no disponible)
+    }
+  }
+
+  Color _liveStatusBg(_TherapistLiveStatus status) {
+    switch (status) {
+      case _TherapistLiveStatus.busy:
+        return const Color(0xFFFFE0CC);
+      case _TherapistLiveStatus.breakTime:
+        return const Color(0xFFFFE9B0);
+      case _TherapistLiveStatus.available:
+        return const Color(0xFFD6EFD8);
+      case _TherapistLiveStatus.off:
+        return const Color(0xFFF4D7D7);
     }
   }
 
   String _liveStatusLabel(_TherapistLiveStatus status) {
     switch (status) {
       case _TherapistLiveStatus.busy:
-        return 'Ocupada en servicio';
+        return 'En sesión';
       case _TherapistLiveStatus.breakTime:
-        return 'Comida / descanso';
+        return 'En comida';
       case _TherapistLiveStatus.available:
         return 'Disponible';
       case _TherapistLiveStatus.off:
-        return 'No trabaja ahora';
+        return 'No disponible';
     }
   }
 
@@ -5411,31 +5424,6 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 10, vertical: 8),
                             child: Row(children: [
-                              Tooltip(
-                                message: isUnassigned
-                                    ? 'Sin terapeuta asignada'
-                                    : _liveStatusLabel(liveStatus),
-                                child: Container(
-                                  width: 11,
-                                  height: 11,
-                                  decoration: BoxDecoration(
-                                    color: isUnassigned
-                                        ? const Color(0xFFB8B2AA)
-                                        : _liveStatusColor(liveStatus),
-                                    shape: BoxShape.circle,
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: (isUnassigned
-                                                ? const Color(0xFFB8B2AA)
-                                                : _liveStatusColor(liveStatus))
-                                            .withValues(alpha: 0.24),
-                                        blurRadius: 6,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
                                   columnLabels[i],
@@ -5449,6 +5437,51 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
+                              const SizedBox(width: 8),
+                              // Chip de estado en vivo (siempre visible al
+                              // hacer scroll porque vive en el header sticky).
+                              if (!isUnassigned)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: _liveStatusBg(liveStatus),
+                                    borderRadius: BorderRadius.circular(999),
+                                    border: Border.all(
+                                      color: _liveStatusColor(liveStatus)
+                                          .withValues(alpha: 0.55),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    _liveStatusLabel(liveStatus),
+                                    style: GoogleFonts.inter(
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w700,
+                                      color: _liveStatusColor(liveStatus),
+                                    ),
+                                  ),
+                                )
+                              else
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFFF1D6),
+                                    borderRadius: BorderRadius.circular(999),
+                                    border: Border.all(
+                                      color: const Color(0xFFC68A17)
+                                          .withValues(alpha: 0.55),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    'Sin asignar',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w700,
+                                      color: const Color(0xFFC68A17),
+                                    ),
+                                  ),
+                                ),
                             ]),
                           );
                         }),
@@ -5900,34 +5933,9 @@ class _TherapistColumn extends StatelessWidget {
               ),
             );
           }),
-          // Si la columna no tiene NI citas NI bloques, etiqueta "Disponible"
-          // sutil arriba (solo aplica a terapeutas, no a "Sin asignar").
-          if (!isUnassigned && bookings.isEmpty && scheduleBlocks.isEmpty)
-            Positioned(
-              top: 8,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE5F4E8),
-                    borderRadius: BorderRadius.circular(999),
-                    border:
-                        Border.all(color: const Color(0xFF7CC689)),
-                  ),
-                  child: Text(
-                    'Disponible',
-                    style: GoogleFonts.inter(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      color: const Color(0xFF2D8A4F),
-                    ),
-                  ),
-                ),
-              ),
-            ),
+          // (El chip "Disponible" ahora vive en el header sticky de la columna,
+          // así siempre queda visible al hacer scroll y no solapa con el slot
+          // de "No trabaja hoy".)
           // Línea de "ahora"
           if (showNowLine)
             Positioned(
