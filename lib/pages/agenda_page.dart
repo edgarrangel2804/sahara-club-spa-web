@@ -502,7 +502,7 @@ class _AgendaPageState extends State<AgendaPage> {
   DateTime _now = DateTime.now();
   late Timer _timer;
   String _activeModule = 'agenda';
-  String _viewMode = 'week';
+  String _viewMode = 'day_therapist';
   late DateTime _selectedDay;
   late DateTime _monthStart;
   bool _hasLoadedOnce = false;
@@ -1431,6 +1431,18 @@ class _AgendaPageState extends State<AgendaPage> {
                                               onReschedule: _rescheduleBooking,
                                               isSlotBlocked: _isSlotBlocked,
                                               onSlotTap: _onSlotTap,
+                                            )
+                                          : _viewMode == 'day_therapist'
+                                          ? _DayByTherapistGrid(
+                                              calendarHours:
+                                                  _visibleCalendarHours,
+                                              day: _selectedDay,
+                                              bookings: _bookings.where((b) {
+                                                return _sameDay(b.date, _selectedDay);
+                                              }).toList(),
+                                              therapists: _therapists,
+                                              now: _now,
+                                              onBookingTap: _showBookingDetail,
                                             )
                                           : _MonthGrid(
                                               monthStart: _monthStart,
@@ -2468,6 +2480,12 @@ class _TopBar extends StatelessWidget {
       child: Row(
         children: [
           // View mode chips
+          _OutlineChip(
+            label: 'DÍA · TERAPEUTAS',
+            active: viewMode == 'day_therapist',
+            onTap: () => onViewMode('day_therapist'),
+          ),
+          const SizedBox(width: 6),
           _OutlineChip(
             label: 'DÍA',
             active: viewMode == 'day',
@@ -4856,6 +4874,386 @@ class _MonthGrid extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Vista: DÍA POR TERAPEUTA
+// Una columna por cada terapeuta activo + columna "Sin asignar". Resuelve el
+// solape de citas a la misma hora cuando se atienden con distintos terapeutas.
+// ───────────────────────────────────────────────────────────────────────────
+class _DayByTherapistGrid extends StatefulWidget {
+  const _DayByTherapistGrid({
+    required this.calendarHours,
+    required this.day,
+    required this.bookings,
+    required this.therapists,
+    required this.now,
+    required this.onBookingTap,
+  });
+  final _AgendaCalendarHours calendarHours;
+  final DateTime day;
+  final List<_Booking> bookings;
+  final List<_Therapist> therapists;
+  final DateTime now;
+  final void Function(BuildContext, _Booking) onBookingTap;
+
+  @override
+  State<_DayByTherapistGrid> createState() => _DayByTherapistGridState();
+}
+
+class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
+  final ScrollController _vScroll = ScrollController();
+  final ScrollController _hScroll = ScrollController();
+  bool _didInitialScroll = false;
+
+  static const double _kHourLabelWidth = 56;
+  static const double _kColMinWidth = 180;
+  static const double _kHeaderHeight = 56;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToPreferredHour());
+  }
+
+  @override
+  void didUpdateWidget(covariant _DayByTherapistGrid old) {
+    super.didUpdateWidget(old);
+    final hoursChanged =
+        old.calendarHours.startMinute != widget.calendarHours.startMinute ||
+        old.calendarHours.endMinuteInclusive !=
+            widget.calendarHours.endMinuteInclusive;
+    final dayChanged = !_sameDay(old.day, widget.day);
+    if (hoursChanged || dayChanged) {
+      _didInitialScroll = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToPreferredHour());
+    }
+  }
+
+  @override
+  void dispose() {
+    _vScroll.dispose();
+    _hScroll.dispose();
+    super.dispose();
+  }
+
+  double _topForMinute(int minute) =>
+      (minute - widget.calendarHours.startMinute) * (_kHourHeight / 60);
+
+  void _jumpToPreferredHour() {
+    if (_didInitialScroll || !_vScroll.hasClients) return;
+    final nowMinute = widget.now.hour * 60 + widget.now.minute;
+    final focusMinute = _sameDay(widget.day, widget.now)
+        ? nowMinute
+        : max(widget.calendarHours.startMinute, 8 * 60);
+    final clampedMinute = focusMinute.clamp(
+      widget.calendarHours.startMinute,
+      widget.calendarHours.lastSlotMinute,
+    ).toInt();
+    final target =
+        max(0.0, _topForMinute(clampedMinute) - (_kHourHeight * 1.5));
+    _vScroll.jumpTo(target);
+    _didInitialScroll = true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Filtrar terapeutas activos (los recibidos ya están filtrados por activo,
+    // pero por si acaso reforzamos).
+    final therapists = widget.therapists.where((t) => t.id.isNotEmpty).toList();
+    // ¿Hay bookings sin terapeuta? Mostrar columna "Sin asignar".
+    final hasUnassigned = widget.bookings.any(
+      (b) => b.therapistId.isEmpty,
+    );
+    final columnIds = <String>[
+      ...therapists.map((t) => t.id),
+      if (hasUnassigned) '__unassigned__',
+    ];
+    final columnLabels = <String>[
+      ...therapists.map((t) => t.name),
+      if (hasUnassigned) 'Sin asignar',
+    ];
+
+    if (columnIds.isEmpty) {
+      return Center(
+        child: Text(
+          'No hay terapeutas activos. Agrégalos en Administración → Personal.',
+          style: GoogleFonts.inter(color: Colors.black54, fontSize: 13),
+        ),
+      );
+    }
+
+    final totalMinutes = widget.calendarHours.endMinuteInclusive -
+        widget.calendarHours.startMinute +
+        30;
+    final gridHeight = (totalMinutes / 60) * _kHourHeight;
+
+    return LayoutBuilder(builder: (context, constraints) {
+      final available =
+          constraints.maxWidth - _kHourLabelWidth;
+      final naturalColWidth =
+          available / columnIds.length;
+      final colWidth = naturalColWidth < _kColMinWidth
+          ? _kColMinWidth
+          : naturalColWidth;
+      final totalWidth = _kHourLabelWidth + colWidth * columnIds.length;
+
+      return Column(
+        children: [
+          // Header: nombres de terapeutas
+          SizedBox(
+            height: _kHeaderHeight,
+            child: Row(
+              children: [
+                Container(
+                  width: _kHourLabelWidth,
+                  height: _kHeaderHeight,
+                  decoration: const BoxDecoration(
+                    border: Border(
+                      right: BorderSide(color: Color(0xFFE0DDD8)),
+                      bottom: BorderSide(color: Color(0xFFE0DDD8)),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    controller: _hScroll,
+                    child: SizedBox(
+                      width: colWidth * columnIds.length,
+                      child: Row(
+                        children: List.generate(columnIds.length, (i) {
+                          final isUnassigned =
+                              columnIds[i] == '__unassigned__';
+                          return Container(
+                            width: colWidth,
+                            decoration: const BoxDecoration(
+                              border: Border(
+                                right: BorderSide(color: Color(0xFFE0DDD8)),
+                                bottom: BorderSide(color: Color(0xFFE0DDD8)),
+                              ),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 8),
+                            child: Row(children: [
+                              CircleAvatar(
+                                radius: 14,
+                                backgroundColor: isUnassigned
+                                    ? const Color(0xFFFFE5C2)
+                                    : SaharaTheme.gold.withValues(alpha: 0.18),
+                                child: Icon(
+                                  isUnassigned
+                                      ? Icons.help_outline
+                                      : Icons.person_outline,
+                                  size: 15,
+                                  color: isUnassigned
+                                      ? const Color(0xFFC68A17)
+                                      : SaharaTheme.gold,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  columnLabels[i],
+                                  style: GoogleFonts.inter(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: isUnassigned
+                                        ? const Color(0xFFC68A17)
+                                        : Colors.black87,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ]),
+                          );
+                        }),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Body: scroll vertical compartido + horas a la izq + columnas con cards
+          Expanded(
+            child: SingleChildScrollView(
+              controller: _vScroll,
+              scrollDirection: Axis.vertical,
+              child: SizedBox(
+                height: gridHeight,
+                width: totalWidth,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Columna de horas
+                    SizedBox(
+                      width: _kHourLabelWidth,
+                      child: Column(
+                        children: List.generate(
+                          (totalMinutes / 30).ceil(),
+                          (i) {
+                            final m =
+                                widget.calendarHours.startMinute + i * 30;
+                            return Container(
+                              height: _kHourHeight / 2,
+                              padding: const EdgeInsets.only(
+                                  right: 6, top: 2),
+                              decoration: const BoxDecoration(
+                                border: Border(
+                                  right: BorderSide(color: Color(0xFFE0DDD8)),
+                                ),
+                              ),
+                              alignment: Alignment.topRight,
+                              child: Text(
+                                _minuteLabel24(m),
+                                style: GoogleFonts.inter(
+                                    fontSize: 10, color: Colors.black54),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                    // Columnas por terapeuta (con scroll horizontal sincronizado)
+                    Expanded(
+                      child: SingleChildScrollView(
+                        controller: _hScroll,
+                        scrollDirection: Axis.horizontal,
+                        child: SizedBox(
+                          width: colWidth * columnIds.length,
+                          height: gridHeight,
+                          child: Row(
+                            children: List.generate(columnIds.length, (i) {
+                              final tId = columnIds[i];
+                              final colBookings = widget.bookings.where((b) {
+                                if (tId == '__unassigned__') {
+                                  return b.therapistId.isEmpty;
+                                }
+                                return b.therapistId == tId;
+                              }).toList();
+                              return _TherapistColumn(
+                                width: colWidth,
+                                gridHeight: gridHeight,
+                                calendarHours: widget.calendarHours,
+                                bookings: colBookings,
+                                onBookingTap: widget.onBookingTap,
+                                now: widget.now,
+                                day: widget.day,
+                                isUnassigned: tId == '__unassigned__',
+                              );
+                            }),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    });
+  }
+}
+
+class _TherapistColumn extends StatelessWidget {
+  const _TherapistColumn({
+    required this.width,
+    required this.gridHeight,
+    required this.calendarHours,
+    required this.bookings,
+    required this.onBookingTap,
+    required this.now,
+    required this.day,
+    required this.isUnassigned,
+  });
+  final double width;
+  final double gridHeight;
+  final _AgendaCalendarHours calendarHours;
+  final List<_Booking> bookings;
+  final void Function(BuildContext, _Booking) onBookingTap;
+  final DateTime now;
+  final DateTime day;
+  final bool isUnassigned;
+
+  double _topForMinute(int minute) =>
+      (minute - calendarHours.startMinute) * (_kHourHeight / 60);
+
+  @override
+  Widget build(BuildContext context) {
+    final isToday = _sameDay(now, day);
+    final nowMinute = now.hour * 60 + now.minute;
+    final showNowLine = isToday &&
+        nowMinute >= calendarHours.startMinute &&
+        nowMinute <= calendarHours.endMinuteInclusive;
+
+    return Container(
+      width: width,
+      height: gridHeight,
+      decoration: BoxDecoration(
+        color: isUnassigned ? const Color(0xFFFFF8EC) : Colors.white,
+        border: const Border(
+          right: BorderSide(color: Color(0xFFE0DDD8)),
+        ),
+      ),
+      child: Stack(
+        children: [
+          // Líneas horizontales cada 30 minutos
+          ...List.generate(
+            ((calendarHours.endMinuteInclusive +
+                        30 -
+                        calendarHours.startMinute) /
+                    30)
+                .ceil(),
+            (i) {
+              final m = calendarHours.startMinute + i * 30;
+              final isHour = m % 60 == 0;
+              return Positioned(
+                top: _topForMinute(m),
+                left: 0,
+                right: 0,
+                child: Container(
+                  height: 1,
+                  color: Color(isHour ? 0xFFE0DDD8 : 0xFFF1EEE9),
+                ),
+              );
+            },
+          ),
+          // Citas posicionadas
+          ...bookings.map((b) {
+            final top = _topForMinute(b.startMinute).clamp(0.0, gridHeight);
+            final h = max(
+              28.0,
+              b.durationMinutes * (_kHourHeight / 60) - 4,
+            );
+            return Positioned(
+              top: top,
+              left: 4,
+              right: 4,
+              height: h,
+              child: _BookingCard(
+                booking: b,
+                onTap: () => onBookingTap(context, b),
+              ),
+            );
+          }),
+          // Línea de "ahora"
+          if (showNowLine)
+            Positioned(
+              top: _topForMinute(nowMinute),
+              left: 0,
+              right: 0,
+              child: Container(
+                height: 2,
+                color: const Color(0xFFFF5252),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
