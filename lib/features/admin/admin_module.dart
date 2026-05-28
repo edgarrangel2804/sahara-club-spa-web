@@ -539,46 +539,56 @@ class _AdminModuleState extends State<AdminModule>
         return;
       }
 
-      final resS = await Supabase.instance.client.from('staff').select();
-      final resV = await Supabase.instance.client.from('services').select();
-      final resW = await Supabase.instance.client
-          .from('whatsapp_templates')
-          .select();
-      final resTodayBookings = await Supabase.instance.client
-          .from('bookings')
-          .select('''
-            id,
-            therapist_id,
-            booking_date,
-            booking_time,
-            duration_min,
-            status,
-            service:services(name, price)
-          ''')
-          .gte('booking_date', todayKey)
-          .order('booking_date', ascending: true)
-          .order('booking_time', ascending: true);
-      final resStaffWorkingHours = await Supabase.instance.client
-          .from('staff_working_hours')
-          .select(
-            'staff_id, weekday, is_working, starts_at, ends_at, break_starts_at, break_ends_at',
-          );
-      final resStaffTimeOff = await Supabase.instance.client
-          .from('staff_time_off')
-          .select('staff_id, starts_at, ends_at')
-          .lt('starts_at', tomorrowStart.toUtc().toIso8601String())
-          .gt('ends_at', todayStart.toUtc().toIso8601String());
-      final resScheduleBlocks = await Supabase.instance.client
-          .from('schedule_blocks')
-          .select('staff_id, block_date, start_minute, end_minute')
-          .eq('block_date', todayKey);
+      final tomorrowKey = tomorrowStart.toIso8601String().split('T').first;
+      final sb = Supabase.instance.client;
 
-      if (_canAccessAdministration) {
-        final resB = await Supabase.instance.client.from('sucursales').select();
-        _branches = (resB as List).map((m) => _Branch.fromMap(m)).toList();
-        if (!kEnableMultiBranch && _branches.isEmpty) {
-          _branches = [_Branch.fromMap(defaultBranchMap())];
-        }
+      final results = await Future.wait<dynamic>([
+        sb.from('staff').select(),
+        sb.from('services').select(),
+        sb.from('whatsapp_templates').select(),
+        sb
+            .from('bookings')
+            .select('''
+              id,
+              therapist_id,
+              booking_date,
+              booking_time,
+              duration_min,
+              status,
+              service:services(name, price)
+            ''')
+            .gte('booking_date', todayKey)
+            .lt('booking_date', tomorrowKey)
+            .order('booking_time', ascending: true),
+        sb
+            .from('staff_working_hours')
+            .select(
+              'staff_id, weekday, is_working, starts_at, ends_at, break_starts_at, break_ends_at',
+            ),
+        sb
+            .from('staff_time_off')
+            .select('staff_id, starts_at, ends_at')
+            .lt('starts_at', tomorrowStart.toUtc().toIso8601String())
+            .gt('ends_at', todayStart.toUtc().toIso8601String()),
+        sb
+            .from('schedule_blocks')
+            .select('staff_id, block_date, start_minute, end_minute')
+            .eq('block_date', todayKey),
+        sb.from('sucursales').select(),
+      ]);
+
+      final resS = results[0];
+      final resV = results[1];
+      final resW = results[2];
+      final resTodayBookings = results[3];
+      final resStaffWorkingHours = results[4];
+      final resStaffTimeOff = results[5];
+      final resScheduleBlocks = results[6];
+      final resB = results[6 + 1];
+
+      _branches = (resB as List).map((m) => _Branch.fromMap(m)).toList();
+      if (!kEnableMultiBranch && _branches.isEmpty) {
+        _branches = [_Branch.fromMap(defaultBranchMap())];
       }
 
       if (!mounted) return;
