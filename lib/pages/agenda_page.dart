@@ -65,6 +65,73 @@ class _Therapist {
   const _Therapist({required this.id, required this.name});
 }
 
+class _StaffWorkingHours {
+  const _StaffWorkingHours({
+    required this.staffId,
+    required this.weekday,
+    required this.isWorking,
+    this.startsAt,
+    this.endsAt,
+    this.breakStartsAt,
+    this.breakEndsAt,
+  });
+
+  final String staffId;
+  final int weekday;
+  final bool isWorking;
+  final int? startsAt;
+  final int? endsAt;
+  final int? breakStartsAt;
+  final int? breakEndsAt;
+
+  factory _StaffWorkingHours.fromMap(Map<String, dynamic> map) {
+    return _StaffWorkingHours(
+      staffId: map['staff_id']?.toString() ?? '',
+      weekday: (map['weekday'] as num?)?.toInt() ?? 0,
+      isWorking: map['is_working'] == true,
+      startsAt: _timeToMinuteNullable(map['starts_at']?.toString()),
+      endsAt: _timeToMinuteNullable(map['ends_at']?.toString()),
+      breakStartsAt: _timeToMinuteNullable(map['break_starts_at']?.toString()),
+      breakEndsAt: _timeToMinuteNullable(map['break_ends_at']?.toString()),
+    );
+  }
+}
+
+class _StaffTimeOff {
+  const _StaffTimeOff({
+    required this.staffId,
+    required this.startsAt,
+    required this.endsAt,
+    required this.reason,
+    required this.type,
+  });
+
+  final String staffId;
+  final DateTime startsAt;
+  final DateTime endsAt;
+  final String reason;
+  final String type;
+
+  factory _StaffTimeOff.fromMap(Map<String, dynamic> map) {
+    return _StaffTimeOff(
+      staffId: map['staff_id']?.toString() ?? '',
+      startsAt: DateTime.tryParse(map['starts_at']?.toString() ?? '') ??
+          DateTime.now(),
+      endsAt: DateTime.tryParse(map['ends_at']?.toString() ?? '') ??
+          DateTime.now(),
+      reason: map['reason']?.toString() ?? '',
+      type: map['type']?.toString() ?? 'blocked',
+    );
+  }
+}
+
+enum _TherapistLiveStatus {
+  available,
+  breakTime,
+  busy,
+  off,
+}
+
 class _Booking {
   final String id;
   final String clientId;
@@ -237,6 +304,16 @@ DateTime _mondayOf(DateTime d) =>
 bool _sameDay(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
 
+int? _timeToMinuteNullable(String? value) {
+  if (value == null || value.trim().isEmpty) return null;
+  final parts = value.split(':');
+  if (parts.length < 2) return null;
+  final hour = int.tryParse(parts[0]);
+  final minute = int.tryParse(parts[1]);
+  if (hour == null || minute == null) return null;
+  return hour * 60 + minute;
+}
+
 class _AgendaCalendarHours {
   const _AgendaCalendarHours({
     required this.startMinute,
@@ -367,11 +444,13 @@ class _ScheduleBlock {
     required this.title,
     required this.notes,
     this.branchId,
+    this.staffId,
     this.createdAt,
   });
 
   final String id;
   final String? branchId;
+  final String? staffId;
   final DateTime blockDate;
   final int startMinute;
   final int endMinute;
@@ -397,6 +476,7 @@ class _ScheduleBlock {
           ? (map['title'] as String).trim()
           : 'Horario bloqueado',
       notes: (map['notes'] as String? ?? '').trim(),
+      staffId: map['staff_id']?.toString(),
       createdAt: DateTime.tryParse(map['created_at'] as String? ?? ''),
     );
   }
@@ -495,6 +575,8 @@ class _AgendaPageState extends State<AgendaPage> {
   List<_Booking> _bookings = [];
   List<_ScheduleBlock> _scheduleBlocks = [];
   List<_Therapist> _therapists = [];
+  List<_StaffWorkingHours> _staffWorkingHours = [];
+  List<_StaffTimeOff> _staffTimeOff = [];
   List<Map<String, dynamic>> _branches = [];
   String? _selectedBranchId;
   _AgendaCalendarHours _calendarHours = const _AgendaCalendarHours.fullDay();
@@ -502,7 +584,7 @@ class _AgendaPageState extends State<AgendaPage> {
   DateTime _now = DateTime.now();
   late Timer _timer;
   String _activeModule = 'agenda';
-  String _viewMode = 'day_therapist';
+  String _viewMode = 'day';
   late DateTime _selectedDay;
   late DateTime _monthStart;
   bool _hasLoadedOnce = false;
@@ -1095,7 +1177,7 @@ class _AgendaPageState extends State<AgendaPage> {
           .order('full_name');
       if (!mounted) return;
       setState(() {
-        _therapists = (data as List)
+        final loaded = (data as List)
             .map(
               (m) => _Therapist(
                 id: m['id'] as String,
@@ -1103,6 +1185,27 @@ class _AgendaPageState extends State<AgendaPage> {
               ),
             )
             .toList();
+        const receptionOrder = {
+          'victoria rangel': 0,
+          'neshmy labastida': 1,
+          'maleny barron': 2,
+          'jochebed gutierrez': 3,
+          'anita bolanos': 4,
+        };
+        int orderOf(_Therapist therapist) {
+          final normalized = therapist.name
+              .trim()
+              .toLowerCase()
+              .replaceAll('ñ', 'n');
+          return receptionOrder[normalized] ?? 999;
+        }
+
+        loaded.sort((a, b) {
+          final byReceptionOrder = orderOf(a).compareTo(orderOf(b));
+          if (byReceptionOrder != 0) return byReceptionOrder;
+          return a.name.compareTo(b.name);
+        });
+        _therapists = loaded;
       });
     } catch (e) {
       debugPrint('loadTherapists: $e');
@@ -1161,15 +1264,29 @@ class _AgendaPageState extends State<AgendaPage> {
         }
       }
       var parsedBlocks = _scheduleBlocks;
+      var parsedWorkingHours = _staffWorkingHours;
+      var parsedTimeOff = _staffTimeOff;
       try {
         parsedBlocks = await _loadScheduleBlocksForVisibleRange();
       } catch (e) {
         debugPrint('loadScheduleBlocks: $e');
       }
+      try {
+        parsedWorkingHours = await _loadStaffWorkingHours();
+      } catch (e) {
+        debugPrint('loadStaffWorkingHours: $e');
+      }
+      try {
+        parsedTimeOff = await _loadStaffTimeOffForVisibleRange();
+      } catch (e) {
+        debugPrint('loadStaffTimeOff: $e');
+      }
       if (!mounted) return;
       setState(() {
         _bookings = parsed;
         _scheduleBlocks = parsedBlocks;
+        _staffWorkingHours = parsedWorkingHours;
+        _staffTimeOff = parsedTimeOff;
         _loading = false;
         _hasLoadedOnce = true;
       });
@@ -1245,6 +1362,7 @@ class _AgendaPageState extends State<AgendaPage> {
     setState(() {
       _selectedDay = day;
       _viewMode = 'day';
+      _therapistId = null;
     });
     _loadBookings();
   }
@@ -1389,7 +1507,12 @@ class _AgendaPageState extends State<AgendaPage> {
                                             : _weekStart,
                                       ),
                                       onViewMode: (v) {
-                                        setState(() => _viewMode = v);
+                                        setState(() {
+                                          _viewMode = v;
+                                          if (v == 'day') {
+                                            _therapistId = null;
+                                          }
+                                        });
                                         _loadBookings();
                                       },
                                     ),
@@ -1416,23 +1539,6 @@ class _AgendaPageState extends State<AgendaPage> {
                                               onSlotTap: _onSlotTap,
                                             )
                                           : _viewMode == 'day'
-                                          ? _DayGrid(
-                                              calendarHours:
-                                                  _visibleCalendarHours,
-                                              day: _selectedDay,
-                                              bookings: _bookings,
-                                              scheduleBlocks: _scheduleBlocksForDay(
-                                                _selectedDay,
-                                              ),
-                                              now: _now,
-                                              onBookingTap: _showBookingDetail,
-                                              onScheduleBlockTap:
-                                                  _showScheduleBlockDetail,
-                                              onReschedule: _rescheduleBooking,
-                                              isSlotBlocked: _isSlotBlocked,
-                                              onSlotTap: _onSlotTap,
-                                            )
-                                          : _viewMode == 'day_therapist'
                                           ? _DayByTherapistGrid(
                                               calendarHours:
                                                   _visibleCalendarHours,
@@ -1440,9 +1546,17 @@ class _AgendaPageState extends State<AgendaPage> {
                                               bookings: _bookings.where((b) {
                                                 return _sameDay(b.date, _selectedDay);
                                               }).toList(),
+                                              scheduleBlocks:
+                                                  _scheduleBlocksForDay(_selectedDay),
                                               therapists: _therapists,
+                                              staffWorkingHours:
+                                                  _staffWorkingHours,
+                                              staffTimeOff: _staffTimeOff,
                                               now: _now,
                                               onBookingTap: _showBookingDetail,
+                                              onScheduleBlockTap:
+                                                  _showScheduleBlockDetail,
+                                              onSlotTap: _onSlotTap,
                                             )
                                           : _MonthGrid(
                                               monthStart: _monthStart,
@@ -1493,14 +1607,19 @@ class _AgendaPageState extends State<AgendaPage> {
     );
   }
 
-  void _showNewDialog(BuildContext ctx, {DateTime? date, TimeOfDay? time}) {
+  void _showNewDialog(
+    BuildContext ctx, {
+    DateTime? date,
+    TimeOfDay? time,
+    String? therapistId,
+  }) {
     showDialog(
       context: ctx,
       builder: (_) => _NewBookingDialog(
         calendarHours: _visibleCalendarHours,
         therapists: _therapists,
         branches: _branches,
-        initialTherapistId: _therapistId,
+        initialTherapistId: therapistId ?? _therapistId,
         initialBranchId: _selectedBranchId,
         initialDate: date,
         initialTime: time,
@@ -1534,6 +1653,7 @@ class _AgendaPageState extends State<AgendaPage> {
     BuildContext ctx, {
     required DateTime date,
     required TimeOfDay time,
+    String? staffId,
     _ScheduleBlock? initialBlock,
   }) {
     showDialog(
@@ -1559,6 +1679,7 @@ class _AgendaPageState extends State<AgendaPage> {
             scope: scope,
             title: title,
             notes: notes,
+            staffId: staffId ?? initialBlock?.staffId,
           );
           if (!saved || !mounted) return false;
           Navigator.pop(ctx);
@@ -1662,7 +1783,12 @@ class _AgendaPageState extends State<AgendaPage> {
     );
   }
 
-  void _onSlotTap(DateTime date, TimeOfDay time, Offset globalPos) {
+  void _onSlotTap(
+    DateTime date,
+    TimeOfDay time,
+    Offset globalPos, [
+    String? therapistId,
+  ]) {
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     showMenu<String>(
       context: context,
@@ -1737,11 +1863,21 @@ class _AgendaPageState extends State<AgendaPage> {
     ).then((value) {
       if (!mounted || value == null) return;
       if (value == 'reserva') {
-        _showNewDialog(context, date: date, time: time);
+        _showNewDialog(
+          context,
+          date: date,
+          time: time,
+          therapistId: therapistId,
+        );
         return;
       }
       if (value == 'bloquear') {
-        _showScheduleBlockDialog(context, date: date, time: time);
+        _showScheduleBlockDialog(
+          context,
+          date: date,
+          time: time,
+          staffId: therapistId,
+        );
       }
     });
   }
@@ -1754,6 +1890,7 @@ class _AgendaPageState extends State<AgendaPage> {
     required String scope,
     required String title,
     required String notes,
+    String? staffId,
   }) async {
     final payload = <String, dynamic>{
       'branch_id': kEnableMultiBranch ? _selectedBranchId : kDefaultBranchId,
@@ -1765,6 +1902,7 @@ class _AgendaPageState extends State<AgendaPage> {
       'scope': scope,
       'title': title.trim().isEmpty ? 'Horario bloqueado' : title.trim(),
       'notes': notes.trim(),
+      'staff_id': staffId,
     };
     try {
       final table = Supabase.instance.client.from('schedule_blocks');
@@ -1895,7 +2033,7 @@ class _AgendaPageState extends State<AgendaPage> {
     dynamic query = Supabase.instance.client
         .from('schedule_blocks')
         .select(
-          'id, branch_id, block_date, start_minute, end_minute, scope, title, notes, created_at',
+          'id, branch_id, staff_id, block_date, start_minute, end_minute, scope, title, notes, created_at',
         )
         .gte('block_date', _isoDateOnly(bufferStart))
         .lte('block_date', _isoDateOnly(_rangeEnd))
@@ -1918,6 +2056,40 @@ class _AgendaPageState extends State<AgendaPage> {
       return a.startMinute.compareTo(b.startMinute);
     });
     return parsed;
+  }
+
+  Future<List<_StaffWorkingHours>> _loadStaffWorkingHours() async {
+    final response = await Supabase.instance.client
+        .from('staff_working_hours')
+        .select(
+          'staff_id, weekday, is_working, starts_at, ends_at, break_starts_at, break_ends_at',
+        );
+    return (response as List)
+        .cast<Map<String, dynamic>>()
+        .map(_StaffWorkingHours.fromMap)
+        .toList();
+  }
+
+  Future<List<_StaffTimeOff>> _loadStaffTimeOffForVisibleRange() async {
+    final from = DateTime(
+      _rangeStart.year,
+      _rangeStart.month,
+      _rangeStart.day,
+    ).toUtc().toIso8601String();
+    final to = DateTime(
+      _rangeEnd.year,
+      _rangeEnd.month,
+      _rangeEnd.day + 1,
+    ).toUtc().toIso8601String();
+    final response = await Supabase.instance.client
+        .from('staff_time_off')
+        .select('staff_id, starts_at, ends_at, reason, type')
+        .lt('starts_at', to)
+        .gt('ends_at', from);
+    return (response as List)
+        .cast<Map<String, dynamic>>()
+        .map(_StaffTimeOff.fromMap)
+        .toList();
   }
 
   Future<bool> _rescheduleBooking(
@@ -2480,12 +2652,14 @@ class _TopBar extends StatelessWidget {
       child: Row(
         children: [
           // View mode chips
+          if (viewMode == '__legacy_day_therapist__') ...[
           _OutlineChip(
             label: 'DÍA · TERAPEUTAS',
             active: viewMode == 'day_therapist',
             onTap: () => onViewMode('day_therapist'),
           ),
           const SizedBox(width: 6),
+          ],
           _OutlineChip(
             label: 'DÍA',
             active: viewMode == 'day',
@@ -4888,16 +5062,26 @@ class _DayByTherapistGrid extends StatefulWidget {
     required this.calendarHours,
     required this.day,
     required this.bookings,
+    required this.scheduleBlocks,
     required this.therapists,
+    required this.staffWorkingHours,
+    required this.staffTimeOff,
     required this.now,
     required this.onBookingTap,
+    required this.onScheduleBlockTap,
+    required this.onSlotTap,
   });
   final _AgendaCalendarHours calendarHours;
   final DateTime day;
   final List<_Booking> bookings;
+  final List<_ScheduleBlock> scheduleBlocks;
   final List<_Therapist> therapists;
+  final List<_StaffWorkingHours> staffWorkingHours;
+  final List<_StaffTimeOff> staffTimeOff;
   final DateTime now;
   final void Function(BuildContext, _Booking) onBookingTap;
+  final void Function(BuildContext, _ScheduleBlock) onScheduleBlockTap;
+  final void Function(DateTime, TimeOfDay, Offset, String?) onSlotTap;
 
   @override
   State<_DayByTherapistGrid> createState() => _DayByTherapistGridState();
@@ -4958,6 +5142,104 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
     _didInitialScroll = true;
   }
 
+  _StaffWorkingHours? _hoursFor(String staffId) {
+    final weekday = widget.day.weekday % 7;
+    for (final row in widget.staffWorkingHours) {
+      if (row.staffId == staffId && row.weekday == weekday) return row;
+    }
+    return null;
+  }
+
+  List<_StaffTimeOff> _timeOffFor(String staffId) {
+    final dayStart = DateTime(widget.day.year, widget.day.month, widget.day.day);
+    final dayEnd = dayStart.add(const Duration(days: 1));
+    return widget.staffTimeOff.where((row) {
+      if (row.staffId != staffId) return false;
+      return row.startsAt.isBefore(dayEnd) && row.endsAt.isAfter(dayStart);
+    }).toList();
+  }
+
+  bool _isActiveServiceStatus(String status) {
+    return const {
+      'confirmed',
+      'checked_in',
+      'in_progress',
+      'arrived',
+      'arrival',
+      'llegada',
+    }.contains(status);
+  }
+
+  bool _hasActiveBookingNow(String staffId, int nowMinute) {
+    return widget.bookings.any((booking) {
+      if (booking.therapistId != staffId) return false;
+      if (!_isActiveServiceStatus(booking.status)) return false;
+      return nowMinute >= booking.startMinute &&
+          nowMinute < booking.startMinute + booking.durationMinutes;
+    });
+  }
+
+  _TherapistLiveStatus _liveStatusFor(String? staffId) {
+    if (staffId == null || !_sameDay(widget.day, widget.now)) {
+      return _TherapistLiveStatus.off;
+    }
+
+    final nowMinute = widget.now.hour * 60 + widget.now.minute;
+
+    if (_hasActiveBookingNow(staffId, nowMinute)) {
+      return _TherapistLiveStatus.busy;
+    }
+
+    final hours = _hoursFor(staffId);
+    if (hours != null && !hours.isWorking) {
+      return _TherapistLiveStatus.off;
+    }
+
+    final startsAt = hours?.startsAt ?? widget.calendarHours.startMinute;
+    final endsAt = hours?.endsAt ?? widget.calendarHours.endMinuteInclusive + 1;
+    final insideWorkHours = nowMinute >= startsAt && nowMinute < endsAt;
+    if (!insideWorkHours) {
+      return _TherapistLiveStatus.off;
+    }
+
+    final breakStartsAt = hours?.breakStartsAt;
+    final breakEndsAt = hours?.breakEndsAt;
+    if (breakStartsAt != null &&
+        breakEndsAt != null &&
+        nowMinute >= breakStartsAt &&
+        nowMinute < breakEndsAt) {
+      return _TherapistLiveStatus.breakTime;
+    }
+
+    return _TherapistLiveStatus.available;
+  }
+
+  Color _liveStatusColor(_TherapistLiveStatus status) {
+    switch (status) {
+      case _TherapistLiveStatus.busy:
+        return const Color(0xFFB24A43);
+      case _TherapistLiveStatus.breakTime:
+        return const Color(0xFFD99032);
+      case _TherapistLiveStatus.available:
+        return const Color(0xFF2F8F5B);
+      case _TherapistLiveStatus.off:
+        return const Color(0xFFB8B2AA);
+    }
+  }
+
+  String _liveStatusLabel(_TherapistLiveStatus status) {
+    switch (status) {
+      case _TherapistLiveStatus.busy:
+        return 'Ocupada en servicio';
+      case _TherapistLiveStatus.breakTime:
+        return 'Comida / descanso';
+      case _TherapistLiveStatus.available:
+        return 'Disponible';
+      case _TherapistLiveStatus.off:
+        return 'No trabaja ahora';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // Filtrar terapeutas activos (los recibidos ya están filtrados por activo,
@@ -4985,10 +5267,9 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
       );
     }
 
-    final totalMinutes = widget.calendarHours.endMinuteInclusive -
-        widget.calendarHours.startMinute +
-        30;
-    final gridHeight = (totalMinutes / 60) * _kHourHeight;
+    final totalMinutes = widget.calendarHours.totalDisplayMinutes;
+    final halfHourRows = max(1, (totalMinutes / 30).ceil());
+    final gridHeight = halfHourRows * (_kHourHeight / 2);
 
     return LayoutBuilder(builder: (context, constraints) {
       final available =
@@ -5027,6 +5308,9 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
                         children: List.generate(columnIds.length, (i) {
                           final isUnassigned =
                               columnIds[i] == '__unassigned__';
+                          final liveStatus = _liveStatusFor(
+                            isUnassigned ? null : columnIds[i],
+                          );
                           return Container(
                             width: colWidth,
                             decoration: const BoxDecoration(
@@ -5038,19 +5322,28 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 10, vertical: 8),
                             child: Row(children: [
-                              CircleAvatar(
-                                radius: 14,
-                                backgroundColor: isUnassigned
-                                    ? const Color(0xFFFFE5C2)
-                                    : SaharaTheme.gold.withValues(alpha: 0.18),
-                                child: Icon(
-                                  isUnassigned
-                                      ? Icons.help_outline
-                                      : Icons.person_outline,
-                                  size: 15,
-                                  color: isUnassigned
-                                      ? const Color(0xFFC68A17)
-                                      : SaharaTheme.gold,
+                              Tooltip(
+                                message: isUnassigned
+                                    ? 'Sin terapeuta asignada'
+                                    : _liveStatusLabel(liveStatus),
+                                child: Container(
+                                  width: 11,
+                                  height: 11,
+                                  decoration: BoxDecoration(
+                                    color: isUnassigned
+                                        ? const Color(0xFFB8B2AA)
+                                        : _liveStatusColor(liveStatus),
+                                    shape: BoxShape.circle,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: (isUnassigned
+                                                ? const Color(0xFFB8B2AA)
+                                                : _liveStatusColor(liveStatus))
+                                            .withValues(alpha: 0.24),
+                                        blurRadius: 6,
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                               const SizedBox(width: 8),
@@ -5093,7 +5386,7 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
                       width: _kHourLabelWidth,
                       child: Column(
                         children: List.generate(
-                          (totalMinutes / 30).ceil(),
+                          halfHourRows,
                           (i) {
                             final m =
                                 widget.calendarHours.startMinute + i * 30;
@@ -5136,13 +5429,30 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
                               }).toList();
                               return _TherapistColumn(
                                 width: colWidth,
+                                staffId: tId == '__unassigned__' ? null : tId,
                                 gridHeight: gridHeight,
                                 calendarHours: widget.calendarHours,
                                 bookings: colBookings,
+                                scheduleBlocks: tId == '__unassigned__'
+                                    ? const <_ScheduleBlock>[]
+                                    : widget.scheduleBlocks.where((block) {
+                                        final blockStaffId =
+                                            block.staffId?.trim() ?? '';
+                                        return blockStaffId.isEmpty ||
+                                            blockStaffId == tId;
+                                      }).toList(),
+                                workingHours: tId == '__unassigned__'
+                                    ? null
+                                    : _hoursFor(tId),
+                                timeOff: tId == '__unassigned__'
+                                    ? const <_StaffTimeOff>[]
+                                    : _timeOffFor(tId),
                                 onBookingTap: widget.onBookingTap,
+                                onScheduleBlockTap: widget.onScheduleBlockTap,
                                 now: widget.now,
                                 day: widget.day,
                                 isUnassigned: tId == '__unassigned__',
+                                onSlotTap: widget.onSlotTap,
                               );
                             }),
                           ),
@@ -5163,25 +5473,113 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
 class _TherapistColumn extends StatelessWidget {
   const _TherapistColumn({
     required this.width,
+    required this.staffId,
     required this.gridHeight,
     required this.calendarHours,
     required this.bookings,
+    required this.scheduleBlocks,
+    required this.workingHours,
+    required this.timeOff,
     required this.onBookingTap,
+    required this.onScheduleBlockTap,
     required this.now,
     required this.day,
     required this.isUnassigned,
+    required this.onSlotTap,
   });
   final double width;
+  final String? staffId;
   final double gridHeight;
   final _AgendaCalendarHours calendarHours;
   final List<_Booking> bookings;
+  final List<_ScheduleBlock> scheduleBlocks;
+  final _StaffWorkingHours? workingHours;
+  final List<_StaffTimeOff> timeOff;
   final void Function(BuildContext, _Booking) onBookingTap;
+  final void Function(BuildContext, _ScheduleBlock) onScheduleBlockTap;
   final DateTime now;
   final DateTime day;
   final bool isUnassigned;
+  final void Function(DateTime, TimeOfDay, Offset, String?) onSlotTap;
 
   double _topForMinute(int minute) =>
       (minute - calendarHours.startMinute) * (_kHourHeight / 60);
+
+  bool _overlaps(int startMinute, int endMinute, int otherStart, int otherEnd) {
+    return startMinute < otherEnd && endMinute > otherStart;
+  }
+
+  void _showSlotMessage(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  int? _slotMinute(Offset local) {
+    if (local.dy < 0) return null;
+    final rawMin =
+        (local.dy / _kHourHeight * 60).floor() + calendarHours.startMinute;
+    final snapped = (rawMin ~/ 30) * 30;
+    if (!calendarHours.containsMinute(snapped)) return null;
+    return snapped;
+  }
+
+  bool _canOpenSlotMenu(BuildContext context, int minute) {
+    if (isUnassigned) return true;
+
+    if (workingHours != null && !workingHours!.isWorking) {
+      _showSlotMessage(context, 'Esta terapeuta no trabaja este dia.');
+      return false;
+    }
+
+    final slotEnd = minute + 30;
+    final startsAt = workingHours?.startsAt;
+    final endsAt = workingHours?.endsAt;
+    if (startsAt != null &&
+        endsAt != null &&
+        (minute < startsAt || slotEnd > endsAt)) {
+      _showSlotMessage(context, 'Esta terapeuta no trabaja en este horario.');
+      return false;
+    }
+
+    final breakStartsAt = workingHours?.breakStartsAt;
+    final breakEndsAt = workingHours?.breakEndsAt;
+    if (breakStartsAt != null &&
+        breakEndsAt != null &&
+        _overlaps(minute, slotEnd, breakStartsAt, breakEndsAt)) {
+      _showSlotMessage(
+        context,
+        'Esta terapeuta esta en horario de comida/descanso.',
+      );
+      return false;
+    }
+
+    final hasBooking = bookings.any((booking) {
+      return _overlaps(
+        minute,
+        slotEnd,
+        booking.startMinute,
+        booking.startMinute + booking.durationMinutes,
+      );
+    });
+    if (hasBooking) {
+      _showSlotMessage(
+        context,
+        'Esta terapeuta ya tiene una cita en este horario.',
+      );
+      return false;
+    }
+
+    final hasBlock = scheduleBlocks.any((block) {
+      return _overlaps(minute, slotEnd, block.startMinute, block.endMinute);
+    });
+    if (hasBlock) {
+      _showSlotMessage(context, 'Este horario esta bloqueado.');
+      return false;
+    }
+
+    return true;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -5190,12 +5588,18 @@ class _TherapistColumn extends StatelessWidget {
     final showNowLine = isToday &&
         nowMinute >= calendarHours.startMinute &&
         nowMinute <= calendarHours.endMinuteInclusive;
+    final isOffDay =
+        !isUnassigned && workingHours != null && !workingHours!.isWorking;
 
     return Container(
       width: width,
       height: gridHeight,
       decoration: BoxDecoration(
-        color: isUnassigned ? const Color(0xFFFFF8EC) : Colors.white,
+        color: isOffDay
+            ? const Color(0xFFF0F0F0)
+            : isUnassigned
+                ? const Color(0xFFFFF8EC)
+                : Colors.white,
         border: const Border(
           right: BorderSide(color: Color(0xFFE0DDD8)),
         ),
@@ -5204,11 +5608,7 @@ class _TherapistColumn extends StatelessWidget {
         children: [
           // Líneas horizontales cada 30 minutos
           ...List.generate(
-            ((calendarHours.endMinuteInclusive +
-                        30 -
-                        calendarHours.startMinute) /
-                    30)
-                .ceil(),
+            max(1, (gridHeight / (_kHourHeight / 2)).ceil()),
             (i) {
               final m = calendarHours.startMinute + i * 30;
               final isHour = m % 60 == 0;
@@ -5223,6 +5623,164 @@ class _TherapistColumn extends StatelessWidget {
               );
             },
           ),
+          if (!isOffDay)
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTapDown: (details) {
+                  final minute = _slotMinute(details.localPosition);
+                  if (minute == null) return;
+                  if (!_canOpenSlotMenu(context, minute)) return;
+                  onSlotTap(
+                    day,
+                    TimeOfDay(hour: minute ~/ 60, minute: minute % 60),
+                    details.globalPosition,
+                    isUnassigned ? null : staffId,
+                  );
+                },
+              ),
+            ),
+          if (isOffDay)
+            Positioned.fill(
+              child: Container(
+                alignment: Alignment.topCenter,
+                padding: const EdgeInsets.only(top: 14),
+                color: const Color(0xFFE6E6E6).withValues(alpha: 0.72),
+                child: Text(
+                  'No trabaja hoy',
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black54,
+                  ),
+                ),
+              ),
+            ),
+          if (!isUnassigned &&
+              workingHours?.breakStartsAt != null &&
+              workingHours?.breakEndsAt != null)
+            Positioned(
+              top: _topForMinute(workingHours!.breakStartsAt!)
+                  .clamp(0.0, gridHeight),
+              left: 2,
+              right: 2,
+              height: max(
+                22.0,
+                (workingHours!.breakEndsAt! - workingHours!.breakStartsAt!) *
+                        (_kHourHeight / 60) -
+                    4,
+              ),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF3D8),
+                  border: Border.all(color: const Color(0xFFE2B95F)),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                child: Text(
+                  'Comida / receso',
+                  style: GoogleFonts.inter(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF8B6416),
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          ...timeOff.map((off) {
+            final dayStart = DateTime(day.year, day.month, day.day);
+            final dayEnd = dayStart.add(const Duration(days: 1));
+            final start =
+                off.startsAt.isBefore(dayStart) ? dayStart : off.startsAt;
+            final end = off.endsAt.isAfter(dayEnd) ? dayEnd : off.endsAt;
+            final startMinute = start.hour * 60 + start.minute;
+            final endMinute = end.hour * 60 + end.minute;
+            return Positioned(
+              top: _topForMinute(startMinute).clamp(0.0, gridHeight),
+              left: 2,
+              right: 2,
+              height: max(
+                24.0,
+                (endMinute - startMinute) * (_kHourHeight / 60) - 4,
+              ),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1E5E5),
+                  border: Border.all(color: const Color(0xFFD7A1A1)),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                child: Text(
+                  'No disponible · ${off.reason.isEmpty ? off.type : off.reason}',
+                  style: GoogleFonts.inter(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF8E3B3B),
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            );
+          }),
+          // Bloques "Profesional no disponible" (schedule_blocks del día).
+          // Aplican a todas las columnas de terapeutas (la tabla actual no
+          // distingue por staff_id). Si en el futuro se agrega staff_id al
+          // schedule_blocks, este filtro se vuelve por terapeuta.
+          ...scheduleBlocks.map((sb) {
+            final top = _topForMinute(sb.startMinute).clamp(0.0, gridHeight);
+            final h = max(
+              22.0,
+              (sb.endMinute - sb.startMinute) * (_kHourHeight / 60) - 4,
+            );
+            final reason = sb.notes.trim().isNotEmpty ? sb.notes.trim() : sb.title;
+            return Positioned(
+              top: top,
+              left: 2,
+              right: 2,
+              height: h,
+              child: Tooltip(
+                message: reason,
+                child: GestureDetector(
+                  onTap: () => onScheduleBlockTap(context, sb),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE1E4E6),
+                      border: Border.all(color: const Color(0xFFB7BDC1)),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 3),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          reason,
+                          style: GoogleFonts.inter(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.black54,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                        if (h >= 32)
+                          Text(
+                            '${_minuteLabel24(sb.startMinute)} - ${_minuteLabel24(sb.endMinute)}',
+                            style: GoogleFonts.inter(
+                              fontSize: 9.5,
+                              color: Colors.black45,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }),
           // Citas posicionadas
           ...bookings.map((b) {
             final top = _topForMinute(b.startMinute).clamp(0.0, gridHeight);
@@ -5235,12 +5793,52 @@ class _TherapistColumn extends StatelessWidget {
               left: 4,
               right: 4,
               height: h,
-              child: _BookingCard(
-                booking: b,
-                onTap: () => onBookingTap(context, b),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(4),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF7A2828).withValues(alpha: 0.12),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: _BookingCard(
+                  booking: b,
+                  onTap: () => onBookingTap(context, b),
+                ),
               ),
             );
           }),
+          // Si la columna no tiene NI citas NI bloques, etiqueta "Disponible"
+          // sutil arriba (solo aplica a terapeutas, no a "Sin asignar").
+          if (!isUnassigned && bookings.isEmpty && scheduleBlocks.isEmpty)
+            Positioned(
+              top: 8,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE5F4E8),
+                    borderRadius: BorderRadius.circular(999),
+                    border:
+                        Border.all(color: const Color(0xFF7CC689)),
+                  ),
+                  child: Text(
+                    'Disponible',
+                    style: GoogleFonts.inter(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF2D8A4F),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           // Línea de "ahora"
           if (showNowLine)
             Positioned(

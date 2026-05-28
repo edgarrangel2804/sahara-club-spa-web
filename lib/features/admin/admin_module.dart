@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -83,7 +85,7 @@ class _Staff {
       id: m['id'] ?? '',
       name: m['full_name'] ?? m['name'] ?? '',
       role: m['role'] ?? 'other',
-      active: m['active'] ?? true,
+      active: m['is_active'] as bool? ?? m['active'] as bool? ?? true,
       photoUrl: m['photo_url'],
       phone: m['phone'],
       whatsapp: m['whatsapp'],
@@ -105,6 +107,146 @@ class _Staff {
       accessEmail: m['access_email'] ?? m['email'],
     );
   }
+}
+
+class _StaffWorkingDay {
+  _StaffWorkingDay({
+    required this.weekday,
+    required this.label,
+    this.isWorking = false,
+    this.startsAt = '',
+    this.endsAt = '',
+  });
+
+  final int weekday;
+  final String label;
+  bool isWorking;
+  String startsAt;
+  String endsAt;
+  String breakStartsAt = '';
+  String breakEndsAt = '';
+
+  Map<String, dynamic> toPayload(String staffId) => {
+        'staff_id': staffId,
+        'weekday': weekday,
+        'is_working': isWorking,
+        'starts_at': isWorking ? _normalizeTimeValue(startsAt) : null,
+        'ends_at': isWorking ? _normalizeTimeValue(endsAt) : null,
+        'break_starts_at':
+            isWorking && breakStartsAt.trim().isNotEmpty
+                ? _normalizeTimeValue(breakStartsAt)
+                : null,
+        'break_ends_at':
+            isWorking && breakEndsAt.trim().isNotEmpty
+                ? _normalizeTimeValue(breakEndsAt)
+                : null,
+      };
+
+  static String? _normalizeTimeValue(String value) {
+    final minute = _timeToMinute(value);
+    if (minute == null) return null;
+    return '${(minute ~/ 60).toString().padLeft(2, '0')}:${(minute % 60).toString().padLeft(2, '0')}:00';
+  }
+
+  static int? _timeToMinute(String raw) {
+    final parts = raw.trim().split(':');
+    if (parts.length < 2) return null;
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    if (hour == null || minute == null) return null;
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+    return hour * 60 + minute;
+  }
+}
+
+class _StaffWorkingHoursRow {
+  const _StaffWorkingHoursRow({
+    required this.staffId,
+    required this.weekday,
+    required this.isWorking,
+    this.startsAt,
+    this.endsAt,
+    this.breakStartsAt,
+    this.breakEndsAt,
+  });
+
+  final String staffId;
+  final int weekday;
+  final bool isWorking;
+  final int? startsAt;
+  final int? endsAt;
+  final int? breakStartsAt;
+  final int? breakEndsAt;
+
+  factory _StaffWorkingHoursRow.fromMap(Map<String, dynamic> map) {
+    return _StaffWorkingHoursRow(
+      staffId: map['staff_id']?.toString() ?? '',
+      weekday: (map['weekday'] as num?)?.toInt() ?? 0,
+      isWorking: map['is_working'] == true,
+      startsAt: _StaffWorkingDay._timeToMinute(map['starts_at']?.toString() ?? ''),
+      endsAt: _StaffWorkingDay._timeToMinute(map['ends_at']?.toString() ?? ''),
+      breakStartsAt:
+          _StaffWorkingDay._timeToMinute(map['break_starts_at']?.toString() ?? ''),
+      breakEndsAt:
+          _StaffWorkingDay._timeToMinute(map['break_ends_at']?.toString() ?? ''),
+    );
+  }
+}
+
+class _StaffTimeOffRow {
+  const _StaffTimeOffRow({
+    required this.staffId,
+    required this.startsAt,
+    required this.endsAt,
+  });
+
+  final String staffId;
+  final DateTime startsAt;
+  final DateTime endsAt;
+
+  factory _StaffTimeOffRow.fromMap(Map<String, dynamic> map) {
+    return _StaffTimeOffRow(
+      staffId: map['staff_id']?.toString() ?? '',
+      startsAt: DateTime.tryParse(map['starts_at']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      endsAt: DateTime.tryParse(map['ends_at']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+    );
+  }
+}
+
+class _StaffScheduleBlockRow {
+  const _StaffScheduleBlockRow({
+    required this.blockDate,
+    required this.startMinute,
+    required this.endMinute,
+    this.staffId,
+  });
+
+  final DateTime blockDate;
+  final int startMinute;
+  final int endMinute;
+  final String? staffId;
+
+  factory _StaffScheduleBlockRow.fromMap(Map<String, dynamic> map) {
+    final parsedDate = DateTime.tryParse(map['block_date']?.toString() ?? '') ??
+        DateTime.now();
+    final start = (map['start_minute'] as num?)?.toInt() ?? 0;
+    final end = (map['end_minute'] as num?)?.toInt() ?? start + 60;
+    return _StaffScheduleBlockRow(
+      blockDate: DateTime(parsedDate.year, parsedDate.month, parsedDate.day),
+      startMinute: start,
+      endMinute: end,
+      staffId: map['staff_id']?.toString(),
+    );
+  }
+}
+
+enum _StaffAvailabilityStatus {
+  available,
+  unavailable,
+  lunch,
+  busy,
 }
 
 class _ServiceItem {
@@ -352,6 +494,9 @@ class _AdminModuleState extends State<AdminModule>
   bool _loading = true;
   List<_Staff> _staff = [];
   List<Map<String, dynamic>> _todayBookings = [];
+  List<_StaffWorkingHoursRow> _staffWorkingHours = [];
+  List<_StaffTimeOffRow> _staffTimeOff = [];
+  List<_StaffScheduleBlockRow> _scheduleBlocks = [];
   List<_ServiceItem> _services = [];
   List<WhatsAppTemplate> _templates = [];
   List<_Branch> _branches = [];
@@ -376,6 +521,7 @@ class _AdminModuleState extends State<AdminModule>
       final userId = Supabase.instance.client.auth.currentUser?.id;
       final now = DateTime.now();
       final todayStart = DateTime(now.year, now.month, now.day);
+      final tomorrowStart = todayStart.add(const Duration(days: 1));
       final todayKey = todayStart.toIso8601String().split('T').first;
       _role = RolePermissions.normalize(widget.currentRole);
       if (userId != null) {
@@ -412,6 +558,20 @@ class _AdminModuleState extends State<AdminModule>
           .gte('booking_date', todayKey)
           .order('booking_date', ascending: true)
           .order('booking_time', ascending: true);
+      final resStaffWorkingHours = await Supabase.instance.client
+          .from('staff_working_hours')
+          .select(
+            'staff_id, weekday, is_working, starts_at, ends_at, break_starts_at, break_ends_at',
+          );
+      final resStaffTimeOff = await Supabase.instance.client
+          .from('staff_time_off')
+          .select('staff_id, starts_at, ends_at')
+          .lt('starts_at', tomorrowStart.toUtc().toIso8601String())
+          .gt('ends_at', todayStart.toUtc().toIso8601String());
+      final resScheduleBlocks = await Supabase.instance.client
+          .from('schedule_blocks')
+          .select('staff_id, block_date, start_minute, end_minute')
+          .eq('block_date', todayKey);
 
       if (_canAccessAdministration) {
         final resB = await Supabase.instance.client.from('sucursales').select();
@@ -427,6 +587,18 @@ class _AdminModuleState extends State<AdminModule>
         _todayBookings = List<Map<String, dynamic>>.from(
           resTodayBookings as List,
         );
+        _staffWorkingHours = (resStaffWorkingHours as List)
+            .cast<Map<String, dynamic>>()
+            .map(_StaffWorkingHoursRow.fromMap)
+            .toList();
+        _staffTimeOff = (resStaffTimeOff as List)
+            .cast<Map<String, dynamic>>()
+            .map(_StaffTimeOffRow.fromMap)
+            .toList();
+        _scheduleBlocks = (resScheduleBlocks as List)
+            .cast<Map<String, dynamic>>()
+            .map(_StaffScheduleBlockRow.fromMap)
+            .toList();
         _services = (resV as List).map((m) => _ServiceItem.fromMap(m)).toList();
         _templates = (resW as List)
             .map((m) => WhatsAppTemplate.fromMap(m))
@@ -948,6 +1120,9 @@ class _AdminModuleState extends State<AdminModule>
                       _StaffTab(
                         staff: _staff,
                         todayBookings: _todayBookings,
+                        staffWorkingHours: _staffWorkingHours,
+                        staffTimeOff: _staffTimeOff,
+                        scheduleBlocks: _scheduleBlocks,
                         onToggle: _toggleStaffActive,
                         onEdit: _openStaffForm,
                         onDelete: _deleteStaff,
@@ -987,6 +1162,9 @@ class _StaffTab extends StatefulWidget {
   const _StaffTab({
     required this.staff,
     required this.todayBookings,
+    required this.staffWorkingHours,
+    required this.staffTimeOff,
+    required this.scheduleBlocks,
     required this.onToggle,
     required this.onEdit,
     required this.onDelete,
@@ -995,6 +1173,9 @@ class _StaffTab extends StatefulWidget {
   });
   final List<_Staff> staff;
   final List<Map<String, dynamic>> todayBookings;
+  final List<_StaffWorkingHoursRow> staffWorkingHours;
+  final List<_StaffTimeOffRow> staffTimeOff;
+  final List<_StaffScheduleBlockRow> scheduleBlocks;
   final void Function(_Staff) onToggle;
   final void Function(_Staff) onEdit;
   final void Function(_Staff) onDelete;
@@ -1010,9 +1191,19 @@ class _StaffTabState extends State<_StaffTab> {
   String _roleFilter = 'Todos';
   String _statusFilter = 'Todos';
   bool _cardView = true;
+  Timer? _availabilityTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _availabilityTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
 
   @override
   void dispose() {
+    _availabilityTimer?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -1093,6 +1284,7 @@ class _StaffTabState extends State<_StaffTab> {
     final currentBooking = validBookings.cast<Map<String, dynamic>?>().firstWhere(
       (row) {
         if (row == null) return false;
+        if (!_isBusyStatus(row['status']?.toString())) return false;
         final start = _bookingDateTime(row);
         final duration = (row['duration_min'] as num?)?.toInt() ?? 60;
         final end = start.add(Duration(minutes: duration));
@@ -1118,22 +1310,27 @@ class _StaffTabState extends State<_StaffTab> {
     String statusLabel;
     Color statusColor;
     int statusPriority;
-    if (!staffMember.active) {
-      statusLabel = 'Inactivo';
-      statusColor = const Color(0xFFB94A48);
-      statusPriority = 3;
-    } else if (currentBooking != null) {
-      statusLabel = 'En servicio';
-      statusColor = const Color(0xFFE39A1F);
-      statusPriority = 0;
-    } else if (upcomingBooking != null || todayBookings.isEmpty) {
-      statusLabel = 'Disponible';
-      statusColor = const Color(0xFF2F9E62);
-      statusPriority = 1;
-    } else {
-      statusLabel = 'Agenda cerrada';
-      statusColor = const Color(0xFF7A746C);
-      statusPriority = 2;
+    switch (_getStaffAvailabilityStatus(staffMember, now, currentBooking)) {
+      case _StaffAvailabilityStatus.busy:
+        statusLabel = 'Ocupada';
+        statusColor = const Color(0xFFB24A43);
+        statusPriority = 0;
+        break;
+      case _StaffAvailabilityStatus.lunch:
+        statusLabel = 'En descanso';
+        statusColor = const Color(0xFFD99032);
+        statusPriority = 1;
+        break;
+      case _StaffAvailabilityStatus.available:
+        statusLabel = 'Disponible';
+        statusColor = const Color(0xFF2F8F5B);
+        statusPriority = 2;
+        break;
+      case _StaffAvailabilityStatus.unavailable:
+        statusLabel = 'No disponible';
+        statusColor = const Color(0xFF8C8780);
+        statusPriority = 3;
+        break;
     }
 
     return _StaffSnapshot(
@@ -1150,7 +1347,7 @@ class _StaffTabState extends State<_StaffTab> {
           (todayBookings.isEmpty ? 'Sin citas programadas' : 'Agenda completada'),
       servicesToday: todayBookings.length,
       scheduledHours: _formatMinutes(totalMinutes),
-      shiftLabel: _shiftLabel(staffMember),
+      shiftLabel: _shiftLabel(staffMember, now),
       estimatedCommission: estimatedCommission,
       contactLabel: staffMember.email?.trim().isNotEmpty == true
           ? staffMember.email!.trim()
@@ -1158,6 +1355,111 @@ class _StaffTabState extends State<_StaffTab> {
                 ? staffMember.phone!.trim()
                 : 'Sin contacto registrado'),
     );
+  }
+
+  _StaffAvailabilityStatus _getStaffAvailabilityStatus(
+    _Staff staffMember,
+    DateTime now,
+    Map<String, dynamic>? currentBooking,
+  ) {
+    if (!staffMember.active) return _StaffAvailabilityStatus.unavailable;
+
+    final workingHours = _workingHoursFor(staffMember.id, now);
+    final worksToday = _worksToday(staffMember, workingHours, now);
+    if (!worksToday) return _StaffAvailabilityStatus.unavailable;
+
+    if (currentBooking != null) return _StaffAvailabilityStatus.busy;
+
+    final nowMinute = now.hour * 60 + now.minute;
+    if (_hasActiveTimeOff(staffMember.id, now) ||
+        _hasActiveScheduleBlock(staffMember.id, now)) {
+      return _StaffAvailabilityStatus.unavailable;
+    }
+
+    final breakStartsAt = workingHours?.breakStartsAt;
+    final breakEndsAt = workingHours?.breakEndsAt;
+    if (breakStartsAt != null &&
+        breakEndsAt != null &&
+        nowMinute >= breakStartsAt &&
+        nowMinute < breakEndsAt) {
+      return _StaffAvailabilityStatus.lunch;
+    }
+
+    final startsAt = workingHours?.startsAt ??
+        _StaffWorkingDay._timeToMinute(staffMember.workStartTime ?? '');
+    final endsAt = workingHours?.endsAt ??
+        _StaffWorkingDay._timeToMinute(staffMember.workEndTime ?? '');
+    if (startsAt == null ||
+        endsAt == null ||
+        nowMinute < startsAt ||
+        nowMinute >= endsAt) {
+      return _StaffAvailabilityStatus.unavailable;
+    }
+
+    return _StaffAvailabilityStatus.available;
+  }
+
+  _StaffWorkingHoursRow? _workingHoursFor(String staffId, DateTime date) {
+    final weekday = date.weekday % 7;
+    for (final row in widget.staffWorkingHours) {
+      if (row.staffId == staffId && row.weekday == weekday) return row;
+    }
+    return null;
+  }
+
+  bool _worksToday(
+    _Staff staffMember,
+    _StaffWorkingHoursRow? workingHours,
+    DateTime date,
+  ) {
+    if (workingHours != null) return workingHours.isWorking;
+    if (staffMember.workDays.isEmpty) return false;
+    final weekdayNames = {
+      1: ['lunes', 'mon', 'monday'],
+      2: ['martes', 'tue', 'tuesday'],
+      3: ['miercoles', 'miércoles', 'wed', 'wednesday'],
+      4: ['jueves', 'thu', 'thursday'],
+      5: ['viernes', 'fri', 'friday'],
+      6: ['sabado', 'sábado', 'sat', 'saturday'],
+      7: ['domingo', 'sun', 'sunday'],
+    };
+    final allowed = weekdayNames[date.weekday] ?? const <String>[];
+    return staffMember.workDays.any((day) {
+      final normalized = day.trim().toLowerCase();
+      return allowed.contains(normalized);
+    });
+  }
+
+  bool _hasActiveTimeOff(String staffId, DateTime now) {
+    return widget.staffTimeOff.any((row) {
+      return row.staffId == staffId &&
+          !now.isBefore(row.startsAt) &&
+          now.isBefore(row.endsAt);
+    });
+  }
+
+  bool _hasActiveScheduleBlock(String staffId, DateTime now) {
+    final today = DateTime(now.year, now.month, now.day);
+    final nowMinute = now.hour * 60 + now.minute;
+    return widget.scheduleBlocks.any((block) {
+      final blockStaffId = block.staffId?.trim() ?? '';
+      return (blockStaffId.isEmpty || blockStaffId == staffId) &&
+          block.blockDate == today &&
+          nowMinute >= block.startMinute &&
+          nowMinute < block.endMinute;
+    });
+  }
+
+  bool _isBusyStatus(String? raw) {
+    final status = raw?.trim().toLowerCase() ?? '';
+    return const {
+      'confirmed',
+      'checked_in',
+      'in_progress',
+      'arrived',
+      'arrival',
+      'llegada',
+    }.contains(status);
   }
 
   DateTime _bookingDateTime(Map<String, dynamic> row) {
@@ -1188,11 +1490,23 @@ class _StaffTabState extends State<_StaffTab> {
     return remainder == 0 ? '${hours}h' : '${hours}h ${remainder}m';
   }
 
-  String _shiftLabel(_Staff staffMember) {
-    final start = staffMember.workStartTime;
-    final end = staffMember.workEndTime;
+  String _shiftLabel(_Staff staffMember, DateTime now) {
+    final workingHours = _workingHoursFor(staffMember.id, now);
+    if (workingHours != null && !workingHours.isWorking) {
+      return 'Descanso hoy';
+    }
+    final start = workingHours?.startsAt != null
+        ? _minuteToTime(workingHours!.startsAt!)
+        : staffMember.workStartTime;
+    final end = workingHours?.endsAt != null
+        ? _minuteToTime(workingHours!.endsAt!)
+        : staffMember.workEndTime;
     if ((start ?? '').isEmpty || (end ?? '').isEmpty) return 'Horario pendiente';
     return '${_normalizeHour(start!)} - ${_normalizeHour(end!)}';
+  }
+
+  String _minuteToTime(int minute) {
+    return '${(minute ~/ 60).toString().padLeft(2, '0')}:${(minute % 60).toString().padLeft(2, '0')}:00';
   }
 
   String _normalizeHour(String raw) {
@@ -1228,7 +1542,7 @@ class _StaffTabState extends State<_StaffTab> {
           (item) =>
               item.staff.active &&
               item.staff.role.toLowerCase().contains('therap') &&
-              item.statusLabel == 'En servicio',
+              item.statusLabel == 'Ocupada',
         )
         .length;
     final payrollBase = _snapshots.fold<double>(
@@ -1619,9 +1933,9 @@ class _PersonnelFiltersBar extends StatelessWidget {
             items: const [
               'Todos',
               'Disponible',
-              'En servicio',
-              'Agenda cerrada',
-              'Inactivo',
+              'En descanso',
+              'Ocupada',
+              'No disponible',
             ],
             onChanged: onStatusChanged,
           ),
@@ -4331,6 +4645,7 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
   List<String> _workDays = [];
   bool _showInCalendar = false;
   bool _canLogin = false;
+  late Map<int, _StaffWorkingDay> _workingHours;
 
   // Servicios (para terapeutas)
   List<Map<String, dynamic>> _allServices = [];
@@ -4344,6 +4659,7 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
   void initState() {
     super.initState();
     final s = widget.staff;
+    _workingHours = _defaultWorkingHours(s);
     if (s != null) {
       _nameCtrl.text = s.name;
       _phoneCtrl.text = s.phone ?? '';
@@ -4368,6 +4684,90 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
       _canLogin = s.canAccessWeb || s.canAccessMobile;
     }
     _loadServices();
+    _loadWorkingHours();
+  }
+
+  Map<int, _StaffWorkingDay> _defaultWorkingHours(_Staff? staff) {
+    const labels = {
+      0: 'Domingo',
+      1: 'Lunes',
+      2: 'Martes',
+      3: 'Miercoles',
+      4: 'Jueves',
+      5: 'Viernes',
+      6: 'Sabado',
+    };
+    final days = (staff?.workDays ?? const <String>[])
+        .map((d) => d.toLowerCase().trim())
+        .toSet();
+    bool works(int weekday) {
+      if (days.isEmpty) return weekday >= 1 && weekday <= 6;
+      const names = {
+        0: ['domingo', 'sunday'],
+        1: ['lunes', 'monday'],
+        2: ['martes', 'tuesday'],
+        3: ['miercoles', 'miércoles', 'wednesday'],
+        4: ['jueves', 'thursday'],
+        5: ['viernes', 'friday'],
+        6: ['sabado', 'sábado', 'saturday'],
+      };
+      return names[weekday]!.any(days.contains);
+    }
+
+    return {
+      for (final weekday in labels.keys)
+        weekday: _StaffWorkingDay(
+          weekday: weekday,
+          label: labels[weekday]!,
+          isWorking: works(weekday),
+          startsAt: staff?.workStartTime?.trim().isNotEmpty == true
+              ? staff!.workStartTime!
+              : '10:00',
+          endsAt: staff?.workEndTime?.trim().isNotEmpty == true
+              ? staff!.workEndTime!
+              : '19:00',
+        ),
+    };
+  }
+
+  Future<void> _loadWorkingHours() async {
+    final staffId = widget.staff?.id;
+    if (staffId == null || staffId.isEmpty) return;
+    try {
+      final data = await Supabase.instance.client
+          .from('staff_working_hours')
+          .select(
+            'weekday, is_working, starts_at, ends_at, break_starts_at, break_ends_at',
+          )
+          .eq('staff_id', staffId)
+          .order('weekday');
+      if (!mounted) return;
+      setState(() {
+        for (final raw in (data as List)) {
+          final row = Map<String, dynamic>.from(raw as Map);
+          final weekday = (row['weekday'] as num?)?.toInt();
+          final day = weekday == null ? null : _workingHours[weekday];
+          if (day == null) continue;
+          day.isWorking = row['is_working'] == true;
+          day.startsAt = _shortTime(row['starts_at']?.toString()) ?? day.startsAt;
+          day.endsAt = _shortTime(row['ends_at']?.toString()) ?? day.endsAt;
+          day.breakStartsAt =
+              _shortTime(row['break_starts_at']?.toString()) ?? '';
+          day.breakEndsAt = _shortTime(row['break_ends_at']?.toString()) ?? '';
+        }
+      });
+    } catch (e) {
+      if (!_isMissingTable(e, 'staff_working_hours')) {
+        debugPrint('Error cargando staff_working_hours: $e');
+      }
+    }
+  }
+
+  String? _shortTime(String? value) {
+    if (value == null || value.trim().isEmpty) return null;
+    final parts = value.split(':');
+    if (parts.length < 2) return value;
+    return '${parts[0].padLeft(2, '0')}:${parts[1].padLeft(2, '0')}';
   }
 
   Future<void> _loadServices() async {
@@ -4539,6 +4939,13 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
       );
       return;
     }
+    final scheduleError = _validateWorkingHours();
+    if (scheduleError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(scheduleError)),
+      );
+      return;
+    }
     if (_canLogin) {
       if (_accessEmailCtrl.text.trim().isEmpty ||
           (widget.staff == null && _accessPassCtrl.text.trim().length < 6)) {
@@ -4558,6 +4965,12 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
       final contactEmail = _emailCtrl.text.trim().isNotEmpty
           ? _emailCtrl.text.trim()
           : (_canLogin ? accessEmail : '');
+      if (_role == 'therapist') {
+        _workDays = _workingHours.values
+            .where((day) => day.isWorking)
+            .map((day) => day.label.toLowerCase())
+            .toList();
+      }
 
       final payload = {
         // Columna en DB es full_name (NOT NULL). Antes se enviaba 'name' y el
@@ -4595,6 +5008,7 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
       }
 
       if (_role == 'therapist') {
+        await _saveWorkingHours(staffId);
         try {
           await Supabase.instance.client
               .from('staff_services')
@@ -4672,6 +5086,54 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Error al guardar: $e')));
+      }
+    }
+  }
+
+  String? _validateWorkingHours() {
+    if (_role != 'therapist') return null;
+    for (final day in _workingHours.values) {
+      if (!day.isWorking) continue;
+      final start = _StaffWorkingDay._timeToMinute(day.startsAt);
+      final end = _StaffWorkingDay._timeToMinute(day.endsAt);
+      if (start == null || end == null) {
+        return '${day.label}: captura hora inicio y hora fin validas.';
+      }
+      if (end <= start) {
+        return '${day.label}: la hora fin debe ser mayor que la hora inicio.';
+      }
+      final breakStartText = day.breakStartsAt.trim();
+      final breakEndText = day.breakEndsAt.trim();
+      if (breakStartText.isEmpty && breakEndText.isEmpty) continue;
+      final breakStart = _StaffWorkingDay._timeToMinute(breakStartText);
+      final breakEnd = _StaffWorkingDay._timeToMinute(breakEndText);
+      if (breakStart == null || breakEnd == null) {
+        return '${day.label}: captura inicio y fin de comida validos.';
+      }
+      if (breakEnd <= breakStart || breakStart <= start || breakEnd >= end) {
+        return '${day.label}: la comida debe quedar dentro del horario de trabajo.';
+      }
+    }
+    return null;
+  }
+
+  Future<void> _saveWorkingHours(String staffId) async {
+    try {
+      await Supabase.instance.client.from('staff_working_hours').upsert(
+            _workingHours.values.map((day) => day.toPayload(staffId)).toList(),
+            onConflict: 'staff_id,weekday',
+          );
+      _workDays = _workingHours.values
+          .where((day) => day.isWorking)
+          .map((day) => day.label.toLowerCase())
+          .toList();
+    } catch (e) {
+      if (_isMissingTable(e, 'staff_working_hours')) {
+        debugPrint(
+          'staff_working_hours no existe; se conserva horario legado en staff.',
+        );
+      } else {
+        rethrow;
       }
     }
   }
@@ -4799,6 +5261,154 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
       ],
     ),
   );
+
+  void _copyFirstWorkingDayToWeek() {
+    final source = _workingHours.values.firstWhere(
+      (day) => day.isWorking,
+      orElse: () => _workingHours[1]!,
+    );
+    setState(() {
+      for (final day in _workingHours.values) {
+        if (day.weekday == 0) {
+          day.isWorking = false;
+          continue;
+        }
+        day.isWorking = true;
+        day.startsAt = source.startsAt;
+        day.endsAt = source.endsAt;
+        day.breakStartsAt = source.breakStartsAt;
+        day.breakEndsAt = source.breakEndsAt;
+      }
+    });
+  }
+
+  Widget _workingHoursEditor() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(child: _FieldLabel('Horario de trabajo')),
+            TextButton.icon(
+              onPressed: _copyFirstWorkingDayToWeek,
+              icon: const Icon(Icons.copy_all_outlined, size: 16),
+              label: const Text('Copiar horario a toda la semana'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        ..._workingHours.values.map((day) {
+          return Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: day.isWorking ? Colors.white : SaharaTheme.surface,
+              border: Border.all(color: const Color(0xFFE4DED6)),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 520;
+                final switchRow = Row(
+                  children: [
+                    SizedBox(
+                      width: 92,
+                      child: Text(
+                        day.label,
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    Switch(
+                      value: day.isWorking,
+                      activeColor: SaharaTheme.gold,
+                      onChanged: (value) =>
+                          setState(() => day.isWorking = value),
+                    ),
+                    Text(
+                      day.isWorking ? 'Trabaja' : 'No trabaja',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ],
+                );
+                final fields = [
+                  _MiniTimeField(
+                    label: 'Inicio',
+                    value: day.startsAt,
+                    enabled: day.isWorking,
+                    onChanged: (value) => day.startsAt = value,
+                  ),
+                  _MiniTimeField(
+                    label: 'Fin',
+                    value: day.endsAt,
+                    enabled: day.isWorking,
+                    onChanged: (value) => day.endsAt = value,
+                  ),
+                  _MiniTimeField(
+                    label: 'Comida inicio',
+                    value: day.breakStartsAt,
+                    enabled: day.isWorking,
+                    onChanged: (value) => day.breakStartsAt = value,
+                  ),
+                  _MiniTimeField(
+                    label: 'Comida fin',
+                    value: day.breakEndsAt,
+                    enabled: day.isWorking,
+                    onChanged: (value) => day.breakEndsAt = value,
+                  ),
+                ];
+                if (compact) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      switchRow,
+                      const SizedBox(height: 8),
+                      Wrap(spacing: 8, runSpacing: 8, children: fields),
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    switchRow,
+                    const SizedBox(width: 8),
+                    ...fields.map(
+                      (field) => Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 6),
+                          child: field,
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          );
+        }),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Las excepciones se guardan en staff_time_off desde SQL por ahora.',
+                  ),
+                ),
+              );
+            },
+            icon: const Icon(Icons.event_busy_outlined, size: 16),
+            label: const Text('Agregar excepcion / dia libre'),
+          ),
+        ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -4935,6 +5545,10 @@ class _StaffFormDialogState extends State<_StaffFormDialog> {
                       _showInCalendar,
                       (v) => setState(() => _showInCalendar = v),
                     ),
+                    if (_role == 'therapist') ...[
+                      _workingHoursEditor(),
+                      const SizedBox(height: 16),
+                    ],
                     _FieldLabel('Días de trabajo'),
                     const SizedBox(height: 8),
                     Wrap(
@@ -7903,6 +8517,44 @@ class _FormCard extends StatelessWidget {
       children: children,
     ),
   );
+}
+
+class _MiniTimeField extends StatelessWidget {
+  const _MiniTimeField({
+    required this.label,
+    required this.value,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String value;
+  final bool enabled;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 112,
+      child: TextFormField(
+        key: ValueKey('$label-$value-$enabled'),
+        initialValue: value,
+        enabled: enabled,
+        onChanged: onChanged,
+        style: GoogleFonts.inter(fontSize: 12),
+        decoration: InputDecoration(
+          labelText: label,
+          hintText: '10:00',
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 8,
+            vertical: 9,
+          ),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+        ),
+      ),
+    );
+  }
 }
 
 class _FieldLabel extends StatelessWidget {

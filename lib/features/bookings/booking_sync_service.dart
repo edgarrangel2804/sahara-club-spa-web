@@ -217,36 +217,31 @@ class BookingSyncService {
     }
 
     try {
-      final existing = await _client
-          .from('bookings')
-          .select('id, booking_time, duration_min, status')
-          .eq('booking_date', _yyyyMMdd(data.bookingDate))
-          .eq('therapist_id', data.therapistId)
-          .not('status', 'in', '(cancelled,no_show)')
-          .order('booking_time');
-
-      final start = _minutesFromTime(data.bookingTime);
-      final end = start + data.durationMinutes;
-
-      for (final raw in (existing as List)) {
-        final row = Map<String, dynamic>.from(raw as Map);
-        final existingId = row['id']?.toString() ?? '';
-        if (existingId.isNotEmpty && existingId == data.bookingId) {
-          continue;
-        }
-        final otherStart =
-            _minutesFromTime(row['booking_time']?.toString() ?? '00:00:00');
-        final otherDuration = (row['duration_min'] as num?)?.toInt() ?? 60;
-        final otherEnd = otherStart + otherDuration;
-        final overlaps = start < otherEnd && end > otherStart;
-        if (overlaps) {
-          return BookingValidationResult(
-            isValid: false,
-            errorMessage:
-                'Ya existe una cita en conflicto para este terapeuta en ese horario.',
-            warningMessage: warning,
-          );
-        }
+      final startAt = _tijuanaDateTimeIso(data.bookingDate, data.bookingTime);
+      final rpcParams = <String, dynamic>{
+        'p_staff_id': data.therapistId,
+        'p_service_id': data.serviceId,
+        'p_starts_at': startAt,
+        'p_duration_minutes': data.durationMinutes,
+        if ((data.branchId ?? '').trim().isNotEmpty)
+          'p_branch_id': data.branchId!.trim(),
+        if ((data.bookingId ?? '').trim().isNotEmpty)
+          'p_exclude_booking_id': data.bookingId!.trim(),
+      };
+      final availability = await _client.rpc(
+        'check_staff_availability',
+        params: rpcParams,
+      );
+      final result = Map<String, dynamic>.from(availability as Map);
+      if (result['available'] != true) {
+        final reason = result['reason']?.toString() ?? 'not_available';
+        final details = result['details']?.toString();
+        return BookingValidationResult(
+          isValid: false,
+          errorMessage:
+              'Este terapeuta no esta disponible en ese horario: ${_availabilityReasonLabel(reason)}${details == null || details.isEmpty ? '' : ' ($details)'}',
+          warningMessage: warning,
+        );
       }
     } on PostgrestException catch (error) {
       return BookingValidationResult(
@@ -393,12 +388,58 @@ class BookingSyncService {
     return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59;
   }
 
-  static int _minutesFromTime(String value) {
-    final parts = value.split(':');
+  static String _availabilityReasonLabel(String reason) {
+    switch (reason) {
+      case 'business_closed':
+        return 'negocio cerrado';
+      case 'outside_business_hours':
+        return 'fuera del horario del negocio';
+      case 'staff_not_active':
+        return 'terapeuta inactivo';
+      case 'staff_not_working_day':
+        return 'no trabaja ese dia';
+      case 'outside_staff_hours':
+        return 'fuera de su horario de trabajo';
+      case 'staff_break':
+        return 'comida o receso';
+      case 'staff_time_off':
+        return 'dia libre, vacaciones o ausencia';
+      case 'schedule_block':
+        return 'bloqueo de agenda';
+      case 'existing_booking':
+        return 'cita existente';
+      case 'room_capacity_full':
+        return 'capacidad de cuartos llena';
+      default:
+        return reason.replaceAll('_', ' ');
+    }
+  }
+
+  static String _tijuanaDateTimeIso(DateTime date, String time) {
+    final parts = time.split(':');
     final hour = int.tryParse(parts.isNotEmpty ? parts[0] : '0') ?? 0;
     final minute = int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0;
-    return hour * 60 + minute;
+    final local = DateTime(date.year, date.month, date.day, hour, minute);
+    final offsetHours = _likelyTijuanaUtcOffsetHours(local);
+    final sign = offsetHours >= 0 ? '+' : '-';
+    final absHours = offsetHours.abs().toString().padLeft(2, '0');
+    return '${_yyyyMMdd(local)}T${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}:00$sign$absHours:00';
   }
+
+  static int _likelyTijuanaUtcOffsetHours(DateTime local) {
+    final dstStart = _secondSunday(local.year, 3);
+    final dstEnd = _firstSunday(local.year, 11);
+    final inDst = !local.isBefore(DateTime(local.year, 3, dstStart, 2)) &&
+        local.isBefore(DateTime(local.year, 11, dstEnd, 2));
+    return inDst ? -7 : -8;
+  }
+
+  static int _firstSunday(int year, int month) {
+    final first = DateTime(year, month);
+    return 1 + ((DateTime.sunday - first.weekday) % 7);
+  }
+
+  static int _secondSunday(int year, int month) => _firstSunday(year, month) + 7;
 
   static String _yyyyMMdd(DateTime date) {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';

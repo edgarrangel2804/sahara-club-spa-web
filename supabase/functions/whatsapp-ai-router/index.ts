@@ -42,6 +42,51 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
+function normalizeSearchText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+async function resolveRequestedStaffId(
+  input: Record<string, unknown>,
+  messageText: string | null | undefined,
+): Promise<string | null> {
+  const explicit = String(input.staff_id ?? "").trim()
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    .test(explicit)) return explicit
+
+  const haystack = normalizeSearchText(
+    `${explicit} ${String(input.staff_name ?? "")} ${messageText ?? ""}`,
+  )
+  if (!haystack) return null
+
+  const { data, error } = await supabase
+    .from("staff")
+    .select("id, full_name")
+    .eq("role", "therapist")
+    .eq("active", true)
+  if (error) {
+    console.warn("resolveRequestedStaffId failed:", error.message)
+    return null
+  }
+
+  const matches: string[] = []
+  for (const row of (data ?? []) as Array<{ id: string; full_name: string }>) {
+    const full = normalizeSearchText(row.full_name ?? "")
+    if (!full) continue
+    const first = full.split(" ")[0] ?? ""
+    if (haystack.includes(full) || (first.length >= 4 && haystack.includes(first))) {
+      matches.push(row.id)
+    }
+  }
+  return matches.length === 1 ? matches[0] : null
+}
+
 // ---------------------------------------------------------------------------
 // Soft closings: cierre cálido sin consumir tokens del LLM.
 // Devuelve "soft_closing" | "ignore" | "normal"
@@ -301,6 +346,8 @@ const TOOLS = [
         requested_date: { type: "string", description: "YYYY-MM-DD zona Tijuana" },
         requested_time: { type: "string", description: "HH:MM 24h" },
         duration_min: { type: "number", description: "Duración minutos (opcional, default servicio)" },
+        staff_id: { type: "string", description: "UUID del terapeuta si el cliente pidio uno especifico" },
+        staff_name: { type: "string", description: "Nombre del terapeuta si el cliente pidio uno especifico" },
       },
       required: ["service_id", "requested_date", "requested_time"],
     },
@@ -329,6 +376,7 @@ type ToolContext = {
   phone?: string
   conversationId?: string
   clientName?: string | null
+  messageText?: string | null
 }
 
 async function execTool(
@@ -472,11 +520,13 @@ async function execTool(
         return { error: "missing_service_or_datetime" }
       }
       const timeNorm = time.length === 5 ? `${time}:00` : time
+      const requestedStaffId = await resolveRequestedStaffId(input, ctx.messageText)
       const { data, error } = await supabase.rpc("check_availability_for_booking_from_ai", {
         p_service_id: serviceId,
         p_requested_date: date,
         p_requested_time: timeNorm,
         p_duration_min: input.duration_min ? Number(input.duration_min) : null,
+        p_staff_id: requestedStaffId,
       })
       if (error) return { error: error.message }
       const result = (data ?? {}) as Record<string, unknown>
@@ -497,6 +547,9 @@ async function execTool(
             p_notes: "Solicitud creada por IA WhatsApp.",
             p_ai_conversation_id: ctx.conversationId ?? null,
             p_ai_confidence_score: 0.9,
+            p_therapist_id: String(
+              result.selected_staff_id ?? result.staff_id ?? requestedStaffId ?? "",
+            ) || null,
           })
           if (!createErr && created) {
             const createdResult = created as Record<string, unknown>
@@ -651,6 +704,7 @@ async function execTool(
       }
       // Normalizar HH:MM → HH:MM:00 para tipo time
       const timeNorm = time.length === 5 ? `${time}:00` : time
+      const requestedStaffId = await resolveRequestedStaffId(input, ctx.messageText)
       // Safety net: re-verificar disponibilidad. La IA debió llamar
       // check_availability_for_booking antes, pero validamos por si acaso.
       const { data: availCheck } = await supabase.rpc("check_availability_for_booking_from_ai", {
@@ -658,6 +712,7 @@ async function execTool(
         p_requested_date: date,
         p_requested_time: timeNorm,
         p_duration_min: input.duration_min ? Number(input.duration_min) : null,
+        p_staff_id: requestedStaffId,
       })
       if (availCheck && (availCheck as { available?: boolean }).available !== true) {
         return {
@@ -678,6 +733,12 @@ async function execTool(
         p_notes: String(input.notes ?? ""),
         p_ai_conversation_id: ctx.conversationId ?? null,
         p_ai_confidence_score: input.confidence != null ? Number(input.confidence) : null,
+        p_therapist_id: String(
+          (availCheck as Record<string, unknown> | null)?.selected_staff_id ??
+            (availCheck as Record<string, unknown> | null)?.staff_id ??
+            requestedStaffId ??
+            "",
+        ) || null,
       })
       if (error) return { error: error.message }
       const result = data as Record<string, unknown> | null
@@ -1751,6 +1812,7 @@ Deno.serve(async (req) => {
                 phone,
                 conversationId: convId,
                 clientName: client?.full_name ?? null,
+                messageText,
               })
         await supabase.from("ai_messages").insert({
           conversation_id: convId, role: "tool",
