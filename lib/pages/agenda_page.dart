@@ -4124,52 +4124,139 @@ class _WeekGridState extends State<_WeekGrid> {
 
   // ── Cards ──────────────────────────────────────────────────────────────────
   List<Widget> _buildCards(BuildContext ctx) {
-    return widget.bookings.map((b) {
-      final dayIdx = b.date.difference(widget.weekStart).inDays;
-      if (dayIdx < 0 || dayIdx > 6) return const SizedBox.shrink();
-      final top = _topForMinute(b.startMinute);
-      final height = (b.durationMinutes * _kHourHeight / 60).clamp(
-        22.0,
-        double.infinity,
-      );
-      if (top < 0 || top > widget.calendarHours.gridHeight) {
-        return const SizedBox.shrink();
-      }
+    // Agrupamos por día y por bloques que se empalman en el tiempo.
+    // - 1 cita en el bloque → tarjeta normal arrastrable (igual que antes).
+    // - 2+ citas en el bloque → tarjeta-clúster resumen que abre bottom sheet.
+    final widgets = <Widget>[];
 
-      return Positioned(
-        top: top + 1,
-        left: dayIdx * _dayWidth + 1,
-        width: _dayWidth - 2,
-        height: height,
-        child: Draggable<_Booking>(
-          data: b,
-          onDragStarted: () => setState(() => _dragging = b),
-          onDraggableCanceled: (velocity, offset) => setState(() {
-            _dragging = null;
-            _dragLocal = null;
-          }),
-          feedback: Material(
-            color: Colors.transparent,
-            child: SizedBox(
+    final byDay = <int, List<_Booking>>{};
+    for (final b in widget.bookings) {
+      final dayIdx = b.date.difference(widget.weekStart).inDays;
+      if (dayIdx < 0 || dayIdx > 6) continue;
+      byDay.putIfAbsent(dayIdx, () => []).add(b);
+    }
+
+    for (final entry in byDay.entries) {
+      final dayIdx = entry.key;
+      final dayBookings = entry.value
+        ..sort((a, b) => a.startMinute.compareTo(b.startMinute));
+
+      var i = 0;
+      while (i < dayBookings.length) {
+        final cluster = <_Booking>[dayBookings[i]];
+        var clusterEnd =
+            dayBookings[i].startMinute + dayBookings[i].durationMinutes;
+        var j = i + 1;
+        while (j < dayBookings.length &&
+            dayBookings[j].startMinute < clusterEnd) {
+          cluster.add(dayBookings[j]);
+          final candidateEnd =
+              dayBookings[j].startMinute + dayBookings[j].durationMinutes;
+          if (candidateEnd > clusterEnd) clusterEnd = candidateEnd;
+          j++;
+        }
+        i = j;
+
+        if (cluster.length == 1) {
+          final b = cluster.first;
+          final top = _topForMinute(b.startMinute);
+          final height = (b.durationMinutes * _kHourHeight / 60).clamp(
+            22.0,
+            double.infinity,
+          );
+          if (top < 0 || top > widget.calendarHours.gridHeight) continue;
+
+          widgets.add(
+            Positioned(
+              top: top + 1,
+              left: dayIdx * _dayWidth + 1,
               width: _dayWidth - 2,
               height: height,
-              child: Opacity(
-                opacity: 0.85,
-                child: _BookingCard(booking: b, onTap: () {}),
+              child: Draggable<_Booking>(
+                data: b,
+                onDragStarted: () => setState(() => _dragging = b),
+                onDraggableCanceled: (velocity, offset) => setState(() {
+                  _dragging = null;
+                  _dragLocal = null;
+                }),
+                feedback: Material(
+                  color: Colors.transparent,
+                  child: SizedBox(
+                    width: _dayWidth - 2,
+                    height: height,
+                    child: Opacity(
+                      opacity: 0.85,
+                      child: _BookingCard(booking: b, onTap: () {}),
+                    ),
+                  ),
+                ),
+                childWhenDragging: Opacity(
+                  opacity: 0.25,
+                  child: _BookingCard(booking: b, onTap: () {}),
+                ),
+                child: _BookingCard(
+                  booking: b,
+                  onTap: () => widget.onBookingTap(ctx, b),
+                ),
               ),
             ),
-          ),
-          childWhenDragging: Opacity(
-            opacity: 0.25,
-            child: _BookingCard(booking: b, onTap: () {}),
-          ),
-          child: _BookingCard(
-            booking: b,
-            onTap: () => widget.onBookingTap(ctx, b),
-          ),
-        ),
-      );
-    }).toList();
+          );
+        } else {
+          final clusterStart = cluster
+              .map((b) => b.startMinute)
+              .reduce((a, b) => a < b ? a : b);
+          final top = _topForMinute(clusterStart);
+          // Garantizamos alto suficiente para header + hasta 2 líneas de
+          // preview + posible "+N más", sin importar la duración real del
+          // empalme (que podría ser de solo 30 min).
+          final height = ((clusterEnd - clusterStart) * _kHourHeight / 60)
+              .clamp(78.0, double.infinity);
+          if (top < 0 || top > widget.calendarHours.gridHeight) continue;
+
+          widgets.add(
+            Positioned(
+              top: top + 1,
+              left: dayIdx * _dayWidth + 1,
+              width: _dayWidth - 2,
+              height: height,
+              child: _WeekClusterCard(
+                bookings: cluster,
+                startMinute: clusterStart,
+                onTap: () => _showClusterSheet(ctx, cluster, clusterStart),
+              ),
+            ),
+          );
+        }
+      }
+    }
+    return widgets;
+  }
+
+  void _showClusterSheet(
+    BuildContext ctx,
+    List<_Booking> bookings,
+    int startMinute,
+  ) {
+    final sorted = [...bookings]
+      ..sort((a, b) => a.startMinute.compareTo(b.startMinute));
+    showModalBottomSheet<void>(
+      context: ctx,
+      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetCtx) {
+        return _WeekClusterSheet(
+          bookings: sorted,
+          headerLabel: _minuteLabel24(startMinute),
+          onPick: (b) {
+            Navigator.of(sheetCtx).pop();
+            widget.onBookingTap(ctx, b);
+          },
+        );
+      },
+    );
   }
 
   List<Widget> _buildScheduleBlocks(BuildContext ctx) {
@@ -9166,6 +9253,288 @@ class _WhatsAppBtnState extends State<_WhatsAppBtn> {
           _sendTemplate(selected);
         }
       },
+    );
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Week view: cluster card for overlapping bookings
+// ═════════════════════════════════════════════════════════════════════════════
+class _WeekClusterCard extends StatefulWidget {
+  const _WeekClusterCard({
+    required this.bookings,
+    required this.startMinute,
+    required this.onTap,
+  });
+  final List<_Booking> bookings;
+  final int startMinute;
+  final VoidCallback onTap;
+
+  @override
+  State<_WeekClusterCard> createState() => _WeekClusterCardState();
+}
+
+class _WeekClusterCardState extends State<_WeekClusterCard> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final count = widget.bookings.length;
+    final preview = widget.bookings.take(2).toList();
+    final remaining = count - preview.length;
+    final timeLabel = _minuteLabel24(widget.startMinute);
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          decoration: BoxDecoration(
+            color: _hovered
+                ? const Color(0xFFF5EFE3)
+                : const Color(0xFFFAF6EE),
+            border: Border.all(
+              color: SaharaTheme.gold.withValues(alpha: _hovered ? 0.55 : 0.35),
+              width: 1,
+            ),
+            borderRadius: BorderRadius.circular(6),
+            boxShadow: _hovered
+                ? [
+                    BoxShadow(
+                      color: SaharaTheme.gold.withValues(alpha: 0.18),
+                      blurRadius: 8,
+                    ),
+                  ]
+                : null,
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    timeLabel,
+                    style: GoogleFonts.inter(
+                      color: SaharaTheme.gold,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: SaharaTheme.gold.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      '$count citas',
+                      style: GoogleFonts.inter(
+                        color: SaharaTheme.gold,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              for (final b in preview)
+                Padding(
+                  padding: const EdgeInsets.only(top: 1),
+                  child: Text(
+                    '${_clusterTherapistShort(b)} → ${b.clientName}',
+                    style: GoogleFonts.inter(
+                      color: Colors.black87,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              if (remaining > 0) ...[
+                const SizedBox(height: 2),
+                Text(
+                  '+$remaining más',
+                  style: GoogleFonts.inter(
+                    color: Colors.black54,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _clusterTherapistShort(_Booking b) {
+  final raw = b.therapistName.trim();
+  if (raw.isEmpty || raw.toLowerCase() == 'sin asignar') return 'Sin asignar';
+  return raw.split(' ').first;
+}
+
+class _WeekClusterSheet extends StatelessWidget {
+  const _WeekClusterSheet({
+    required this.bookings,
+    required this.headerLabel,
+    required this.onPick,
+  });
+  final List<_Booking> bookings;
+  final String headerLabel;
+  final void Function(_Booking) onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 38,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE0DDD8),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Icon(
+                  Icons.access_time_rounded,
+                  size: 18,
+                  color: SaharaTheme.gold,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  headerLabel,
+                  style: GoogleFonts.inter(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black87,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  '${bookings.length} citas en este horario',
+                  style: GoogleFonts.inter(
+                    fontSize: 12.5,
+                    color: Colors.black54,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: bookings.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 8),
+                itemBuilder: (_, idx) {
+                  final b = bookings[idx];
+                  return _WeekClusterSheetTile(
+                    booking: b,
+                    onTap: () => onPick(b),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _WeekClusterSheetTile extends StatelessWidget {
+  const _WeekClusterSheetTile({required this.booking, required this.onTap});
+  final _Booking booking;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final b = booking;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: b.cardBg,
+          border: Border(left: BorderSide(color: b.cardAccent, width: 3)),
+          borderRadius: const BorderRadius.only(
+            topRight: Radius.circular(8),
+            bottomRight: Radius.circular(8),
+          ),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    b.clientName,
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.black87,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    b.serviceName,
+                    style: GoogleFonts.inter(
+                      fontSize: 12.5,
+                      color: Colors.black54,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${_clusterTherapistShort(b)} · ${b.durationMinutes} min',
+                    style: GoogleFonts.inter(
+                      fontSize: 11.5,
+                      color: Colors.black45,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: Colors.black38,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
