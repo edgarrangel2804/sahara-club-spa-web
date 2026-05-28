@@ -6082,6 +6082,19 @@ class _BookingCardState extends State<_BookingCard> {
                   maxLines: 1,
                 ),
               ],
+              if (b.durationMinutes >= 45) ...[
+                const SizedBox(height: 1),
+                Text(
+                  '${_minuteLabel24(b.startMinute)} - ${_minuteLabel24(b.startMinute + b.durationMinutes)}',
+                  style: GoogleFonts.inter(
+                    color: Colors.black54,
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+              ],
               // Chip de waiver / anticipo, solo si la cita tiene esa data
               if (b.paymentRequirement == 'waived' && b.durationMinutes >= 30) ...[
                 const SizedBox(height: 2),
