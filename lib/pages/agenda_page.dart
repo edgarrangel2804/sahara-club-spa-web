@@ -562,10 +562,20 @@ int _parseCalendarMinute(dynamic raw, {required int fallbackMinute}) {
 }
 
 String _minuteLabel24(int minute) {
+  // Formato 12 horas con AM/PM (AgendaPro-style): "10:00 AM", "1:00 PM",
+  // "12:00 PM" (mediodía), "12:00 AM" (medianoche). El nombre de la función
+  // dice "24" por compatibilidad histórica; la salida ya no es 24h.
   final normalized = minute % (24 * 60);
-  final hour = normalized ~/ 60;
+  final hour24 = normalized ~/ 60;
   final mins = normalized % 60;
-  return '${hour.toString().padLeft(2, '0')}:${mins.toString().padLeft(2, '0')}';
+  final isPm = hour24 >= 12;
+  final hour12 = hour24 == 0
+      ? 12
+      : hour24 > 12
+          ? hour24 - 12
+          : hour24;
+  final mm = mins.toString().padLeft(2, '0');
+  return '$hour12:$mm ${isPm ? 'PM' : 'AM'}';
 }
 
 String _yyyyMMdd(DateTime d) =>

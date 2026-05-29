@@ -49,6 +49,21 @@ class _AiMonitorTabState extends State<AiMonitorTab> {
     return tjNow.toIso8601String().split('T').first;
   }
 
+  // Convierte "10:00:00" o "10:00" (24h) a "10:00 AM" / "1:00 PM".
+  String _formatTime12(String raw) {
+    if (raw.isEmpty) return '';
+    final parts = raw.split(':');
+    final h = int.tryParse(parts[0]) ?? 0;
+    final m = int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0;
+    final isPm = h >= 12;
+    final h12 = h == 0
+        ? 12
+        : h > 12
+            ? h - 12
+            : h;
+    return '$h12:${m.toString().padLeft(2, '0')} ${isPm ? 'PM' : 'AM'}';
+  }
+
   Future<void> _load() async {
     if (!mounted) return;
     setState(() {
@@ -138,7 +153,7 @@ class _AiMonitorTabState extends State<AiMonitorTab> {
           clientName: client?['full_name'] as String? ?? 'Cliente',
           phone: client?['phone'] as String? ?? '',
           serviceName: svc?['name'] as String? ?? 'Servicio',
-          time: b['booking_time']?.toString().substring(0, 5) ?? '',
+          time: _formatTime12(b['booking_time']?.toString() ?? ''),
           status: b['status']?.toString() ?? '',
           unassigned: b['therapist_id'] == null ||
               b['therapist_id'].toString().isEmpty,
