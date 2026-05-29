@@ -2137,7 +2137,7 @@ class _FinanzasModuleState extends State<FinanzasModule> {
       _pendingSupplierAmount +
       _pendingPayrollAmount;
 
-  double get _cajaChicaBaseEstimda => 5000;
+  double get _cajaChicaBaseEstimda => 0;
 
   bool get _hasCashBoxLedger => _cashBoxMovements.isNotEmpty;
 
