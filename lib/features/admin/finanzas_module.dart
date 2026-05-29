@@ -106,6 +106,7 @@ class _FinanzasModuleState extends State<FinanzasModule> {
       title: 'Comparativas',
       subtitle: 'Lectura comparativa de ventas, utilidad y ritmo operativo.',
       icon: Icons.compare_arrows_rounded,
+      enabled: false,
     ),
     _FinanceSectionMeta(
       title: 'Caja Chica',
@@ -121,6 +122,7 @@ class _FinanzasModuleState extends State<FinanzasModule> {
       title: 'Cuentas por Cobrar',
       subtitle: 'Cobros pendientes, vencimientos y seguimiento comercial.',
       icon: Icons.move_to_inbox_rounded,
+      enabled: false,
     ),
     _FinanceSectionMeta(
       title: 'Reportes',
@@ -131,21 +133,25 @@ class _FinanzasModuleState extends State<FinanzasModule> {
       title: 'Alertas',
       subtitle: 'Riesgos, pendientes y focos de atencion del negocio.',
       icon: Icons.notifications_active_outlined,
+      enabled: false,
     ),
     _FinanceSectionMeta(
       title: 'Presupuestos',
       subtitle: 'Planeacion de gasto, control por categoria y desviaciones.',
       icon: Icons.pie_chart_rounded,
+      enabled: false,
     ),
     _FinanceSectionMeta(
       title: 'Metas',
       subtitle: 'Objetivos de ingresos, margen, cobranza y productividad.',
       icon: Icons.flag_rounded,
+      enabled: false,
     ),
     _FinanceSectionMeta(
       title: 'Configuracion Financiera',
       subtitle: 'Parametros, reglas y salud del modulo financiero.',
       icon: Icons.settings_rounded,
+      enabled: false,
     ),
   ];
 
@@ -3956,15 +3962,10 @@ class _FinanzasModuleState extends State<FinanzasModule> {
           ],
         )
         .toList();
-    final reportRows = const [
-      ['Ventas del dia', 'CSV/PDF', 'listo'],
-      ['Corte de caja', 'CSV/PDF', 'listo'],
-      ['Nomina', 'CSV/PDF', 'listo'],
-      ['Gastos', 'CSV/PDF', 'listo'],
-      ['Utilidad mensual', 'CSV', 'revision'],
-      ['Rendimiento por terapeuta', 'CSV/PDF', 'listo'],
-      ['Cobranza pendiente', 'CSV', 'revision'],
-    ];
+    // Reportes: el módulo todavía no tiene backend real (export CSV/PDF
+    // sin conectar). Dejamos la lista vacía hasta que se construya, para no
+    // mostrar reportes "listos" que en realidad no existen.
+    final reportRows = const <List<String>>[];
     final budgetRows = [
       ['Ingresos', _money(_salesTotalSince(_monthStart)), _money(_salesTotalSince(_monthStart) * 1.15), _money((_salesTotalSince(_monthStart) * 1.15) - _salesTotalSince(_monthStart)), _salesTotalSince(_monthStart) >= (_salesTotalSince(_monthStart) * .9) ? 'en curso' : 'alerta'],
       ['Gastos Fijos', _money(_fixedExpensesTotal), _money(_fixedExpensesTotal * 1.05), _money((_fixedExpensesTotal * 1.05) - _fixedExpensesTotal), _fixedExpensesTotal <= (_fixedExpensesTotal * 1.05) ? 'controlado' : 'excedido'],
@@ -4930,7 +4931,7 @@ class _FinanzasModuleState extends State<FinanzasModule> {
           cards: [
             _KpiData(title: 'Meta de Ingresos', value: _money(_salesTotalSince(_monthStart) * 1.2), caption: 'Objetivo de cierre mensual', color: _financeBlue, icon: Icons.flag_rounded),
             _KpiData(title: 'Avance Actual', value: _money(_salesTotalSince(_monthStart)), caption: 'Ingreso logrado hasta hoy', color: _financePositive, icon: Icons.trending_up_rounded),
-            _KpiData(title: 'Margen Objetivo', value: '55.0%', caption: 'Meta de rentabilidad', color: _financeViolet, icon: Icons.pie_chart_rounded),
+            _KpiData(title: 'Margen Objetivo', value: '—', caption: 'Próximamente', color: _financeViolet, icon: Icons.pie_chart_rounded),
             _KpiData(title: 'Cobranza Objetivo', value: _money(_ticketPromedio * 2), caption: 'Nivel maximo de cartera abierta', color: SaharaTheme.gold, icon: Icons.move_to_inbox_rounded),
           ],
           breakdown: [
@@ -4952,17 +4953,16 @@ class _FinanzasModuleState extends State<FinanzasModule> {
       case 15:
         return _FinanceSettingsPage(
           cards: const [
-            _KpiData(title: 'Parametros Activos', value: '6', caption: 'Configuracion base del modulo', color: _financeBlue, icon: Icons.settings_rounded),
-            _KpiData(title: 'Metodos de Pago', value: '4', caption: 'Efectivo, tarjeta, transferencia y mixto', color: _financePositive, icon: Icons.payments_outlined),
-            _KpiData(title: 'Reglas de Alerta', value: '8', caption: 'Monitor financiero automatizado', color: SaharaTheme.gold, icon: Icons.notifications_active_outlined),
-            _KpiData(title: 'Salud de Config', value: '92%', caption: 'Lectura general del modulo', color: _financeViolet, icon: Icons.health_and_safety_outlined),
+            _KpiData(title: 'Parametros Activos', value: '0', caption: 'Próximamente', color: _financeBlue, icon: Icons.settings_rounded),
+            _KpiData(title: 'Metodos de Pago', value: '0', caption: 'Próximamente', color: _financePositive, icon: Icons.payments_outlined),
+            _KpiData(title: 'Reglas de Alerta', value: '0', caption: 'Próximamente', color: SaharaTheme.gold, icon: Icons.notifications_active_outlined),
+            _KpiData(title: 'Salud de Config', value: '—', caption: 'Próximamente', color: _financeViolet, icon: Icons.health_and_safety_outlined),
           ],
           rows: settingsRows,
           summary: const [
             _SummaryRow('Moneda base', 'MXN'),
             _SummaryRow('Sucursal', 'Matriz'),
-            _SummaryRow('Alertas activas', '8 reglas'),
-            _SummaryRow('Cierre automatico', 'Pendiente'),
+            _SummaryRow('Estado del módulo', 'Próximamente'),
           ],
           onAdd: _openCreateDialog,
           onExport: _exportCurrentSection,
@@ -7395,10 +7395,10 @@ class _ReportsHubPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return _FinanceModuleWorkspacePage(
       cards: [
-        _KpiData(title: 'Reportes Disponibles', value: '${rows.length}', caption: 'Listos para corte y exportacion', color: _financeBlue, icon: Icons.insert_drive_file_outlined),
-        _KpiData(title: 'Exportaciones Rapidas', value: '5', caption: 'Ingresos, gastos, nomina y mas', color: _financePositive, icon: Icons.download_rounded),
-        _KpiData(title: 'Cortes del Mes', value: '3', caption: 'Base operativa consolidada', color: SaharaTheme.gold, icon: Icons.assignment_rounded),
-        _KpiData(title: 'Pendientes de Revision', value: '${rows.where((row) => row[2] != 'listo').length}', caption: 'Cobranza y utilidad mensual', color: _financeNegative, icon: Icons.pending_actions_rounded),
+        _KpiData(title: 'Reportes Disponibles', value: '${rows.length}', caption: rows.isEmpty ? 'Próximamente' : 'Listos para corte y exportacion', color: _financeBlue, icon: Icons.insert_drive_file_outlined),
+        _KpiData(title: 'Exportaciones Rapidas', value: '0', caption: 'Próximamente', color: _financePositive, icon: Icons.download_rounded),
+        _KpiData(title: 'Cortes del Mes', value: '0', caption: 'Próximamente', color: SaharaTheme.gold, icon: Icons.assignment_rounded),
+        _KpiData(title: 'Pendientes de Revision', value: '${rows.where((row) => row[2] != 'listo').length}', caption: rows.isEmpty ? 'Próximamente' : 'Cobranza y utilidad mensual', color: _financeNegative, icon: Icons.pending_actions_rounded),
       ],
       tabs: const ['Resumen', 'Ventas', 'Gastos', 'Nomina', 'Cobranza', 'Utilidad', 'Rendimiento'],
       primary: _FinanceSurfaceCard(
@@ -7424,11 +7424,7 @@ class _ReportsHubPage extends StatelessWidget {
       secondary: const _SummaryListCard(
         title: 'Resumen de Reportes',
         rows: [
-          _SummaryRow('Ventas del dia', 'Disponible'),
-          _SummaryRow('Corte de caja', 'Listo'),
-          _SummaryRow('Nomina', 'Listo'),
-          _SummaryRow('Gastos', 'Listo'),
-          _SummaryRow('Rendimiento', 'Disponible'),
+          _SummaryRow('Estado', 'Próximamente'),
         ],
       ),
       tableColumns: const ['Reporte', 'Formato', 'Estado'],
@@ -7867,16 +7863,24 @@ class _FinanceSidebar extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              itemCount: sections.length,
-              itemBuilder: (context, index) {
-                final section = sections[index];
-                final selected = index == selectedIndex;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: InkWell(
-                    onTap: () => onTap(index),
+            child: Builder(builder: (_) {
+              // Filtramos secciones deshabilitadas pero conservamos su índice
+              // original — el switch de _selectedSection usa índices fijos.
+              final visible = <MapEntry<int, _FinanceSectionMeta>>[];
+              for (var i = 0; i < sections.length; i++) {
+                if (sections[i].enabled) visible.add(MapEntry(i, sections[i]));
+              }
+              return ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                itemCount: visible.length,
+                itemBuilder: (context, idx) {
+                  final originalIndex = visible[idx].key;
+                  final section = visible[idx].value;
+                  final selected = originalIndex == selectedIndex;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: InkWell(
+                      onTap: () => onTap(originalIndex),
                     borderRadius: BorderRadius.circular(16),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 160),
@@ -7913,9 +7917,10 @@ class _FinanceSidebar extends StatelessWidget {
                       ),
                     ),
                   ),
-                );
-              },
-            ),
+                  );
+                },
+              );
+            }),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
@@ -12477,11 +12482,16 @@ class _FinanceSectionMeta {
     required this.title,
     required this.subtitle,
     required this.icon,
+    this.enabled = true,
   });
 
   final String title;
   final String subtitle;
   final IconData icon;
+  // `false` oculta la sección del sidebar (las páginas todavía existen pero no
+  // se navegan). Útil para mantener los índices del switch intactos mientras
+  // escondemos secciones que aún son mock.
+  final bool enabled;
 }
 
 class _KpiData {
