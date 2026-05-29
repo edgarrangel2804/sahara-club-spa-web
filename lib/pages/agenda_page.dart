@@ -62,7 +62,13 @@ const _kDaysLetter = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 class _Therapist {
   final String id;
   final String name;
-  const _Therapist({required this.id, required this.name});
+  // Si true, este miembro puede agendarse aunque sea fuera de su jornada.
+  final bool allowOffHoursBooking;
+  const _Therapist({
+    required this.id,
+    required this.name,
+    this.allowOffHoursBooking = false,
+  });
 }
 
 class _StaffWorkingHours {
@@ -1174,7 +1180,7 @@ class _AgendaPageState extends State<AgendaPage> {
     try {
       final data = await Supabase.instance.client
           .from('staff')
-          .select('id, full_name')
+          .select('id, full_name, allow_off_hours_booking')
           .eq('role', 'therapist')
           .order('full_name');
       if (!mounted) return;
@@ -1184,6 +1190,7 @@ class _AgendaPageState extends State<AgendaPage> {
               (m) => _Therapist(
                 id: m['id'] as String,
                 name: m['full_name'] as String,
+                allowOffHoursBooking: m['allow_off_hours_booking'] == true,
               ),
             )
             .toList();
@@ -1559,6 +1566,7 @@ class _AgendaPageState extends State<AgendaPage> {
                                               onScheduleBlockTap:
                                                   _showScheduleBlockDetail,
                                               onSlotTap: _onSlotTap,
+                                              currentRole: _userRole,
                                             )
                                           : _MonthGrid(
                                               monthStart: _monthStart,
@@ -5159,6 +5167,7 @@ class _DayByTherapistGrid extends StatefulWidget {
     required this.onBookingTap,
     required this.onScheduleBlockTap,
     required this.onSlotTap,
+    required this.currentRole,
   });
   final _AgendaCalendarHours calendarHours;
   final DateTime day;
@@ -5171,6 +5180,10 @@ class _DayByTherapistGrid extends StatefulWidget {
   final void Function(BuildContext, _Booking) onBookingTap;
   final void Function(BuildContext, _ScheduleBlock) onScheduleBlockTap;
   final void Function(DateTime, TimeOfDay, Offset, String?) onSlotTap;
+  // Rol del usuario actual. Si es admin, puede agendar a cualquier hora aunque
+  // la terapeuta esté fuera de su jornada o descanse ese día. Otros roles ven
+  // un aviso y deben confirmar.
+  final String currentRole;
 
   @override
   State<_DayByTherapistGrid> createState() => _DayByTherapistGridState();
@@ -5269,19 +5282,29 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
   }
 
   _TherapistLiveStatus _liveStatusFor(String? staffId) {
-    if (staffId == null || !_sameDay(widget.day, widget.now)) {
+    if (staffId == null) {
       return _TherapistLiveStatus.off;
     }
 
+    final hours = _hoursFor(staffId);
+
+    // Si no trabaja ese día (cualquier día), siempre "off".
+    if (hours != null && !hours.isWorking) {
+      return _TherapistLiveStatus.off;
+    }
+
+    // Si la vista NO es hoy (mañana, otro día, pasado), no podemos hablar
+    // de "en sesión" / "en comida" / "fuera de horario actual" porque
+    // dependen del reloj. Reportamos sólo si trabaja ese día.
+    if (!_sameDay(widget.day, widget.now)) {
+      return _TherapistLiveStatus.available;
+    }
+
+    // De aquí abajo: el día en vista ES hoy → estado en tiempo real.
     final nowMinute = widget.now.hour * 60 + widget.now.minute;
 
     if (_hasActiveBookingNow(staffId, nowMinute)) {
       return _TherapistLiveStatus.busy;
-    }
-
-    final hours = _hoursFor(staffId);
-    if (hours != null && !hours.isWorking) {
-      return _TherapistLiveStatus.off;
     }
 
     final startsAt = hours?.startsAt ?? widget.calendarHours.startMinute;
@@ -5330,15 +5353,19 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
   }
 
   String _liveStatusLabel(_TherapistLiveStatus status) {
+    // Cuando la vista no es el día de hoy, "Disponible" / "No disponible" suena
+    // a tiempo real y confunde. Para esos días reportamos solo si la terapeuta
+    // trabaja o descansa según su jornada semanal.
+    final isToday = _sameDay(widget.day, widget.now);
     switch (status) {
       case _TherapistLiveStatus.busy:
         return 'En sesión';
       case _TherapistLiveStatus.breakTime:
         return 'En comida';
       case _TherapistLiveStatus.available:
-        return 'Disponible';
+        return isToday ? 'Disponible' : 'Trabaja';
       case _TherapistLiveStatus.off:
-        return 'No disponible';
+        return isToday ? 'No disponible' : 'Descanso';
     }
   }
 
@@ -5575,6 +5602,20 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
                                 day: widget.day,
                                 isUnassigned: tId == '__unassigned__',
                                 onSlotTap: widget.onSlotTap,
+                                bypassWorkingHours:
+                                    RolePermissions.isAdminLevel(
+                                            widget.currentRole) ||
+                                        (tId != '__unassigned__' &&
+                                            widget.therapists
+                                                .firstWhere(
+                                                  (t) => t.id == tId,
+                                                  orElse: () =>
+                                                      const _Therapist(
+                                                    id: '',
+                                                    name: '',
+                                                  ),
+                                                )
+                                                .allowOffHoursBooking),
                               );
                             }),
                           ),
@@ -5608,6 +5649,7 @@ class _TherapistColumn extends StatelessWidget {
     required this.day,
     required this.isUnassigned,
     required this.onSlotTap,
+    this.bypassWorkingHours = false,
   });
   final double width;
   final String? staffId;
@@ -5623,6 +5665,11 @@ class _TherapistColumn extends StatelessWidget {
   final DateTime day;
   final bool isUnassigned;
   final void Function(DateTime, TimeOfDay, Offset, String?) onSlotTap;
+  // Si true (admin), permite abrir el menú de slot aunque la terapeuta esté
+  // fuera de jornada, en comida, en time-off o sea su día de descanso.
+  // Las citas ocupadas y bloqueos de agenda siguen impidiendo agendar para
+  // evitar doble booking.
+  final bool bypassWorkingHours;
 
   double _topForMinute(int minute) =>
       (minute - calendarHours.startMinute) * (_kHourHeight / 60);
@@ -5649,19 +5696,24 @@ class _TherapistColumn extends StatelessWidget {
   bool _canOpenSlotMenu(BuildContext context, int minute) {
     if (isUnassigned) return true;
 
+    final slotEnd = minute + 30;
+
     if (workingHours != null && !workingHours!.isWorking) {
-      _showSlotMessage(context, 'Esta terapeuta no trabaja este dia.');
-      return false;
+      if (!bypassWorkingHours) {
+        _showSlotMessage(context, 'Esta terapeuta no trabaja este dia.');
+        return false;
+      }
     }
 
-    final slotEnd = minute + 30;
     final startsAt = workingHours?.startsAt;
     final endsAt = workingHours?.endsAt;
     if (startsAt != null &&
         endsAt != null &&
         (minute < startsAt || slotEnd > endsAt)) {
-      _showSlotMessage(context, 'Esta terapeuta no trabaja en este horario.');
-      return false;
+      if (!bypassWorkingHours) {
+        _showSlotMessage(context, 'Esta terapeuta no trabaja en este horario.');
+        return false;
+      }
     }
 
     final breakStartsAt = workingHours?.breakStartsAt;
@@ -5669,11 +5721,13 @@ class _TherapistColumn extends StatelessWidget {
     if (breakStartsAt != null &&
         breakEndsAt != null &&
         _overlaps(minute, slotEnd, breakStartsAt, breakEndsAt)) {
-      _showSlotMessage(
-        context,
-        'Esta terapeuta esta en horario de comida/descanso.',
-      );
-      return false;
+      if (!bypassWorkingHours) {
+        _showSlotMessage(
+          context,
+          'Esta terapeuta esta en horario de comida/descanso.',
+        );
+        return false;
+      }
     }
 
     final hasBooking = bookings.any((booking) {

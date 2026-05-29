@@ -48,6 +48,10 @@ class _Staff {
   final bool canAccessMobile;
   final bool canAccessWeb;
   final String? accessEmail;
+  // Si true, permite agendar este terapeuta aunque sea fuera de su jornada,
+  // en comida o día de descanso. Pensado para staff con horarios flexibles
+  // cuando no hay recepcionista fija.
+  final bool allowOffHoursBooking;
 
   _Staff({
     required this.id,
@@ -73,6 +77,7 @@ class _Staff {
     this.canAccessMobile = false,
     this.canAccessWeb = false,
     this.accessEmail,
+    this.allowOffHoursBooking = false,
   });
 
   factory _Staff.fromMap(Map<String, dynamic> m) {
@@ -106,6 +111,7 @@ class _Staff {
       canAccessMobile: m['can_access_mobile'] ?? false,
       canAccessWeb: m['can_access_web'] ?? false,
       accessEmail: m['access_email'] ?? m['email'],
+      allowOffHoursBooking: m['allow_off_hours_booking'] ?? false,
     );
   }
 }
@@ -2918,6 +2924,7 @@ class _StaffPermissionsDialogState extends State<_StaffPermissionsDialog> {
   late bool _active;
   late bool _canAccessWeb;
   late bool _canAccessMobile;
+  late bool _allowOffHours;
   late final TextEditingController _emailCtrl;
   bool _saving = false;
 
@@ -2927,6 +2934,7 @@ class _StaffPermissionsDialogState extends State<_StaffPermissionsDialog> {
     _active = widget.staff.active;
     _canAccessWeb = widget.staff.canAccessWeb;
     _canAccessMobile = widget.staff.canAccessMobile;
+    _allowOffHours = widget.staff.allowOffHoursBooking;
     _emailCtrl = TextEditingController(
       text: widget.staff.accessEmail ?? widget.staff.email ?? '',
     );
@@ -2952,6 +2960,7 @@ class _StaffPermissionsDialogState extends State<_StaffPermissionsDialog> {
         'active': _active,
         'can_access_web': _canAccessWeb,
         'can_access_mobile': _canAccessMobile,
+        'allow_off_hours_booking': _allowOffHours,
         'email': _emailCtrl.text.trim(),
       });
       if (!mounted) return;
@@ -3059,6 +3068,28 @@ class _StaffPermissionsDialogState extends State<_StaffPermissionsDialog> {
                   style: GoogleFonts.inter(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              SwitchListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                value: _allowOffHours,
+                onChanged: _saving
+                    ? null
+                    : (value) => setState(() => _allowOffHours = value),
+                activeColor: SaharaTheme.gold,
+                title: Text(
+                  'Permitir agendar fuera de horario',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                subtitle: Text(
+                  'Habilita agendar citas aunque esté en comida, fuera de jornada o sea su día de descanso.',
+                  style: GoogleFonts.inter(
+                    fontSize: 11.5,
+                    color: const Color(0xFF6D655B),
                   ),
                 ),
               ),
