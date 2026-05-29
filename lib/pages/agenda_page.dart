@@ -25,6 +25,15 @@ const _kTimeColWidth = 64.0;
 const _kSidebarWidth = 224.0;
 const _kDefaultCalendarStartMinute = 0;
 const _kDefaultCalendarEndMinute = (24 * 60) - 1;
+// Rango horario "del negocio" - las etiquetas dentro de este rango se pintan
+// negras y bold para que la jornada laboral salte a la vista en la columna
+// de horas. Si en el futuro cambian las horas del spa, ajustar aquí.
+const _kBusinessHoursStartMinute = 10 * 60; // 10:00
+const _kBusinessHoursEndMinute = 19 * 60;   // 19:00
+
+bool _isBusinessHour(int minute) =>
+    minute >= _kBusinessHoursStartMinute &&
+    minute < _kBusinessHoursEndMinute;
 
 // ── Spanish month/day names ───────────────────────────────────────────────────
 const _kMonths = [
@@ -3856,6 +3865,7 @@ class _WeekGridState extends State<_WeekGrid> {
       height: gridHeight,
       child: Column(
         children: widget.calendarHours.hourLabelMinutes.map((minute) {
+          final inBusiness = _isBusinessHour(minute);
           return SizedBox(
             height: _kHourHeight,
             child: Align(
@@ -3865,9 +3875,9 @@ class _WeekGridState extends State<_WeekGrid> {
                 child: Text(
                   _minuteLabel(minute),
                   style: GoogleFonts.inter(
-                    color: Colors.grey,
+                    color: inBusiness ? Colors.black : Colors.grey,
                     fontSize: 11,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: inBusiness ? FontWeight.w700 : FontWeight.w500,
                   ),
                 ),
               ),
@@ -4476,26 +4486,33 @@ class _DayGridState extends State<_DayGrid> {
                           children: [
                             for (final minute
                                 in widget.calendarHours.hourLabelMinutes)
-                              SizedBox(
-                                height: _kHourHeight,
-                                child: Align(
-                                  alignment: Alignment.topRight,
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(
-                                      right: 10,
-                                      top: 4,
-                                    ),
-                                    child: Text(
-                                      _minuteLabel(minute),
-                                      style: GoogleFonts.inter(
-                                        color: Colors.grey,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w500,
+                              Builder(builder: (_) {
+                                final inBusiness = _isBusinessHour(minute);
+                                return SizedBox(
+                                  height: _kHourHeight,
+                                  child: Align(
+                                    alignment: Alignment.topRight,
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(
+                                        right: 10,
+                                        top: 4,
+                                      ),
+                                      child: Text(
+                                        _minuteLabel(minute),
+                                        style: GoogleFonts.inter(
+                                          color: inBusiness
+                                              ? Colors.black
+                                              : Colors.grey,
+                                          fontSize: 11,
+                                          fontWeight: inBusiness
+                                              ? FontWeight.w700
+                                              : FontWeight.w500,
+                                        ),
                                       ),
                                     ),
                                   ),
-                                ),
-                              ),
+                                );
+                              }),
                           ],
                         ),
                       ),
@@ -5539,6 +5556,7 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
                           (i) {
                             final m =
                                 widget.calendarHours.startMinute + i * 30;
+                            final inBusiness = _isBusinessHour(m);
                             return Container(
                               height: _kHourHeight / 2,
                               padding: const EdgeInsets.only(
@@ -5552,7 +5570,14 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
                               child: Text(
                                 _minuteLabel24(m),
                                 style: GoogleFonts.inter(
-                                    fontSize: 10, color: Colors.black54),
+                                  fontSize: 10,
+                                  color: inBusiness
+                                      ? Colors.black
+                                      : Colors.black54,
+                                  fontWeight: inBusiness
+                                      ? FontWeight.w700
+                                      : FontWeight.w400,
+                                ),
                               ),
                             );
                           },
