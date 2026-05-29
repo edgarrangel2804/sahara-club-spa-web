@@ -115,6 +115,17 @@ class BookingSyncService {
         'status.eq.checked_in,status.eq.in_progress,'
         'status.eq.completed,status.eq.awaiting_payment',
       );
+    } else if (statusFilter == 'pending') {
+      // "Agendadas": engloba el nuevo 'scheduled' + legacy 'pending' /
+      // 'pending_reception' / 'pending_payment'. Es la familia "creada,
+      // todavía no confirmada por recepción".
+      query = query.or(
+        'status.eq.scheduled,status.eq.pending,'
+        'status.eq.pending_reception,status.eq.pending_payment',
+      );
+    } else if (statusFilter == 'in_progress') {
+      // "En servicio": cubre checked_in + in_progress.
+      query = query.or('status.eq.checked_in,status.eq.in_progress');
     } else if (statusFilter != 'all') {
       query = query.eq('status', statusFilter);
     }

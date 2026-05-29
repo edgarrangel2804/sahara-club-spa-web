@@ -155,7 +155,9 @@ export function bodyParamsForTemplateKey(
     case "reminder_24h":
       return [v("nombre_cliente"), v("nombre_servicio"), v("fecha_reserva"), v("hora_reserva")]
     case "reminder_3h":
-      return [v("nombre_cliente"), v("hora_reserva"), v("nombre_terapeuta")]
+      // Plantilla Meta recordatorio_3h: {{1}} nombre, {{2}} servicio,
+      // {{3}} fecha, {{4}} hora. 4 variables (no 3, ese era el bug).
+      return [v("nombre_cliente"), v("nombre_servicio"), v("fecha_reserva"), v("hora_reserva")]
     case "reminder_1h":
       return [v("nombre_cliente"), v("nombre_servicio"), v("hora_reserva")]
     case "reservation_cancelled":
@@ -165,7 +167,10 @@ export function bodyParamsForTemplateKey(
     case "welcome":
       return [v("nombre_cliente")]
     case "payment_pending":
-      return [v("nombre_cliente"), v("codigo_reserva"), v("link_pago")]
+      // Plantilla Meta pago_pendiente: {{1}} nombre, {{2}} monto, {{3}} concepto.
+      // Antes mandábamos codigo_reserva / link_pago que ni siquiera existen como
+      // placeholders en la plantilla aprobada — Meta rechazaba con 131008.
+      return [v("nombre_cliente"), v("monto"), v("concepto")]
     default:
       return []
   }

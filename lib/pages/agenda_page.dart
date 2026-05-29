@@ -21,7 +21,9 @@ import 'package:url_launcher/url_launcher.dart';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 const _kHourHeight = 64.0;
-const _kTimeColWidth = 64.0;
+// Más ancho que antes (64) para que la etiqueta de hora en 12h con AM/PM
+// (p. ej. "10:30 AM") quepa en una sola línea sin envolverse.
+const _kTimeColWidth = 76.0;
 const _kSidebarWidth = 224.0;
 const _kDefaultCalendarStartMinute = 0;
 const _kDefaultCalendarEndMinute = (24 * 60) - 1;
@@ -269,15 +271,23 @@ class _Booking {
   // accents de tono medio para el borde izquierdo de la tarjeta.
   Color get cardBg {
     switch (status) {
-      case 'confirmed':
-        return const Color(0xFFD6EFD8); // verde menta
-      case 'cancelled':
-        return const Color(0xFFF4D7D7); // coral pastel suave
-      case 'pending':
       case 'scheduled':
-        return const Color(0xFFFFE9B0); // amarillo crema
+      case 'pending':
+      case 'pending_reception':
+      case 'pending_payment':
+        return const Color(0xFFD6E6F7); // azul pastel (Agendada)
+      case 'confirmed':
+        return const Color(0xFFD6EFD8); // verde pistache (Confirmada)
+      case 'checked_in':
+      case 'in_progress':
+        return const Color(0xFFFFF3B0); // amarillo claro (En servicio)
+      case 'completed':
+        return const Color(0xFFE8E5DE); // gris suave (Finalizada)
+      case 'cancelled':
+      case 'no_show':
+        return const Color(0xFFF4D7D7); // coral pastel (Cancelada)
       case 'rescheduled':
-        return const Color(0xFFD6E6F7); // azul cielo
+        return const Color(0xFFD6E6F7); // azul cielo (Reagendada)
       default:
         return const Color(0xFFEDEAE3); // arena Sahara
     }
@@ -285,15 +295,23 @@ class _Booking {
 
   Color get cardAccent {
     switch (status) {
-      case 'confirmed':
-        return const Color(0xFF5DAA6E); // verde medio
-      case 'cancelled':
-        return const Color(0xFFC77878); // coral medio
-      case 'pending':
       case 'scheduled':
-        return const Color(0xFFD9A23B); // ámbar medio
+      case 'pending':
+      case 'pending_reception':
+      case 'pending_payment':
+        return const Color(0xFF5C8CC9); // azul medio (Agendada)
+      case 'confirmed':
+        return const Color(0xFF5DAA6E); // verde pistache
+      case 'checked_in':
+      case 'in_progress':
+        return const Color(0xFFD9A23B); // ámbar medio (En servicio)
+      case 'completed':
+        return const Color(0xFF8C8478); // gris medio (Finalizada)
+      case 'cancelled':
+      case 'no_show':
+        return const Color(0xFFC77878); // coral medio (Cancelada)
       case 'rescheduled':
-        return const Color(0xFF5C8CC9); // azul medio
+        return const Color(0xFF5C8CC9); // azul medio (Reagendada)
       default:
         return SaharaTheme.gold;
     }
@@ -1024,23 +1042,22 @@ class _AgendaPageState extends State<AgendaPage> {
 
   String _statusLabel(String s) {
     switch (s) {
-      case 'pending':
       case 'scheduled':
-        return 'Pendiente';
+      case 'pending':
+        return 'Agendada';
       case 'pending_reception':
-        return 'Solicitud IA';
+        return 'Agendada · IA';
       case 'pending_payment':
-        return 'Esperando anticipo';
+        return 'Agendada · esperando anticipo';
       case 'payment_received':
-        return 'Pago recibido · pdte confirmar';
+        return 'Pago recibido · por confirmar';
       case 'confirmed':
         return 'Confirmada';
       case 'checked_in':
-        return 'Check-in';
       case 'in_progress':
-        return 'En proceso';
+        return 'En servicio';
       case 'completed':
-        return 'Completada';
+        return 'Finalizada';
       case 'awaiting_payment':
         return 'Pendiente de cobro';
       case 'paid':
@@ -1052,7 +1069,7 @@ class _AgendaPageState extends State<AgendaPage> {
       case 'rescheduled':
         return 'Reagendada';
       default:
-        return 'Reservada';
+        return 'Agendada';
     }
   }
 
@@ -2400,23 +2417,22 @@ class _AgendaReservationChatDrawer extends StatelessWidget {
 
   String _statusLabel(String s) {
     switch (s) {
-      case 'pending':
       case 'scheduled':
-        return 'Pendiente';
+      case 'pending':
+        return 'Agendada';
       case 'pending_reception':
-        return 'Solicitud IA';
+        return 'Agendada · IA';
       case 'pending_payment':
-        return 'Esperando anticipo';
+        return 'Agendada · esperando anticipo';
       case 'payment_received':
-        return 'Pago recibido · pdte confirmar';
+        return 'Pago recibido · por confirmar';
       case 'confirmed':
         return 'Confirmada';
       case 'checked_in':
-        return 'Check-in';
       case 'in_progress':
-        return 'En proceso';
+        return 'En servicio';
       case 'completed':
-        return 'Completada';
+        return 'Finalizada';
       case 'awaiting_payment':
         return 'Pendiente de cobro';
       case 'paid':
@@ -2428,7 +2444,7 @@ class _AgendaReservationChatDrawer extends StatelessWidget {
       case 'rescheduled':
         return 'Reagendada';
       default:
-        return 'Reservada';
+        return 'Agendada';
     }
   }
 
@@ -3332,15 +3348,19 @@ class _SidebarState extends State<_Sidebar> {
                       ),
                       DropdownMenuItem(
                         value: 'pending',
-                        child: Text('Pendientes'),
+                        child: Text('Agendadas'),
                       ),
                       DropdownMenuItem(
                         value: 'confirmed',
                         child: Text('Confirmadas'),
                       ),
                       DropdownMenuItem(
+                        value: 'in_progress',
+                        child: Text('En servicio'),
+                      ),
+                      DropdownMenuItem(
                         value: 'completed',
-                        child: Text('Completadas'),
+                        child: Text('Finalizadas'),
                       ),
                       DropdownMenuItem(
                         value: 'awaiting_payment',
@@ -5221,8 +5241,12 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
   final ScrollController _hScroll = ScrollController();
   bool _didInitialScroll = false;
 
-  static const double _kHourLabelWidth = 56;
-  static const double _kColMinWidth = 180;
+  // 56 era muy estrecho para "10:30 AM" — se rompía a 2 líneas. Lo subimos a
+  // 76 (igual que la columna principal de horas) para uniformidad.
+  static const double _kHourLabelWidth = 76;
+  // 180 era amplio; con 5 terapeutas + columna de horas hay aire de sobra.
+  // Bajamos a 156 para que se sienta menos amontonado y quepa el tooltip.
+  static const double _kColMinWidth = 156;
   static const double _kHeaderHeight = 56;
 
   @override
@@ -6417,8 +6441,8 @@ class _BookingDetailDialog extends StatelessWidget {
                       b.status == 'pending_reception' ||
                       b.status == 'payment_received')
                     _DialogBtn(
-                      label: 'Confirmar',
-                      color: const Color(0xFF1A9E65),
+                      label: 'Confirmar cita',
+                      color: const Color(0xFF5DAA6E),
                       onTap: () => _updateStatus(context, 'confirmed'),
                     ),
                   if (!const ['completed', 'awaiting_payment', 'paid', 'cancelled']
@@ -6434,12 +6458,13 @@ class _BookingDetailDialog extends StatelessWidget {
                       color: const Color(0xFF2088D8),
                       onTap: () => _updateStatus(context, 'checked_in'),
                     ),
-                  if (b.status == 'confirmed' || b.status == 'rescheduled')
-                    _DialogBtn(
-                      label: 'Reenviar WhatsApp',
-                      color: const Color(0xFF25D366),
-                      onTap: () => _resendWhatsAppConfirmation(context, b),
-                    ),
+                  // Message Center: recepción elige qué plantilla mandar.
+                  // No envía automáticamente, abre un selector.
+                  _WhatsAppMessageCenterButton(
+                    booking: b,
+                    onSendTemplate: (key) =>
+                        _sendTemplateToBooking(context, b, key),
+                  ),
                   if (b.status == 'checked_in')
                     _DialogBtn(
                       label: 'Iniciar servicio',
@@ -6516,30 +6541,29 @@ class _BookingDetailDialog extends StatelessWidget {
 
   String _statusLabel(String s) {
     switch (s) {
+      case 'scheduled':
+      case 'pending':
+      case 'waiting':
+        return 'Agendada';
       case 'confirmed':
         return 'Confirmada';
       case 'attended':
         return 'Asistió';
       case 'no_show':
         return 'No asistió';
-      case 'pending':
-        return 'Pendiente';
-      case 'waiting':
-        return 'En espera';
       case 'cancelled':
         return 'Cancelada';
       case 'completed':
-        return 'Completada';
+        return 'Finalizada';
       case 'checked_in':
-        return 'Check-in';
       case 'in_progress':
-        return 'En proceso';
+        return 'En servicio';
       case 'awaiting_payment':
         return 'Pendiente de cobro';
       case 'paid':
         return 'Pagada';
       default:
-        return 'Reservada';
+        return 'Agendada';
     }
   }
 
@@ -6562,22 +6586,30 @@ class _BookingDetailDialog extends StatelessWidget {
     }
   }
 
-  Future<void> _resendWhatsAppConfirmation(BuildContext ctx, _Booking booking) async {
+  Future<void> _sendTemplateToBooking(
+    BuildContext ctx,
+    _Booking booking,
+    String templateKey,
+  ) async {
     try {
       final res = await Supabase.instance.client.rpc(
-        'whatsapp_resend_booking_confirmation',
-        params: {'p_booking_id': booking.id},
+        'whatsapp_send_template_to_booking',
+        params: {
+          'p_booking_id': booking.id,
+          'p_template_key': templateKey,
+        },
       );
       final map = Map<String, dynamic>.from(res as Map);
       final ok = map['ok'] == true;
       final pendingTemplate = map['pending_template'] == true;
-      final msg = (map['message'] ?? map['error'] ?? 'Acción ejecutada').toString();
+      final msg =
+          (map['message'] ?? map['error'] ?? 'Acción ejecutada').toString();
       if (!ctx.mounted) return;
       ScaffoldMessenger.of(ctx).showSnackBar(
         SnackBar(
           content: Text(msg),
           backgroundColor: ok
-              ? const Color(0xFF1A9E65)
+              ? const Color(0xFF5DAA6E)
               : pendingTemplate
                   ? const Color(0xFFC68A17)
                   : const Color(0xFFB32D2D),
@@ -6588,7 +6620,7 @@ class _BookingDetailDialog extends StatelessWidget {
       if (ctx.mounted) {
         ScaffoldMessenger.of(ctx).showSnackBar(
           SnackBar(
-            content: Text('Error al reenviar WhatsApp: $e'),
+            content: Text('Error al enviar WhatsApp: $e'),
             backgroundColor: const Color(0xFF2A1010),
           ),
         );
@@ -7519,11 +7551,11 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
   String? _therapistId;
   String? _sucursalId;
   String? _serviceId;
-  // Default 'confirmed': recepción/admin creando cita en persona o por teléfono
-  // SIEMPRE agenda ya confirmada (dispara WhatsApp inmediato vía trigger
-  // handle_booking_whatsapp_events). El status pending solo aplica a citas
-  // que nacen desde landing/app/IA/externo, donde recepción luego valida.
-  String _status = 'confirmed';
+  // Default 'scheduled': toda cita nueva (recepción, agenda, IA) nace
+  // "Agendada". Recepción/admin debe confirmarla manualmente para que pase
+  // a 'confirmed'. Esto evita que se prometa una confirmación instantánea
+  // al cliente sin que humano haya validado.
+  String _status = 'scheduled';
   bool _saving = false;
   bool _showInfo = false;
   bool _serviceOpen = false;
@@ -7570,21 +7602,21 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
       widget.calendarHours.selectableMinutesForHour(_hour);
 
   static const _statusMeta = {
-    'scheduled': ('Reservado', Color(0xFF5B8FF9)),
-    'checked_in': ('Check-in', Color(0xFF2088D8)),
-    'in_progress': ('En proceso', Color(0xFF6A54E0)),
-    'confirmed': ('Confirmado', Color(0xFFFFB347)),
-    'attended': ('Asiste', Color(0xFFFF9899)),
-    'no_show': ('No asistió', Color(0xFFFFB3B3)),
-    'pending': ('Pendiente', Color(0xFFFF4444)),
-    'pending_reception': ('Solicitud IA', Color(0xFFFF8C00)),
+    'scheduled': ('Agendada', Color(0xFF5C8CC9)),
+    'checked_in': ('En servicio', Color(0xFFD9A23B)),
+    'in_progress': ('En servicio', Color(0xFFD9A23B)),
+    'confirmed': ('Confirmada', Color(0xFF5DAA6E)),
+    'attended': ('Asistió', Color(0xFF5DAA6E)),
+    'no_show': ('No asistió', Color(0xFFC77878)),
+    'pending': ('Agendada', Color(0xFF5C8CC9)),
+    'pending_reception': ('Agendada · IA', Color(0xFF5C8CC9)),
     'pending_payment': ('Esperando anticipo', Color(0xFFC68A17)),
-    'payment_received': ('Pago recibido · pdte confirmar', Color(0xFF52C41A)),
-    'waiting': ('En espera', Color(0xFF52C41A)),
-    'cancelled': ('Cancelado', Color(0xFFB32D2D)),
-    'rescheduled': ('Reagendado', Color(0xFF0A9AA4)),
-    'completed': ('Completado', Color(0xFF888888)),
-    'awaiting_payment': ('Pendiente de cobro', Color(0xFFC6922B)),
+    'payment_received': ('Pago recibido · por confirmar', Color(0xFF5DAA6E)),
+    'waiting': ('En espera', Color(0xFF5C8CC9)),
+    'cancelled': ('Cancelada', Color(0xFFC77878)),
+    'rescheduled': ('Reagendada', Color(0xFF5C8CC9)),
+    'completed': ('Finalizada', Color(0xFF8C8478)),
+    'awaiting_payment': ('Pendiente de cobro', Color(0xFFC68A17)),
     'paid': ('Pagada', Color(0xFF52C41A)),
   };
 
@@ -7604,7 +7636,9 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
         ? (widget.editBooking?.sucursalId ?? widget.initialBranchId)
         : kDefaultBranchId;
     _serviceId = widget.editBooking?.serviceId;
-    _status = widget.editBooking?.status ?? 'confirmed';
+    // Cita nueva: nace 'scheduled' (Agendada). Recepción la pasa a 'confirmed'
+    // cuando se valida (botón "Confirmar cita" del detalle).
+    _status = widget.editBooking?.status ?? 'scheduled';
     
     if (widget.editBooking != null) {
       _clientCtrl.text = widget.editBooking!.clientName;
@@ -7859,23 +7893,23 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
         );
       }
 
-      // Aviso operativo sobre WhatsApp automático.
-      // Las citas creadas desde recepción (esta pantalla) tienen booking_source='reception'
-      // y disparan confirmacion_cita al cliente si nacen confirmed.
-      // Las citas que vienen de landing/app/IA llegan como pending — recepción debe
-      // confirmarlas manualmente para que se envíe el WhatsApp.
+      // Aviso operativo. Las citas nacen 'scheduled' (Agendada) y no disparan
+      // WhatsApp automático — recepción debe confirmarlas con el botón
+      // "Confirmar cita" del detalle para que se envíe la notificación.
+      // Si recepción cambió el badge a 'confirmed' antes de guardar, el
+      // trigger handle_booking_whatsapp_events encola el mensaje al insertar.
       if (mounted && result != null && widget.editBooking == null) {
         final isConfirmed = _status == 'confirmed';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
               isConfirmed
-                  ? '✓ Cita agendada. WhatsApp de notificación enviado al cliente.'
-                  : 'ℹ Cita guardada como pendiente. Agéndala para notificar al cliente por WhatsApp.',
+                  ? '✓ Cita confirmada. WhatsApp enviado al cliente.'
+                  : 'ℹ Cita agendada. Confírmala desde el detalle para notificar al cliente.',
             ),
             backgroundColor: isConfirmed
-                ? const Color(0xFF1A9E65)
-                : const Color(0xFF2D6DB3),
+                ? const Color(0xFF5DAA6E)
+                : const Color(0xFF5C8CC9),
             duration: const Duration(seconds: 5),
           ),
         );
@@ -7914,7 +7948,7 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
       _clientId = null;
       _therapistId = null;
       _serviceId = null;
-      _status = 'confirmed';
+      _status = 'scheduled';
     });
     messenger.showSnackBar(
       const SnackBar(
@@ -9666,6 +9700,218 @@ class _WeekClusterSheetTile extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// WhatsApp Message Center - botón en el diálogo de detalle de cita
+// ─────────────────────────────────────────────────────────────────────────────
+// Reemplaza al antiguo "Reenviar WhatsApp" (un solo template fijo). Ahora
+// recepción elige cuál de las plantillas aprobadas mandar.
+// Crece sin tocar lógica: para añadir Membresías, Gift Cards, Post-servicio,
+// Promociones, etc., basta con agregar una entrada a _kMessageOptions.
+// ═════════════════════════════════════════════════════════════════════════════
+class _WhatsAppMessageOption {
+  const _WhatsAppMessageOption({
+    required this.key,
+    required this.label,
+    required this.description,
+    required this.icon,
+    required this.color,
+  });
+  final String key; // template_key en whatsapp_templates
+  final String label;
+  final String description;
+  final IconData icon;
+  final Color color;
+}
+
+const List<_WhatsAppMessageOption> _kMessageOptions = [
+  _WhatsAppMessageOption(
+    key: 'cita_agendada_recepcion',
+    label: 'Cita agendada',
+    description: 'Notifica al cliente que su cita quedó registrada.',
+    icon: Icons.event_available_rounded,
+    color: Color(0xFF5C8CC9),
+  ),
+  _WhatsAppMessageOption(
+    key: 'payment_pending',
+    label: 'Solicitar anticipo',
+    description: 'Pide el anticipo para asegurar la reserva.',
+    icon: Icons.payments_rounded,
+    color: Color(0xFFD9A23B),
+  ),
+  _WhatsAppMessageOption(
+    key: 'reservation_confirmed',
+    label: 'Cita confirmada',
+    description: 'Recepción ya validó la cita.',
+    icon: Icons.check_circle_rounded,
+    color: Color(0xFF5DAA6E),
+  ),
+  _WhatsAppMessageOption(
+    key: 'reservation_rescheduled',
+    label: 'Reagendación',
+    description: 'La cita cambió de fecha u hora.',
+    icon: Icons.update_rounded,
+    color: Color(0xFFC68A17),
+  ),
+  _WhatsAppMessageOption(
+    key: 'reservation_cancelled',
+    label: 'Cancelación',
+    description: 'Avisa al cliente que la cita se canceló.',
+    icon: Icons.cancel_rounded,
+    color: Color(0xFFC77878),
+  ),
+];
+
+class _WhatsAppMessageCenterButton extends StatelessWidget {
+  const _WhatsAppMessageCenterButton({
+    required this.booking,
+    required this.onSendTemplate,
+  });
+
+  final _Booking booking;
+  final Future<void> Function(String templateKey) onSendTemplate;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: 'Enviar mensaje por WhatsApp',
+      offset: const Offset(0, 36),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      onSelected: (key) async {
+        final confirmed = await _confirmSend(context, key);
+        if (confirmed != true) return;
+        await onSendTemplate(key);
+      },
+      itemBuilder: (ctx) => _kMessageOptions
+          .map(
+            (opt) => PopupMenuItem<String>(
+              value: opt.key,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 280),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: opt.color.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(opt.icon, size: 16, color: opt.color),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            opt.label,
+                            style: GoogleFonts.inter(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.black87,
+                            ),
+                          ),
+                          Text(
+                            opt.description,
+                            style: GoogleFonts.inter(
+                              fontSize: 11,
+                              color: Colors.black54,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          )
+          .toList(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFF25D366).withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: const Color(0xFF25D366).withValues(alpha: 0.4),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.chat_rounded,
+              size: 16,
+              color: Color(0xFF128C7E),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              'WhatsApp',
+              style: GoogleFonts.inter(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: const Color(0xFF128C7E),
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 16,
+              color: Color(0xFF128C7E),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<bool?> _confirmSend(BuildContext ctx, String key) {
+    final opt = _kMessageOptions.firstWhere((o) => o.key == key);
+    return showDialog<bool>(
+      context: ctx,
+      builder: (dctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: Row(
+          children: [
+            Icon(opt.icon, color: opt.color, size: 22),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Enviar ${opt.label.toLowerCase()}',
+                style: GoogleFonts.inter(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          '¿Enviar mensaje de WhatsApp a ${booking.clientName}?\n\n${opt.description}',
+          style: GoogleFonts.inter(fontSize: 13, color: Colors.black87),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dctx, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: opt.color,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Enviar'),
+          ),
+        ],
       ),
     );
   }

@@ -338,7 +338,7 @@ const TOOLS = [
   {
     name: "check_availability_for_booking",
     description:
-      "OBLIGATORIO antes de create_pending_booking. Verifica disponibilidad real del slot solicitado contra business_hours, días cerrados, schedule_blocks y bookings existentes (incluye pending_reception). Si está libre, available=true. Si NO está libre, devuelve suggested_slots con 3 alternativas reales del mismo día o de los siguientes días. NUNCA crees una pending_reception sin haber llamado primero esta tool y haber recibido available=true.",
+      "OBLIGATORIO antes de create_pending_booking. Verifica disponibilidad real del slot solicitado contra business_hours, días cerrados, schedule_blocks y bookings existentes (incluye scheduled / pending_reception). Si está libre, available=true. Si NO está libre, devuelve suggested_slots con 3 alternativas reales del mismo día o de los siguientes días. NUNCA crees una cita sin haber llamado primero esta tool y haber recibido available=true.",
     input_schema: {
       type: "object",
       properties: {
@@ -366,7 +366,7 @@ const TOOLS = [
   {
     name: "create_pending_booking",
     description:
-      "Crea solicitud en agenda real con status='pending_reception'. SOLO usa esta tool DESPUÉS de check_availability_for_booking con available=true. La recepción valida y confirma después. Idempotente: dedup 10 min por cliente+servicio+fecha+hora.",
+      "Crea solicitud en agenda real con status='scheduled' (Agendada). SOLO usa esta tool DESPUÉS de check_availability_for_booking con available=true. Recepción/admin la marca como 'confirmed' después. Idempotente: dedup 10 min por cliente+servicio+fecha+hora.",
     input_schema: {
       type: "object",
       properties: {
@@ -620,7 +620,7 @@ async function execTool(
                   await supabase
                     .from("bookings")
                     .update({
-                      status: "pending_reception",
+                      status: "scheduled",
                       payment_requirement: "waived",
                       waiver_reason: waiverReason,
                       gift_card_id: giftCardId,
@@ -629,7 +629,7 @@ async function execTool(
                     })
                     .eq("id", bookingId)
 
-                  result.status = "pending_reception"
+                  result.status = "scheduled"
                   result.payment_requirement = "waived"
                   result.waiver_reason = waiverReason
                   result.checkout_url = null
@@ -1270,10 +1270,12 @@ VOCABULARIO PROHIBIDO:
 ❌ "entra a", "ve a la landing", "agenda en línea"
 
 VOCABULARIO PERMITIDO solo cuando create_pending_booking devuelve created=true:
-✅ "Registramos tu solicitud y ha sido agendada para [servicio]..."
-   (porque SÍ se creó un row real en la agenda con status pending_reception,
+✅ "Tu cita fue agendada para [servicio] el [día] a las [hora]. Nuestro equipo
+   la revisará y te confirmará en breve ✨"
+   (porque SÍ se creó un row real en la agenda con status scheduled,
     aunque no esté confirmada por recepción).
-   NO digas "tu cita está agendada y confirmada" — la confirmación es de recepción.
+   NO digas "tu cita está confirmada" — la confirmación viene cuando recepción
+   o admin la marca como confirmed en el sistema.
 
 EMOJIS PERMITIDOS:
 ✅ ✨  🌿  (úsalos con moderación, máximo 1 por mensaje)
@@ -1306,7 +1308,7 @@ PASO 2 — Cliente elige día/hora específico (ej. "jueves 4pm") O elige
   ESTA TOOL: si available=true, AUTOMÁTICAMENTE crea el booking y manda
   alerta a recepción. NO necesitas llamar create_pending_booking aparte
   (la tool ya lo hace internamente). Verás en el output: booking_created=true,
-  booking_id=<uuid>, status='pending_reception'.
+  booking_id=<uuid>, status='scheduled'.
 
   CASO A — available=true (booking creado automáticamente):
     El tool puede regresar uno de DOS sub-casos según los beneficios del cliente:
