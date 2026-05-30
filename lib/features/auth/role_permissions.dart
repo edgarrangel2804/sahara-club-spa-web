@@ -83,6 +83,8 @@ class RolePermissions {
 
   static const receptionistRole = 'receptionist';
 
+  static const therapistRole = 'therapist';
+
   static final List<PermissionModuleDefinition> _definitions = [
     const PermissionModuleDefinition(
       key: 'dashboard',
@@ -247,7 +249,9 @@ class RolePermissions {
       return;
     }
 
-    if (isAdminLevel(normalized) || isTherapist(normalized) || isClient(normalized)) {
+    // Admins y clientes usan permisos fijos en codigo. Recepcion y terapeutas
+    // se leen de la tabla role_permissions (respaldo total configurable).
+    if (isAdminLevel(normalized) || isClient(normalized)) {
       _cache[normalized] = _buildDefaultMap(normalized);
       return;
     }
@@ -309,12 +313,11 @@ class RolePermissions {
     if (isAdminLevel(normalized)) {
       return const ['agenda', 'clientes', 'ventas', 'mensajes', 'admin'];
     }
-    if (isTherapist(normalized)) {
-      return const ['agenda'];
-    }
     if (isClient(normalized)) {
       return const ['agenda'];
     }
+    // Terapeutas: respaldo total configurable -> modulos visibles segun DB
+    // (igual que recepcion), no hardcode.
 
     final permissions = _cache[normalized] ?? _buildDefaultMap(normalized);
     return _definitions
@@ -413,19 +416,6 @@ class RolePermissions {
         canDelete: true,
         canExport: true,
         canManage: true,
-      );
-    }
-
-    if (isTherapist(role)) {
-      final agenda = moduleKey == 'agenda';
-      return RoleModulePermission(
-        moduleKey: moduleKey,
-        canView: agenda,
-        canCreate: false,
-        canEdit: agenda,
-        canDelete: false,
-        canExport: false,
-        canManage: false,
       );
     }
 

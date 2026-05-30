@@ -497,7 +497,7 @@ class AdminModule extends StatefulWidget {
 
 class _AdminModuleState extends State<AdminModule>
     with SingleTickerProviderStateMixin {
-  late final _tab = TabController(length: 9, vsync: this);
+  late final _tab = TabController(length: 10, vsync: this);
   bool _loading = true;
   List<_Staff> _staff = [];
   List<Map<String, dynamic>> _todayBookings = [];
@@ -1102,7 +1102,13 @@ class _AdminModuleState extends State<AdminModule>
                       Tab(
                         child: _AdminTabLabel(
                           icon: Icons.verified_user_outlined,
-                          label: 'Permisos',
+                          label: 'Permisos Recep.',
+                        ),
+                      ),
+                      Tab(
+                        child: _AdminTabLabel(
+                          icon: Icons.spa_outlined,
+                          label: 'Permisos Terap.',
                         ),
                       ),
                       Tab(
@@ -1167,6 +1173,14 @@ class _AdminModuleState extends State<AdminModule>
                       const ProductosModule(),
                       const FinanzasModule(),
                       const ReceptionPermissionsModule(),
+                      const ReceptionPermissionsModule(
+                        role: RolePermissions.therapistRole,
+                        title: 'Permisos de Terapeutas',
+                        description:
+                            'Respaldo total: define que pueden ver y operar las terapeutas '
+                            'cuando recepcion no esta disponible.',
+                        savedMessage: 'Permisos de terapeutas guardados.',
+                      ),
                       const AiMonitorTab(),
                       const _AiSettingsTab(),
                       _SettingsTab(branches: _branches, onRefresh: _load),

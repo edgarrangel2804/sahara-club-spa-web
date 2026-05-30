@@ -4,7 +4,26 @@ import 'package:google_fonts/google_fonts.dart';
 import '../auth/role_permissions.dart';
 
 class ReceptionPermissionsModule extends StatefulWidget {
-  const ReceptionPermissionsModule({super.key});
+  const ReceptionPermissionsModule({
+    super.key,
+    this.role = RolePermissions.receptionistRole,
+    this.title = 'Permisos de Recepcion',
+    this.description =
+        'Controla exactamente que puede ver y operar la recepcionista.',
+    this.savedMessage = 'Permisos de recepción guardados.',
+  });
+
+  /// Rol al que aplican los permisos (recepcion, terapeuta, etc.).
+  final String role;
+
+  /// Titulo mostrado en el encabezado del panel.
+  final String title;
+
+  /// Subtitulo descriptivo del panel.
+  final String description;
+
+  /// Mensaje de confirmacion al guardar.
+  final String savedMessage;
 
   @override
   State<ReceptionPermissionsModule> createState() =>
@@ -26,7 +45,7 @@ class _ReceptionPermissionsModuleState extends State<ReceptionPermissionsModule>
     setState(() => _loading = true);
     try {
       final permissions = await RolePermissions.fetchRolePermissions(
-        RolePermissions.receptionistRole,
+        widget.role,
         forceRefresh: true,
       );
       if (!mounted) return;
@@ -83,12 +102,12 @@ class _ReceptionPermissionsModuleState extends State<ReceptionPermissionsModule>
     setState(() => _saving = true);
     try {
       await RolePermissions.saveRolePermissions(
-        RolePermissions.receptionistRole,
+        widget.role,
         _permissions,
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Permisos de recepción guardados.')),
+        SnackBar(content: Text(widget.savedMessage)),
       );
     } catch (e) {
       if (!mounted) return;
@@ -122,7 +141,7 @@ class _ReceptionPermissionsModuleState extends State<ReceptionPermissionsModule>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Permisos de Recepcion',
+                        widget.title,
                         style: GoogleFonts.playfairDisplay(
                           fontSize: 24,
                           color: const Color(0xFF1A1A1A),
@@ -131,7 +150,7 @@ class _ReceptionPermissionsModuleState extends State<ReceptionPermissionsModule>
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Controla exactamente que puede ver y operar la recepcionista.',
+                        widget.description,
                         style: GoogleFonts.inter(
                           fontSize: 13,
                           color: Colors.black54,
