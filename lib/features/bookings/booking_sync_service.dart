@@ -254,6 +254,16 @@ class BookingSyncService {
           warningMessage: warning,
         );
       }
+      // Cita fuera de jornada permitida con 1h de gracia: no bloquea, avisa.
+      if (result['extended'] == true) {
+        final notice = result['notice']?.toString().trim();
+        final extendedMsg = (notice == null || notice.isEmpty)
+            ? 'El horario de trabajo se extenderá una hora más.'
+            : notice;
+        warning = (warning == null || warning.isEmpty)
+            ? extendedMsg
+            : '$warning $extendedMsg';
+      }
     } on PostgrestException catch (error) {
       return BookingValidationResult(
         isValid: false,

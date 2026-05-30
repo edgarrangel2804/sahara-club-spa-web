@@ -250,6 +250,92 @@ async function notifyHumanBackup(
   return { sent: okCount > 0, recipients: okCount }
 }
 
+// Envía un texto plano a los números operativos (human_backup + admins) con dedup
+// implícito por contenido distinto. Usado para alertas de reagenda/cancelación IA.
+async function notifyReceptionRaw(alertText: string): Promise<number> {
+  const { data: s } = await supabase
+    .from("ai_settings")
+    .select("human_backup_enabled, human_backup_numbers, ai_admin_numbers")
+    .eq("id", 1).maybeSingle()
+  const enabled = (s as { human_backup_enabled?: boolean } | null)?.human_backup_enabled === true
+  if (!enabled) return 0
+  const backups = ((s as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
+  const admins = ((s as { ai_admin_numbers?: string[] } | null)?.ai_admin_numbers ?? []) as string[]
+  const seen = new Set<string>()
+  let okCount = 0
+  for (const list of [backups, admins]) {
+    for (const raw of list) {
+      const tail = String(raw).replace(/\D/g, "").slice(-10)
+      if (tail.length !== 10 || seen.has(tail)) continue
+      seen.add(tail)
+      try {
+        await sendTextToMeta(normalizePhone(String(raw)), alertText)
+        okCount += 1
+      } catch (e) {
+        console.warn("notifyReceptionRaw send failed:", (e as Error).message)
+      }
+    }
+  }
+  return okCount
+}
+
+async function loadBookingBrief(bookingId: string): Promise<{ service: string; date?: string; time?: string }> {
+  try {
+    const { data } = await supabase
+      .from("bookings")
+      .select("booking_date, booking_time, service_id, services(name)")
+      .eq("id", bookingId)
+      .maybeSingle()
+    const row = (data ?? {}) as Record<string, unknown>
+    const svc = (row.services as { name?: string } | null)?.name ?? "Servicio"
+    return {
+      service: svc,
+      date: row.booking_date ? String(row.booking_date) : undefined,
+      time: row.booking_time ? String(row.booking_time).slice(0, 5) : undefined,
+    }
+  } catch {
+    return { service: "Servicio" }
+  }
+}
+
+async function notifyReceptionReschedule(
+  customerPhone: string, customerName: string | null,
+  bookingId: string, newDate: string, newTime: string,
+): Promise<number> {
+  const brief = await loadBookingBrief(bookingId)
+  const alert = [
+    "🔄 *Reagenda IA (revalidar)*",
+    "",
+    `*Cliente:* ${customerName ?? "Cliente WhatsApp"}`,
+    `*Teléfono:* ${customerPhone}`,
+    `*Servicio:* ${brief.service}`,
+    `*Nueva fecha:* ${newDate}`,
+    `*Nueva hora:* ${newTime}`,
+    "",
+    "La cita quedó en revisión (pending_reception). Validar en agenda Sahara.",
+  ].join("\n")
+  return await notifyReceptionRaw(alert)
+}
+
+async function notifyReceptionCancel(
+  customerPhone: string, customerName: string | null,
+  bookingId: string, reason: string,
+): Promise<number> {
+  const brief = await loadBookingBrief(bookingId)
+  const alert = [
+    "❌ *Cancelación IA*",
+    "",
+    `*Cliente:* ${customerName ?? "Cliente WhatsApp"}`,
+    `*Teléfono:* ${customerPhone}`,
+    `*Servicio:* ${brief.service}`,
+    brief.date ? `*Fecha:* ${brief.date}${brief.time ? ` ${brief.time}` : ""}` : "",
+    reason ? `*Motivo:* ${reason}` : "",
+    "",
+    "El cliente canceló su cita desde WhatsApp.",
+  ].filter(Boolean).join("\n")
+  return await notifyReceptionRaw(alert)
+}
+
 async function loadAnthropicKey(): Promise<string> {
   const { data, error } = await supabase.rpc("get_anthropic_api_key")
   if (error || !data) throw new Error("No se pudo leer anthropic_api_key del Vault")
@@ -379,6 +465,39 @@ const TOOLS = [
         confidence: { type: "number", description: "Confianza 0-1 en que la intención es real" },
       },
       required: ["service_id", "booking_date", "booking_time"],
+    },
+  },
+  {
+    name: "consult_my_appointments",
+    description:
+      "Devuelve las próximas citas del cliente que escribe (se identifica por su propio teléfono, no pidas el número). Úsala cuando pregunte '¿qué citas tengo?', '¿cuándo es mi cita?', '¿a qué hora quedé?', '¿ya tengo algo agendado?'. Solo lectura. Cada cita trae booking_id, service_name, date, time, status_label y ai_manageable (true si tú puedes reagendarla/cancelarla, false si la maneja recepción).",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "reschedule_my_booking",
+    description:
+      "Mueve una cita EXISTENTE del cliente a nueva fecha/hora. Úsala solo cuando el cliente pida cambiar/mover una cita suya. PRIMERO obtén el booking_id con consult_my_appointments y confirma cuál cita quiere mover. Solo funciona si ai_manageable=true (citas no confirmadas). Valida disponibilidad: si available=false devuelve suggested_slots para ofrecer. Si available=true, deja la cita en revisión de recepción con la nueva fecha/hora.",
+    input_schema: {
+      type: "object",
+      properties: {
+        booking_id: { type: "string", description: "UUID de la cita a mover (de consult_my_appointments)" },
+        new_date: { type: "string", description: "YYYY-MM-DD zona Tijuana" },
+        new_time: { type: "string", description: "HH:MM 24h (ej. 16:00)" },
+      },
+      required: ["booking_id", "new_date", "new_time"],
+    },
+  },
+  {
+    name: "cancel_my_booking",
+    description:
+      "Cancela una cita EXISTENTE del cliente. Úsala solo cuando el cliente pida explícitamente cancelar una cita suya, y DESPUÉS de confirmar con él cuál (obtén el booking_id con consult_my_appointments). Solo funciona si ai_manageable=true. Si devuelve error 'requires_reception', informa que recepción le ayudará con esa cita.",
+    input_schema: {
+      type: "object",
+      properties: {
+        booking_id: { type: "string", description: "UUID de la cita a cancelar (de consult_my_appointments)" },
+        reason: { type: "string", description: "Motivo breve si el cliente lo da (opcional)" },
+      },
+      required: ["booking_id"],
     },
   },
 ]
@@ -620,7 +739,7 @@ async function execTool(
                   await supabase
                     .from("bookings")
                     .update({
-                      status: "scheduled",
+                      status: "pending_reception",
                       payment_requirement: "waived",
                       waiver_reason: waiverReason,
                       gift_card_id: giftCardId,
@@ -629,7 +748,7 @@ async function execTool(
                     })
                     .eq("id", bookingId)
 
-                  result.status = "scheduled"
+                  result.status = "pending_reception"
                   result.payment_requirement = "waived"
                   result.waiver_reason = waiverReason
                   result.checkout_url = null
@@ -708,9 +827,28 @@ async function execTool(
                 result.checkout_error = (e as Error).message
               }
             }
+          } else {
+            // available=true pero el insert del booking falló (createErr) o
+            // devolvió null. NO podemos dejar que la IA diga "registramos tu
+            // solicitud": sería mentira (recepción no ve nada en agenda).
+            // Marcamos fallo explícito y alertamos a recepción.
+            result.booking_failed = true
+            result.booking_created = false
+            result.checkout_error = createErr?.message ?? "create_pending_booking_returned_null"
+            try {
+              await notifyHumanBackup(phone, ctx.messageText ?? "(intento de reserva)", "ai_booking_create_failed")
+            } catch { /* swallow */ }
           }
         } catch (e) {
           console.warn("auto-create after available=true failed:", (e as Error).message)
+          // Excepción dura en el flujo de creación → mismo blindaje: la IA NO
+          // debe confirmar una reserva que no se persistió.
+          result.booking_failed = true
+          result.booking_created = false
+          result.checkout_error = (e as Error).message
+          try {
+            await notifyHumanBackup(phone, ctx.messageText ?? "(intento de reserva)", "ai_booking_create_exception")
+          } catch { /* swallow */ }
         }
       }
       return result
@@ -808,6 +946,62 @@ async function execTool(
       }
       return result ?? { ok: false, error: "rpc_returned_null" }
     }
+    case "consult_my_appointments": {
+      const phone = String(ctx.phone ?? "").trim()
+      if (!phone) return { error: "phone_missing_from_context" }
+      const { data, error } = await supabase.rpc("consult_my_appointments_from_ai", {
+        p_phone: phone,
+      })
+      if (error) return { error: error.message }
+      return (data as Record<string, unknown> | null) ?? { ok: false, error: "rpc_returned_null" }
+    }
+    case "reschedule_my_booking": {
+      const phone = String(ctx.phone ?? "").trim()
+      if (!phone) return { error: "phone_missing_from_context" }
+      const bookingId = String(input.booking_id ?? "").trim()
+      const newDate = String(input.new_date ?? "").trim()
+      const newTime = String(input.new_time ?? "").trim()
+      if (!bookingId || !newDate || !newTime) return { error: "missing_params" }
+      const timeNorm = newTime.length === 5 ? `${newTime}:00` : newTime
+      const { data, error } = await supabase.rpc("reschedule_my_booking_from_ai", {
+        p_phone: phone,
+        p_booking_id: bookingId,
+        p_new_date: newDate,
+        p_new_time: timeNorm,
+      })
+      if (error) return { error: error.message }
+      const result = (data as Record<string, unknown> | null) ?? { ok: false, error: "rpc_returned_null" }
+      // Si se reagendó con éxito, alerta a recepción (re-validación de slot nuevo).
+      if (result.ok === true && result.rescheduled === true) {
+        try {
+          await notifyReceptionReschedule(phone, ctx.clientName ?? null, bookingId, newDate, newTime)
+        } catch (e) {
+          console.warn("reschedule reception alert failed:", (e as Error).message)
+        }
+      }
+      return result
+    }
+    case "cancel_my_booking": {
+      const phone = String(ctx.phone ?? "").trim()
+      if (!phone) return { error: "phone_missing_from_context" }
+      const bookingId = String(input.booking_id ?? "").trim()
+      if (!bookingId) return { error: "missing_booking_id" }
+      const { data, error } = await supabase.rpc("cancel_my_booking_from_ai", {
+        p_phone: phone,
+        p_booking_id: bookingId,
+        p_reason: input.reason ? String(input.reason) : null,
+      })
+      if (error) return { error: error.message }
+      const result = (data as Record<string, unknown> | null) ?? { ok: false, error: "rpc_returned_null" }
+      if (result.ok === true && result.cancelled === true) {
+        try {
+          await notifyReceptionCancel(phone, ctx.clientName ?? null, bookingId, String(input.reason ?? ""))
+        } catch (e) {
+          console.warn("cancel reception alert failed:", (e as Error).message)
+        }
+      }
+      return result
+    }
     default:
       return { error: `tool desconocida: ${name}` }
   }
@@ -838,7 +1032,7 @@ const ADMIN_TOOLS = [
   },
   {
     name: "get_pending_confirmations",
-    description: "Lista citas próximas 7 días que están en estado pending o scheduled (esperando confirmar).",
+    description: "Lista citas próximas 7 días que están en estado pending, scheduled o pending_reception (creadas por IA), todas esperando confirmar.",
     input_schema: { type: "object", properties: {} },
   },
   {
@@ -916,6 +1110,70 @@ const ADMIN_TOOLS = [
       properties: { date: { type: "string" } },
     },
   },
+  // --- Suite director: finanzas, nómina, clientes, prospectos ---
+  {
+    name: "get_financial_summary",
+    description: "Estado de resultados de un rango (default: mes en curso, Tijuana): ingresos pagados, gastos variables, gastos a proveedores, gastos fijos mensuales, nómina y UTILIDAD neta. Si una sección no tiene datos cargados lo indica con has_data=false. Úsalo para 'cómo vamos este mes', 'utilidad', 'ganancias', 'cuánto llevamos'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        date_from: { type: "string", description: "YYYY-MM-DD inicio (opcional)" },
+        date_to: { type: "string", description: "YYYY-MM-DD fin (opcional)" },
+      },
+    },
+  },
+  {
+    name: "get_fixed_expenses",
+    description: "Lista los gastos fijos del negocio (renta, servicios, etc.) con monto, frecuencia y día de pago, más el total mensual activo.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "get_payroll_summary",
+    description: "Nómina por periodo (default: mes en curso): detalle por empleado (sueldo base, comisiones, bonos, propinas, deducciones, total) y gran total. Para 'cuánto pagamos de nómina', 'sueldos'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        date_from: { type: "string" },
+        date_to: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "get_recurring_clients",
+    description: "Clientes recurrentes: quienes tienen 2+ citas. Devuelve nombre, teléfono, total de citas, visitas completadas y última visita. Para 'clientes recurrentes', 'clientes frecuentes', 'quiénes regresan'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        min_visits: { type: "integer", description: "mínimo de citas para contar como recurrente (default 2)" },
+        limit: { type: "integer", description: "máximo de clientes a devolver (default 20)" },
+      },
+    },
+  },
+  {
+    name: "get_client_lookup",
+    description: "Busca un cliente por NOMBRE o TELÉFONO y devuelve su ficha completa: contacto, historial reciente de citas, próxima cita, total de visitas y membresía. Para 'dame los datos de X', 'historial de X', 'cuándo vino X'.",
+    input_schema: {
+      type: "object",
+      properties: { query: { type: "string", description: "nombre o teléfono" } },
+      required: ["query"],
+    },
+  },
+  {
+    name: "get_memberships_summary",
+    description: "Membresías activas: total, cuántas vencen en 30 días, cuántas con auto-renovación, y el detalle (cliente, vencimiento, sesiones usadas/totales). Para 'membresías', 'quién está por vencer'.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "get_prospects",
+    description: "Clientes nuevos / prospectos de un rango (default: mes en curso): total de altas, cuántos son leads sin cita aún, y el detalle. Para 'prospectos', 'clientes nuevos', 'leads'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        date_from: { type: "string" },
+        date_to: { type: "string" },
+      },
+    },
+  },
 ]
 
 function todayTjDate(): string {
@@ -940,10 +1198,11 @@ async function execAdminTool(name: string, input: Record<string, unknown>) {
       for (const r of (data ?? []) as Array<{ status: string }>) {
         counts[r.status] = (counts[r.status] ?? 0) + 1
       }
-      // Derivado: "pendientes por confirmar" = pending + scheduled + rescheduled
+      // Derivado: "pendientes por confirmar" = pending + scheduled + pending_reception (IA) + rescheduled
       const pendingToConfirm =
         (counts["pending"] ?? 0) +
         (counts["scheduled"] ?? 0) +
+        (counts["pending_reception"] ?? 0) +
         (counts["rescheduled"] ?? 0)
       return {
         date,
@@ -967,7 +1226,7 @@ async function execAdminTool(name: string, input: Record<string, unknown>) {
       const { data, error } = await supabase
         .from("bookings")
         .select("booking_date, booking_time, service_name, status")
-        .in("status", ["pending", "scheduled"])
+        .in("status", ["pending", "scheduled", "pending_reception"])
         .gte("booking_date", from)
         .lte("booking_date", toDate)
         .order("booking_date").order("booking_time")
@@ -1085,12 +1344,62 @@ async function execAdminTool(name: string, input: Record<string, unknown>) {
         ai: ai.data ?? {},
       }
     }
+    // --- Suite director: finanzas, nómina, clientes, prospectos ---
+    case "get_financial_summary": {
+      const { data, error } = await supabase.rpc("admin_financial_summary_from_ai", {
+        p_from: input.date_from ? String(input.date_from) : null,
+        p_to: input.date_to ? String(input.date_to) : null,
+      })
+      if (error) return { error: error.message }
+      return data ?? { error: "sin datos" }
+    }
+    case "get_fixed_expenses": {
+      const { data, error } = await supabase.rpc("admin_fixed_expenses_from_ai")
+      if (error) return { error: error.message }
+      return data ?? { error: "sin datos" }
+    }
+    case "get_payroll_summary": {
+      const { data, error } = await supabase.rpc("admin_payroll_summary_from_ai", {
+        p_from: input.date_from ? String(input.date_from) : null,
+        p_to: input.date_to ? String(input.date_to) : null,
+      })
+      if (error) return { error: error.message }
+      return data ?? { error: "sin datos" }
+    }
+    case "get_recurring_clients": {
+      const { data, error } = await supabase.rpc("admin_recurring_clients_from_ai", {
+        p_min_visits: typeof input.min_visits === "number" ? input.min_visits : 2,
+        p_limit: typeof input.limit === "number" ? input.limit : 20,
+      })
+      if (error) return { error: error.message }
+      return data ?? { error: "sin datos" }
+    }
+    case "get_client_lookup": {
+      const { data, error } = await supabase.rpc("admin_client_lookup_from_ai", {
+        p_query: String(input.query ?? ""),
+      })
+      if (error) return { error: error.message }
+      return data ?? { error: "sin datos" }
+    }
+    case "get_memberships_summary": {
+      const { data, error } = await supabase.rpc("admin_memberships_summary_from_ai")
+      if (error) return { error: error.message }
+      return data ?? { error: "sin datos" }
+    }
+    case "get_prospects": {
+      const { data, error } = await supabase.rpc("admin_prospects_from_ai", {
+        p_from: input.date_from ? String(input.date_from) : null,
+        p_to: input.date_to ? String(input.date_to) : null,
+      })
+      if (error) return { error: error.message }
+      return data ?? { error: "sin datos" }
+    }
     default:
       return { error: `admin tool desconocida: ${name}` }
   }
 }
 
-function buildAdminSystemPrompt() {
+function buildAdminSystemPrompt(): { stable: string; dynamic: string } {
   const days = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"]
   const tjNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Tijuana" }))
   const tjDate = tjNow.toISOString().slice(0, 10)
@@ -1099,56 +1408,65 @@ function buildAdminSystemPrompt() {
   const tjTomorrowDate = new Date(tjNow.getTime() + 86400000).toISOString().slice(0, 10)
   const tjTomorrowName = days[(tjNow.getDay() + 1) % 7]
 
-  return `Eres Sahara, asistente del ADMINISTRADOR de Sahara Club Spa.
-Este usuario es admin autorizado y puede consultarte resúmenes operativos por WhatsApp.
+  const stable = `Eres Sahara, el ANALISTA DE NEGOCIO y mano derecha del dueño/administrador de Sahara Club Spa.
+Este usuario es admin autorizado (dueño/arquitecto). Tiene acceso TOTAL a la información del negocio por WhatsApp: operación, finanzas, nómina, gastos, clientes (con nombres y contacto), membresías y prospectos. Tu trabajo es darle datos REALES, claros y accionables, y ACONSEJARLO cuando lo pida o cuando los datos lo ameriten.
 
 REGLAS DURAS (admin):
-1. Solo LECTURA. Nunca creas, modificas ni cancelas nada.
-2. NUNCA reveles nombres completos, teléfonos, emails ni detalles personales
-   de clientes. Solo conteos, agregados, iniciales.
-3. Si admin pide "cancela X", "modifica X", "elimina X", "cambia pago", "edita",
-   responde: "Por seguridad, solo lecturas por WhatsApp. Acciones en el panel admin."
-4. Si admin pide datos personales (teléfono, email, dirección, notas privadas):
-   "Por seguridad, solo puedo darte un resumen general. Revisa el panel admin para detalles."
-5. NUNCA inventes números. Si una tool falla o devuelve vacío, dilo: "No hay datos para esa consulta."
-6. Tono ejecutivo, conciso, formato bullet list para WhatsApp.
-7. Máximo 6 líneas por respuesta.
-8. Fechas SIEMPRE en America/Tijuana usando tools.
-9. ALCANCE EXCLUSIVO — SOLO datos operativos de Sahara Club Spa (REGLA MÁS IMPORTANTE):
-   - Toda respuesta DEBE basarse en datos devueltos por tools de la DB de Sahara Club Spa.
-   - PROHIBIDO usar conocimiento general, comparaciones con otros negocios o información externa.
-   - PROHIBIDO responder temas ajenos: noticias, finanzas personales, tecnología, traducciones, código, consejos médicos, etc.
-   - Si preguntan algo fuera del scope: "Solo manejo datos operativos de Sahara Club Spa. Revisa el panel admin para análisis adicionales."
+1. Solo LECTURA. Nunca creas, modificas, cancelas ni editas nada. Si te piden una
+   acción de escritura ("cancela", "modifica", "elimina", "cambia pago", "edita"):
+   "Por seguridad solo consulto, no ejecuto cambios. Eso se hace desde el panel en saharaclubspa.com."
+2. DATOS DE CLIENTES PERMITIDOS: este admin SÍ puede ver nombres completos, teléfono,
+   email e historial de clientes. Úsalos cuando los pida (ej. get_client_lookup,
+   get_recurring_clients). Estás hablando con el dueño, no con un cliente.
+3. NUNCA inventes números, nombres ni datos. Si una tool devuelve has_data=false o
+   vacío, DILO con claridad: ej. "Aún no hay gastos/nómina cargados en el sistema para ese periodo."
+   Nunca rellenes con suposiciones ni con conocimiento general.
+4. Fechas SIEMPRE en America/Tijuana, usando las tools (no calcules de memoria).
+5. ALCANCE EXCLUSIVO SAHARA (regla más importante): toda respuesta se basa SOLO en
+   datos devueltos por las tools de la DB de Sahara Club Spa. PROHIBIDO usar
+   conocimiento general, datos de otros negocios, promedios de la industria, noticias,
+   o temas ajenos (tecnología, traducciones, código, consejos médicos, etc.).
+   Si preguntan algo fuera de Sahara: "Solo manejo información de Sahara Club Spa."
+6. CONSEJOS PERMITIDOS pero ATERRIZADOS EN DATOS DE SAHARA: puedes interpretar,
+   sugerir y recomendar SIEMPRE Y CUANDO te apoyes en los números reales que
+   devolvieron las tools (ej. "12 de tus 16 altas del mes son leads sin cita →
+   conviene una campaña de primera cita"). Nada de teoría genérica sin datos detrás.
 
-FORMATO RECOMENDADO PARA RESUMEN DE DÍA:
-"📊 Resumen de hoy:
-• Citas totales: N
-• Confirmadas: N
-• Canceladas: N
-• Completadas: N
-• Pendientes por confirmar: N
-• Ingresos registrados: $N MXN"
+CÓMO ELEGIR HERRAMIENTAS:
+- Operación del día / citas / cancelaciones / no-shows → tools operativas (get_today_summary, etc.).
+- "Cómo vamos", utilidad, ganancias, ingresos vs gastos del mes → get_financial_summary.
+- Gastos fijos → get_fixed_expenses. Nómina/sueldos → get_payroll_summary.
+- Clientes recurrentes/frecuentes → get_recurring_clients.
+- Datos/historial de un cliente concreto → get_client_lookup (por nombre o teléfono).
+- Membresías / por vencer → get_memberships_summary.
+- Prospectos / clientes nuevos / leads → get_prospects.
+- Para análisis amplios, llama varias tools y sintetiza.
 
-NOTA: "Pendientes por confirmar" se toma del campo pending_to_confirm que ya
-incluye status pending + scheduled + rescheduled. NO sumes manualmente.
+FORMATO:
+- Tono ejecutivo y directo, bullets para WhatsApp. Máximo 1 emoji sutil por bullet/título: 📊 📅 💰 ⏰ ⚠️ 🤖 👥 🔝 📈 📉 🧾
+- Resúmenes operativos: breves (≈6 líneas). Reportes financieros, de clientes o
+  análisis con consejo: usa lo que necesites pero sé conciso (idealmente ≤ 14 líneas).
+- Montos en MXN. Si net_profit es negativo, dilo claro (pérdida) y sugiere dónde mirar.
+- Si una sección viene en cero por falta de captura, acláralo para que no se lea como $0 real.
 
-Usa máximo 1 emoji sutil por bullet o título: 📊 📅 💰 ⏰ ⚠️ 🤖 👥 🔝
+NOTA: en el resumen del día, "Pendientes por confirmar" ya viene en pending_to_confirm
+(pending + scheduled + pending_reception + rescheduled). NO sumes manualmente.
 
-CONTEXTO TEMPORAL:
+EJEMPLOS:
+P: "¿Cómo vamos este mes?" → get_financial_summary; reporta ingresos, gastos, nómina y
+   utilidad; si faltan datos cargados, dilo; cierra con 1 recomendación basada en los números.
+P: "¿Cuántos clientes recurrentes tenemos?" → get_recurring_clients; da el conteo y el top.
+P: "Dame los datos de Rodrigo" → get_client_lookup con query "Rodrigo"; entrega ficha completa.
+P: "Cancela la cita de las 4pm" → "Por seguridad solo consulto, no ejecuto cambios. Eso se hace desde el panel."
+`
+
+  const dynamic = `CONTEXTO TEMPORAL:
 - Zona horaria: America/Tijuana
 - Hoy es: ${tjWeekday} ${tjDate} (hora actual: ${tjTime})
 - Mañana es: ${tjTomorrowName} ${tjTomorrowDate}
-
-EJEMPLOS DE RESPUESTA:
-Pregunta: "Resumen de hoy"
-→ Llama get_today_summary, formatea como bullets, máximo 6 líneas.
-
-Pregunta: "Cancela la cita de las 4pm"
-→ "Por seguridad, solo lecturas por WhatsApp. Las cancelaciones se hacen desde la agenda en saharaclubspa.com."
-
-Pregunta: "Dame el teléfono de Rodrigo"
-→ "Por seguridad, solo puedo darte un resumen general. Revisa el panel admin para detalles."
 `
+
+  return { stable, dynamic }
 }
 
 // ---------------------------------------------------------------------------
@@ -1200,7 +1518,21 @@ async function buildServiceCatalog(): Promise<string> {
   }
 }
 
-function buildSystemPrompt(clientKnown: string | null, serviceCatalog: string = "") {
+// Bloque de contenido para el system prompt con soporte de prompt caching.
+type SystemBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral" } }
+
+// Devuelve el system como array de bloques cacheables (orden: estable → dinámico).
+// El bloque estable (reglas) no cambia entre mensajes → cache hit por 5 min.
+// El bloque dinámico (fechas, catálogo, cliente) cambia poco → también cacheable
+// dentro del loop de tool_use de un mismo mensaje y entre mensajes del mismo día.
+function buildSystemBlocks(stable: string, dynamic: string): SystemBlock[] {
+  return [
+    { type: "text", text: stable, cache_control: { type: "ephemeral" } },
+    { type: "text", text: dynamic, cache_control: { type: "ephemeral" } },
+  ]
+}
+
+function buildSystemPrompt(clientKnown: string | null, serviceCatalog: string = ""): { stable: string; dynamic: string } {
   // SIEMPRE en zona horaria del negocio
   const days = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"]
   const monthsEs = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"]
@@ -1225,7 +1557,7 @@ function buildSystemPrompt(clientKnown: string | null, serviceCatalog: string = 
   }
   const upcomingTable = upcomingLines.join("\n")
 
-  return `Eres Sahara, asistente concierge de Sahara Club Spa (spa de bienestar en Ensenada, BC).
+  const stable = `Eres Sahara, asistente concierge de Sahara Club Spa (spa de bienestar en Ensenada, BC).
 Tu rol: asesorar al cliente y CAPTAR su intención de reserva. Recepción confirma toda cita oficialmente.
 
 ROL EXACTO:
@@ -1256,6 +1588,14 @@ REGLAS DURAS (no negociables):
      "Solo puedo orientarte con experiencias y servicios de Sahara Club Spa ✨ ¿Te ayudo con algún ritual, facial o reserva?"
    - Si preguntan por algo de spa que NO existe en nuestra DB: "Ese servicio no lo ofrecemos en Sahara. Déjame mostrarte lo que sí tenemos 🌿" + sugiere alternativas reales con list_services.
    - Ante CUALQUIER duda sobre un dato: "déjame verificar con recepción" antes que inventar.
+10. CONTACTO DIRECTO cuando la conversación se alarga:
+   - Si el cliente hace MUCHAS preguntas seguidas, pide detalles que no tienes en tus tools,
+     o la charla se extiende sin avanzar a una reserva, ofrécele AMABLEMENTE el teléfono directo
+     del spa para que lo atiendan en persona y resuelvan todas sus dudas.
+   - Frase sugerida: "Para resolver todas tus dudas con calma, también puedes comunicarte directo
+     con nuestro equipo al 646 151 9597 ✨ Con gusto te atienden."
+   - NO lo ofrezcas en el primer mensaje ni para deshacerte del cliente. Solo cuando de verdad notes
+     que la conversación es larga o que no estás resolviendo. Sigue cálida y dispuesta a ayudar.
 
 VOCABULARIO PERMITIDO (úsalo activamente):
 ✅ "solicitud registrada", "registramos tu solicitud", "registramos tu interés"
@@ -1272,7 +1612,7 @@ VOCABULARIO PROHIBIDO:
 VOCABULARIO PERMITIDO solo cuando create_pending_booking devuelve created=true:
 ✅ "Tu cita fue agendada para [servicio] el [día] a las [hora]. Nuestro equipo
    la revisará y te confirmará en breve ✨"
-   (porque SÍ se creó un row real en la agenda con status scheduled,
+   (porque SÍ se creó un row real en la agenda con status pending_reception,
     aunque no esté confirmada por recepción).
    NO digas "tu cita está confirmada" — la confirmación viene cuando recepción
    o admin la marca como confirmed en el sistema.
@@ -1308,9 +1648,18 @@ PASO 2 — Cliente elige día/hora específico (ej. "jueves 4pm") O elige
   ESTA TOOL: si available=true, AUTOMÁTICAMENTE crea el booking y manda
   alerta a recepción. NO necesitas llamar create_pending_booking aparte
   (la tool ya lo hace internamente). Verás en el output: booking_created=true,
-  booking_id=<uuid>, status='scheduled'.
+  booking_id=<uuid>, status='pending_reception'.
 
-  CASO A — available=true (booking creado automáticamente):
+  🚨 ANTES DE CASO A — verifica que el booking SÍ se creó:
+    Si el output trae booking_failed=true (o booking_created NO es true aunque
+    available=true), NO digas "registramos tu solicitud" ni "fue agendada".
+    Significa que falló el guardado y recepción no ve nada. Responde:
+    "Tuvimos un problema registrando tu solicitud. Recepción se pondrá en
+    contacto contigo en breve para confirmar 🌿" y NADA más. NO inventes
+    confirmación. Solo si booking_created=true (o duplicate_prevented=true)
+    procede con el wording de CASO A.
+
+  CASO A — available=true Y booking_created=true (booking creado automáticamente):
     El tool puede regresar uno de DOS sub-casos según los beneficios del cliente:
 
     SUB-CASO A1 — payment_requirement='waived' (cliente con gift card o membresía):
@@ -1401,6 +1750,48 @@ PASO 3 — Cliente pregunta "¿ya quedó?", "¿ya está confirmada?", "¿ya est�
   o:
   "Aún no se ha pagado. Recepción te apoyará con los siguientes pasos 🌿"
 
+GESTIÓN DE CITAS EXISTENTES (consultar, reagendar, cancelar):
+
+CONSULTAR — cliente pregunta "¿qué citas tengo?", "¿cuándo es mi cita?",
+  "¿a qué hora quedé?":
+  • Llama consult_my_appointments (NO pidas su teléfono, ya lo tenemos).
+  • Si appointments viene vacío: "No encuentro citas próximas a tu nombre 🌿
+    ¿Te ayudo a agendar una?"
+  • Si hay citas, lístalas con servicio, día y hora usando status_label.
+    Ej: "Tienes: • Masaje relajante · jueves 5 jun · 16:00 · En revisión por recepción"
+
+REAGENDAR — cliente pide cambiar/mover una cita:
+  PASO A: si no sabes cuál cita, llama consult_my_appointments y pregunta
+    cuál quiere mover (o cuál es si solo tiene una).
+  PASO B: cuando tengas el booking_id y la nueva fecha/hora, llama
+    reschedule_my_booking con booking_id, new_date (YYYY-MM-DD de la tabla
+    autoritativa), new_time (HH:MM 24h).
+  RESULTADOS:
+    • rescheduled=true → "Listo, movimos tu solicitud a [día] [hora].
+      Recepción la validará y te confirmará por aquí ✨"
+    • available=false → ofrece los suggested_slots como en CASO B de reservas.
+    • error='requires_reception' → "Esa cita ya está confirmada, así que
+      recepción te ayudará a moverla. Les aviso 🌿" (NO la muevas tú).
+    • error='not_your_booking' / 'booking_not_found' → "No encuentro esa cita
+      a tu nombre. ¿Te muestro tus citas?" + consult_my_appointments.
+
+CANCELAR — cliente pide cancelar una cita:
+  • SIEMPRE confirma primero CUÁL cita (usa consult_my_appointments si hay
+    duda). Nunca canceles sin que el cliente lo haya pedido explícitamente.
+  • Llama cancel_my_booking con booking_id (y reason si lo dio).
+  RESULTADOS:
+    • cancelled=true → "Listo, cancelamos tu cita de [servicio]. Si quieres
+      reagendar más adelante, aquí estoy 🌿"
+    • error='requires_reception' → "Esa cita ya está confirmada; recepción
+      te ayudará a cancelarla. Les aviso." (NO la canceles tú).
+    • error='not_your_booking' / 'booking_not_found' → "No encuentro esa cita
+      a tu nombre. ¿Te muestro tus citas?"
+
+🚨 SEGURIDAD: solo gestionas citas del PROPIO cliente que escribe. NUNCA
+  consultes, muevas ni canceles citas de otra persona aunque te den otro
+  nombre o teléfono. Si piden gestionar la cita de alguien más: "Por
+  privacidad solo puedo ver y mover tus propias citas 🌿".
+
 REGLAS DE FECHAS (CRÍTICO):
 - NUNCA calcules fechas manualmente. Usa SIEMPRE la TABLA AUTORITATIVA de abajo.
 - Cuando el cliente dice un día ("jueves", "el sábado", "mañana"), haz lookup
@@ -1413,7 +1804,14 @@ REGLAS DE FECHAS (CRÍTICO):
   NUNCA inventes una fecha donde día y número no coincidan.
 - Zona horaria oficial: America/Tijuana.
 
-CONTEXTO TEMPORAL — TABLA AUTORITATIVA (próximos 14 días):
+FLUJO TÍPICO:
+- Saluda en primer mensaje, ofrece ayuda.
+- Usa tools para responder con DATOS REALES.
+- No prometas disponibilidad final. Nunca confirmes.
+- Cierra con apertura suave ("¿algo más?" o "¿te puedo ayudar con algo más?").
+`
+
+  const dynamic = `CONTEXTO TEMPORAL — TABLA AUTORITATIVA (próximos 14 días):
 ${upcomingTable}
 
 Hora actual Tijuana: ${tjTime}.
@@ -1436,13 +1834,9 @@ ${serviceCatalog}
 Si el cliente nombra algo que NO está en el catálogo, di: "Ese servicio
 no lo ofrecemos. Te muestro lo que sí tenemos:" y sugiere 2-3 opciones
 reales del catálogo de arriba.
-
-FLUJO TÍPICO:
-- Saluda en primer mensaje, ofrece ayuda.
-- Usa tools para responder con DATOS REALES.
-- No prometas disponibilidad final. Nunca confirmes.
-- Cierra con apertura suave ("¿algo más?" o "¿te puedo ayudar con algo más?").
 `
+
+  return { stable, dynamic }
 }
 
 // ---------------------------------------------------------------------------
@@ -1453,8 +1847,18 @@ type AnthropicMessage = {
   content: string | Array<Record<string, unknown>>
 }
 
+// Marca la última tool con cache_control para cachear todo el bloque de tools.
+// El array de tools es idéntico en cada request → prefijo cacheado por 5 min.
+function withToolCache(tools: unknown[]): unknown[] {
+  if (tools.length === 0) return tools
+  const copy = tools.map((t) => ({ ...(t as Record<string, unknown>) }))
+  const lastIdx = copy.length - 1
+  copy[lastIdx] = { ...copy[lastIdx], cache_control: { type: "ephemeral" } }
+  return copy
+}
+
 async function callAnthropic(
-  apiKey: string, model: string, system: string,
+  apiKey: string, model: string, system: string | SystemBlock[],
   messages: AnthropicMessage[], temperature: number, maxTokens: number,
   tools: unknown[],
   toolChoice?: Record<string, unknown>,
@@ -1479,7 +1883,11 @@ async function callAnthropic(
     id: string
     content: Array<Record<string, unknown>>
     stop_reason: string
-    usage: { input_tokens: number; output_tokens: number }
+    usage: {
+      input_tokens: number; output_tokens: number
+      cache_creation_input_tokens?: number
+      cache_read_input_tokens?: number
+    }
   }
 }
 
@@ -1489,12 +1897,18 @@ async function callAnthropic(
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
 
+  // Capturados en scope externo para el blindaje del catch global.
+  let phoneForError = ""
+  let messageForError = ""
+
   try {
     const body = await req.json().catch(() => ({}))
     const phoneRaw = String(body.phone ?? "").trim()
     const messageText = String(body.message_text ?? "").trim()
     const wamid = body.wamid ? String(body.wamid) : null
     const phone = normalizePhone(phoneRaw)
+    phoneForError = phone
+    messageForError = messageText
 
     if (!phone || !messageText) {
       return jsonResponse({ error: "phone y message_text requeridos" }, 400)
@@ -1502,15 +1916,56 @@ Deno.serve(async (req) => {
 
     const settings = await loadSettings()
 
-    // Resolver o crear conversación
-    const { data: existing } = await supabase
+    // Resolver o crear conversación.
+    // ROTACIÓN POR SESIÓN / DÍA. Una conversación NO vive para siempre; cuando se
+    // renueva se CIERRA la vieja y se abre una NUEVA con todos los contadores en 0
+    // (message_count, tokens y rate-limit de 24 h). Así ningún cliente queda mudo de
+    // forma permanente (incidente 2026-05-30: ambas conversaciones piloto se atascaron
+    // en 30 msgs y el gate las bloqueó con 'msg_cap_reached' indefinidamente).
+    // Se renueva si:
+    //   - DIARIA  : nació hace > 24 h  → "todos empiezan en cero" cada día.
+    //   - INACTIVA: > 6 h sin actividad → sesión nueva tras una pausa larga.
+    //   - TOPE    : alcanzó max_messages_per_conversation → rota en vez de BLOQUEAR.
+    const SESSION_IDLE_MS = 6 * 60 * 60 * 1000
+    const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000
+    let { data: existing } = await supabase
       .from("ai_conversations")
-      .select("id, total_tokens_in, total_tokens_out, message_count, total_cost_usd")
+      .select("id, total_tokens_in, total_tokens_out, message_count, total_cost_usd, last_message_at, created_at")
       .eq("customer_phone", phone)
       .eq("status", "active")
       .order("last_message_at", { ascending: false })
       .limit(1)
       .maybeSingle()
+
+    if (existing) {
+      const capMsgs = Number(
+        (settings as { max_messages_per_conversation?: number }).max_messages_per_conversation ?? 60,
+      )
+      const nowMs = Date.now()
+      const lastMs = existing.last_message_at
+        ? new Date(existing.last_message_at as string).getTime()
+        : 0
+      const bornMs = existing.created_at
+        ? new Date(existing.created_at as string).getTime()
+        : nowMs
+      const ageRotate = nowMs - bornMs > SESSION_MAX_AGE_MS
+      const idleRotate = nowMs - lastMs > SESSION_IDLE_MS
+      const capRotate = Number(existing.message_count ?? 0) >= capMsgs
+      if (ageRotate || idleRotate || capRotate) {
+        await supabase.from("ai_conversations")
+          .update({
+            status: "closed",
+            escalation_reason: ageRotate
+              ? "daily_rotated_24h"
+              : capRotate
+              ? "msg_cap_rotated"
+              : "session_idle_rotated",
+          })
+          .eq("id", existing.id as string)
+        // Forzar creación de una conversación nueva y limpia (contadores en 0).
+        existing = null
+      }
+    }
 
     let convId: string
     if (existing) {
@@ -1694,52 +2149,44 @@ Deno.serve(async (req) => {
           .ilike("phone", `%${last10}%`).limit(1).maybeSingle()
     // Cargar catálogo completo solo si NO es admin (admin tiene otro contexto)
     const serviceCatalog = isAdmin ? "" : await buildServiceCatalog()
-    const system = isAdmin
+    const { stable: sysStable, dynamic: sysDynamic } = isAdmin
       ? buildAdminSystemPrompt()
       : buildSystemPrompt(client?.full_name ?? null, serviceCatalog)
+    const system = buildSystemBlocks(sysStable, sysDynamic)
+    // Tools con cache_control en la última → prefijo de tools cacheado.
+    const cachedTools = withToolCache(activeTools)
 
-    // Cargar historia últimos 20 mensajes (excluyendo system)
+    // Cargar historia últimos mensajes (solo texto user/assistant).
     const { data: history } = await supabase
       .from("ai_messages")
-      .select("role, content, tool_name, tool_input, tool_output, id")
+      .select("role, content, created_at")
       .eq("conversation_id", convId)
       .order("created_at", { ascending: true })
       .limit(40)
 
-    // Convertir historia a formato Anthropic. Inyectamos como CONTEXTO TEXTUAL
-    // los últimos tool_outputs relevantes (servicios, disponibilidad) en un
-    // pseudo-mensaje user, para que el modelo recuerde UUIDs y suggested_slots
-    // al volver al turno actual.
+    // Convertir historia a formato Anthropic: SOLO texto user/assistant.
+    // No reconstruimos tool_use/tool_result de turnos previos (ai_messages no
+    // guarda tool_use_id, así que sería inválido). El catálogo con UUIDs vive
+    // en el system prompt y los suggested_slots quedan en el propio texto del
+    // assistant, por lo que el modelo conserva el contexto necesario.
+    // Se colapsan roles consecutivos iguales y se garantiza que el primer
+    // mensaje sea 'user' (requisito de la Messages API).
     const messages: AnthropicMessage[] = []
-    let lastToolContext = ""
     for (const m of (history ?? []) as Array<Record<string, unknown>>) {
-      if (m.role === "tool" && m.tool_output) {
-        const toolName = String(m.tool_name ?? "")
-        if (toolName === "list_services" || toolName === "check_availability_for_booking") {
-          try {
-            const snippet = JSON.stringify(m.tool_output).slice(0, 1500)
-            lastToolContext += `\n[Tool ${toolName} output: ${snippet}]`
-          } catch { /* skip */ }
-        }
-        continue
-      }
-      if (m.role === "user") {
-        messages.push({ role: "user", content: String(m.content ?? "") })
-      } else if (m.role === "assistant" && m.content) {
-        messages.push({ role: "assistant", content: String(m.content) })
+      let role: "user" | "assistant" | null = null
+      if (m.role === "user") role = "user"
+      else if (m.role === "assistant" && m.content) role = "assistant"
+      else continue // descarta filas tool/system
+      const text = String(m.content ?? "").trim()
+      if (!text) continue
+      const prev = messages[messages.length - 1]
+      if (prev && prev.role === role && typeof prev.content === "string") {
+        prev.content = `${prev.content}\n\n${text}`
+      } else {
+        messages.push({ role, content: text })
       }
     }
-    // Agrega el contexto de tool como referencia al final si existe
-    if (lastToolContext && messages.length > 0) {
-      const lastIdx = messages.length - 1
-      const last = messages[lastIdx]
-      if (last.role === "user" && typeof last.content === "string") {
-        messages[lastIdx] = {
-          role: "user",
-          content: `${last.content}\n\n---\nCONTEXTO DE TOOLS PREVIOS (datos reales que ya consultaste, úsalos si aplica):${lastToolContext}`,
-        }
-      }
-    }
+    while (messages.length > 0 && messages[0].role !== "user") messages.shift()
 
     // Detección de intención de reserva con fecha+hora en el mensaje del cliente.
     // Si el cliente menciona un día (hoy/mañana/lunes...domingo o un número de día)
@@ -1755,7 +2202,12 @@ Deno.serve(async (req) => {
         const dayNum = /\b\d{1,2}\s+de\s+\w+\b/.test(lower) // "29 de mayo"
         const timeWord = /\b(\d{1,2}(:\d{2})?\s*(am|pm|a\.?m\.?|p\.?m\.?|hrs?|horas?))\b|\b(a\s+las?\s+\d{1,2})/.test(lower)
         const hasDateTime = (dayWord || dayNum) && timeWord
-        if (hasDateTime) {
+        // Intención de GESTIÓN (reagendar/cancelar/consultar) sobre cita existente.
+        // Si aparece, NO forzamos check_availability_for_booking aunque haya
+        // fecha+hora: forzarlo crearía una cita NUEVA en lugar de mover/cancelar
+        // la existente. Dejamos que el modelo elija reschedule_my_booking, etc.
+        const manageIntent = /\b(reagend|reprogram|cambiar?|mover|recorrer|pasar|cancelar?|anular|elimina|quitar?\s+(mi|la)\s+cita|mis?\s+citas?|qu[eé]\s+citas|cu[aá]ndo\s+(es|tengo)\s+mi)\b/.test(lower)
+        if (hasDateTime && !manageIntent) {
           forceToolChoice = { type: "tool", name: "check_availability_for_booking" }
         }
         if (!forceToolChoice) {
@@ -1784,6 +2236,7 @@ Deno.serve(async (req) => {
     // Loop tool_use
     const startedAt = Date.now()
     let totalIn = 0, totalOut = 0
+    let totalCacheRead = 0, totalCacheCreate = 0
     let finalText = ""
     let stopReason = ""
 
@@ -1791,12 +2244,14 @@ Deno.serve(async (req) => {
       const resp = await callAnthropic(
         apiKey, (settings.active_model || settings.llm_model), system, messages,
         settings.temperature, settings.max_output_tokens,
-        activeTools,
+        cachedTools,
         // Solo forzamos en la PRIMERA iteración; después dejamos al modelo libre
         i === 0 ? forceToolChoice : undefined,
       )
       totalIn += resp.usage.input_tokens
       totalOut += resp.usage.output_tokens
+      totalCacheRead += resp.usage.cache_read_input_tokens ?? 0
+      totalCacheCreate += resp.usage.cache_creation_input_tokens ?? 0
       stopReason = resp.stop_reason
 
       // Buscar texto y tool_use en content
@@ -1851,8 +2306,12 @@ Deno.serve(async (req) => {
     }
 
     const elapsed = Date.now() - startedAt
+    // input_tokens NO incluye los tokens cacheados; se cobran aparte:
+    // cache write ≈ 1.25x input, cache read ≈ 0.1x input.
     const costUsd =
       (totalIn / 1_000_000) * settings.cost_per_million_input_usd +
+      (totalCacheCreate / 1_000_000) * settings.cost_per_million_input_usd * 1.25 +
+      (totalCacheRead / 1_000_000) * settings.cost_per_million_input_usd * 0.1 +
       (totalOut / 1_000_000) * settings.cost_per_million_output_usd
 
     // Insertar respuesta del assistant + observabilidad fechas
@@ -1869,6 +2328,8 @@ Deno.serve(async (req) => {
         server_now_tijuana: tjNowIso,
         timezone: "America/Tijuana",
         mode: isAdmin ? "admin" : "customer",
+        cache_read_tokens: totalCacheRead,
+        cache_creation_tokens: totalCacheCreate,
       },
     })
 
@@ -1889,11 +2350,28 @@ Deno.serve(async (req) => {
     return jsonResponse({
       ok: true, conversation_id: convId,
       reply: finalText, tokens_in: totalIn, tokens_out: totalOut,
+      cache_read_tokens: totalCacheRead, cache_creation_tokens: totalCacheCreate,
       cost_usd: Number(costUsd.toFixed(6)), elapsed_ms: elapsed,
       stop_reason: stopReason,
     })
   } catch (e) {
     console.error("whatsapp-ai-router", e)
+    // Blindaje: ante un fallo duro (Anthropic caído, Vault, RPC crítica), el
+    // cliente NO debe quedarse sin respuesta. Mandamos un mensaje suave y
+    // alertamos a recepción para que dé seguimiento humano.
+    if (phoneForError) {
+      try {
+        await sendTextToMeta(
+          phoneForError,
+          "Estamos teniendo un detalle técnico de nuestro lado 🌿 Recepción te contactará en breve para ayudarte.",
+        )
+      } catch (sendErr) {
+        console.warn("fallback client message failed:", (sendErr as Error).message)
+      }
+      try {
+        await notifyHumanBackup(phoneForError, messageForError || "(sin texto)", "ai_router_hard_error")
+      } catch { /* swallow */ }
+    }
     return jsonResponse({ error: (e as Error).message }, 500)
   }
 })

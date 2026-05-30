@@ -87,6 +87,19 @@ async function hmacSha256Hex(secret: string, payload: string) {
   return toHex(sig)
 }
 
+// Convierte un timestamp de Meta (segundos unix) a ISO de forma segura.
+// Si viene ausente o no numérico, usa la hora actual. Evita que un timestamp
+// malformado dispare `RangeError: Invalid time value` (que tumbaba el webhook).
+function toIsoTimestamp(tsRaw: string | number | null | undefined): string {
+  if (tsRaw === undefined || tsRaw === null || tsRaw === "") {
+    return new Date().toISOString()
+  }
+  const ms = Number(tsRaw) * 1000
+  if (!Number.isFinite(ms)) return new Date().toISOString()
+  const d = new Date(ms)
+  return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString()
+}
+
 async function logEvent(
   supabase: ReturnType<typeof createClient>,
   row: WebhookEventRow,
@@ -269,9 +282,7 @@ async function handlePost(req: Request) {
         const messageId = (status.id as string | undefined) ?? null
         const statusName = (status.status as string | undefined) ?? null
         const tsRaw = status.timestamp as string | number | undefined
-        const ts = tsRaw
-          ? new Date(Number(tsRaw) * 1000).toISOString()
-          : new Date().toISOString()
+        const ts = toIsoTimestamp(tsRaw)
         const recipient =
           (status.recipient_id as string | undefined) ?? null
         const errors = status.errors as Array<Record<string, unknown>> | undefined
@@ -296,12 +307,24 @@ async function handlePost(req: Request) {
         })
 
         if (messageId && statusName) {
-          await supabase.rpc("apply_whatsapp_status_event", {
-            p_message_id: messageId,
-            p_status: statusName,
-            p_timestamp: ts,
-            p_error: errMsg,
-          }).catch((err) => console.error("apply_whatsapp_status_event", err))
+          // NOTA: el builder de supabase.rpc() en supabase-js v2 es "thenable"
+          // pero NO expone .catch() => usar try/catch + await (un .catch aquí
+          // lanzaba "supabase.rpc(...).catch is not a function" y tumbaba el
+          // webhook ante cada evento de status de Meta).
+          try {
+            const { error: statusErr } = await supabase.rpc(
+              "apply_whatsapp_status_event",
+              {
+                p_message_id: messageId,
+                p_status: statusName,
+                p_timestamp: ts,
+                p_error: errMsg,
+              },
+            )
+            if (statusErr) console.error("apply_whatsapp_status_event", statusErr)
+          } catch (err) {
+            console.error("apply_whatsapp_status_event threw", err)
+          }
         }
       }
 
@@ -385,10 +408,36 @@ serve(async (req) => {
     if (req.method === "POST") return await handlePost(req)
     return jsonResponse({ error: "Method not allowed" }, 405)
   } catch (error) {
+    const message = (error as Error)?.message ?? "Unhandled error"
     console.error("whatsapp-webhook fatal", error)
-    return jsonResponse(
-      { error: (error as Error)?.message ?? "Unhandled error" },
-      500,
-    )
+    // Para los POST de Meta SIEMPRE confirmamos con 200, aunque el procesamiento
+    // falle. Un 500 hace que Meta reintente el MISMO payload en bucle (tormenta
+    // de reintentos) y bloquea la recepción de TODOS los mensajes hasta que el
+    // payload "venenoso" expire. Registramos el error para diagnóstico pero no
+    // bloqueamos el canal. (event_kind='error' + signature_valid=false => el
+    // trigger invoke_ai_router_for_message no se dispara.)
+    if (req.method === "POST") {
+      try {
+        await adminClient()
+          .from("whatsapp_webhook_events")
+          .insert({
+            branch_id: DEFAULT_BRANCH_ID,
+            environment: "sandbox",
+            event_kind: "error",
+            event_subtype: "handler_exception",
+            message_id: null,
+            phone_number_id: null,
+            waba_id: null,
+            from_phone: null,
+            to_phone: null,
+            signature_valid: false,
+            http_status: 200,
+            raw_payload: { handler_error: message },
+            error_message: message,
+          })
+      } catch (_) { /* no-op: nunca dejar que el log tumbe la respuesta */ }
+      return jsonResponse({ ok: false, error: message }, 200)
+    }
+    return jsonResponse({ error: message }, 500)
   }
 })

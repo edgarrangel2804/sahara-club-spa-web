@@ -7594,6 +7594,14 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
   int get _selectedServiceDuration =>
       (_selectedService?['duration'] as num?)?.toInt() ?? 60;
 
+  // Hora de termino = inicio + duracion del servicio. Solo para mostrar.
+  String get _endTimeLabel {
+    final totalMin = _hour * 60 + _minute + _selectedServiceDuration;
+    final endH = (totalMin ~/ 60) % 24;
+    final endM = totalMin % 60;
+    return '${endH.toString().padLeft(2, '0')}:${endM.toString().padLeft(2, '0')}';
+  }
+
   String get _selectedServiceName => _selectedService?['name'] as String? ?? '';
 
   List<int> get _availableHours => widget.calendarHours.selectableHours;
@@ -8200,6 +8208,15 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
                                         ),
                                       ),
                                     ],
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    'Termina $_endTimeLabel  ·  $_selectedServiceDuration min',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 12,
+                                      color: Colors.black45,
+                                      fontWeight: FontWeight.w500,
+                                    ),
                                   ),
                                 ],
                               ),

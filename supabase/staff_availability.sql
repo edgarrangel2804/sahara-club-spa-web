@@ -214,6 +214,12 @@ declare
   v_room_capacity int := 3;
   v_room_count int := 0;
   v_suggested_slots jsonb := '[]'::jsonb;
+  -- Extension de jornada: recepcion/admin puede agendar hasta 1h despues del
+  -- cierre del negocio y de la jornada del terapeuta. No bloquea: avisa.
+  v_grace_min int := 60;
+  v_close_min int;
+  v_staff_end_min int;
+  v_extended boolean := false;
 begin
   v_duration := coalesce(nullif(p_duration_minutes, 0), 60);
   v_end_at := p_starts_at + make_interval(mins => v_duration);
@@ -256,8 +262,19 @@ begin
     return jsonb_build_object('available', false, 'reason', 'business_closed', 'details', 'El negocio esta cerrado ese dia.', 'suggested_slots', v_suggested_slots);
   end if;
 
-  if v_time < v_business.opens_at or (v_time + make_interval(mins => v_duration))::time > v_business.closes_at or v_end_min > 1440 then
+  v_close_min := extract(hour from v_business.closes_at)::int * 60 + extract(minute from v_business.closes_at)::int;
+
+  -- No se puede iniciar antes de abrir ni cruzar la medianoche.
+  if v_time < v_business.opens_at or v_end_min > 1440 then
     return jsonb_build_object('available', false, 'reason', 'outside_business_hours', 'details', 'El horario queda fuera del horario del negocio.', 'opens_at', v_business.opens_at::text, 'closes_at', v_business.closes_at::text, 'suggested_slots', v_suggested_slots);
+  end if;
+
+  -- Si termina despues del cierre, se permite solo dentro de la 1h de gracia.
+  if v_end_min > v_close_min then
+    if v_end_min > v_close_min + v_grace_min then
+      return jsonb_build_object('available', false, 'reason', 'outside_business_hours', 'details', 'El horario queda fuera del horario del negocio.', 'opens_at', v_business.opens_at::text, 'closes_at', v_business.closes_at::text, 'suggested_slots', v_suggested_slots);
+    end if;
+    v_extended := true;
   end if;
 
   select * into v_work
@@ -273,8 +290,19 @@ begin
     return jsonb_build_object('available', false, 'reason', 'staff_not_working_day', 'details', 'El terapeuta no trabaja ese dia.', 'suggested_slots', v_suggested_slots);
   end if;
 
-  if v_time < v_work.starts_at or (v_time + make_interval(mins => v_duration))::time > v_work.ends_at or v_end_min > 1440 then
+  v_staff_end_min := extract(hour from v_work.ends_at)::int * 60 + extract(minute from v_work.ends_at)::int;
+
+  -- No se puede iniciar antes de que entre el terapeuta.
+  if v_time < v_work.starts_at then
     return jsonb_build_object('available', false, 'reason', 'outside_staff_hours', 'details', 'El horario queda fuera de la jornada del terapeuta.', 'starts_at', v_work.starts_at::text, 'ends_at', v_work.ends_at::text, 'suggested_slots', v_suggested_slots);
+  end if;
+
+  -- Si termina despues de su jornada, se permite solo dentro de la 1h de gracia.
+  if v_end_min > v_staff_end_min then
+    if v_end_min > v_staff_end_min + v_grace_min then
+      return jsonb_build_object('available', false, 'reason', 'outside_staff_hours', 'details', 'El horario queda fuera de la jornada del terapeuta.', 'starts_at', v_work.starts_at::text, 'ends_at', v_work.ends_at::text, 'suggested_slots', v_suggested_slots);
+    end if;
+    v_extended := true;
   end if;
 
   if v_work.break_starts_at is not null
@@ -326,20 +354,48 @@ begin
   where branch_id = p_branch_id
   limit 1;
 
-  select count(*) into v_room_count
-  from public.bookings b
-  where coalesce(b.sucursal_id, p_branch_id) = p_branch_id
-    and b.booking_date = v_date
-    and (p_exclude_booking_id is null or b.id <> p_exclude_booking_id)
-    and b.status in ('pending','pending_reception','scheduled','confirmed','rescheduled','checked_in','in_progress','awaiting_payment','pending_payment','payment_received')
-    and (extract(hour from b.booking_time)::int * 60 + extract(minute from b.booking_time)::int) < v_end_min
-    and (extract(hour from b.booking_time)::int * 60 + extract(minute from b.booking_time)::int + coalesce(b.duration_min, 60)) > v_start_min;
+  -- Cuartos ocupados = PICO de citas simultaneas dentro de la ventana de la
+  -- nueva cita (peak concurrency). El pico siempre ocurre en el inicio de algun
+  -- intervalo, asi que basta evaluar esos puntos (mas el inicio de la ventana).
+  with ov as (
+    select
+      (extract(hour from b.booking_time)::int * 60 + extract(minute from b.booking_time)::int) as s,
+      (extract(hour from b.booking_time)::int * 60 + extract(minute from b.booking_time)::int + coalesce(b.duration_min, 60)) as e
+    from public.bookings b
+    where coalesce(b.sucursal_id, p_branch_id) = p_branch_id
+      and b.booking_date = v_date
+      and (p_exclude_booking_id is null or b.id <> p_exclude_booking_id)
+      and b.status in ('pending','pending_reception','scheduled','confirmed','rescheduled','checked_in','in_progress','awaiting_payment','pending_payment','payment_received')
+      and (extract(hour from b.booking_time)::int * 60 + extract(minute from b.booking_time)::int) < v_end_min
+      and (extract(hour from b.booking_time)::int * 60 + extract(minute from b.booking_time)::int + coalesce(b.duration_min, 60)) > v_start_min
+  ),
+  pts as (
+    select v_start_min as t
+    union
+    select greatest(s, v_start_min) from ov
+  )
+  select coalesce(max(cnt), 0) into v_room_count
+  from (
+    select p.t, count(*) as cnt
+    from pts p
+    join ov o on o.s <= p.t and o.e > p.t
+    group by p.t
+  ) peak;
 
   if v_room_count >= v_room_capacity then
     return jsonb_build_object('available', false, 'reason', 'room_capacity_full', 'details', 'No hay cuartos disponibles para ese horario.', 'room_capacity', v_room_capacity, 'overlapping_bookings', v_room_count, 'suggested_slots', v_suggested_slots);
   end if;
 
-  return jsonb_build_object('available', true, 'reason', 'ok', 'details', 'Disponible.', 'staff_id', p_staff_id, 'service_duration_min', v_duration, 'suggested_slots', '[]'::jsonb);
+  return jsonb_build_object(
+    'available', true,
+    'reason', case when v_extended then 'ok_extended' else 'ok' end,
+    'details', 'Disponible.',
+    'staff_id', p_staff_id,
+    'service_duration_min', v_duration,
+    'extended', v_extended,
+    'notice', case when v_extended then 'El horario de trabajo se extenderá una hora más.' else null end,
+    'suggested_slots', '[]'::jsonb
+  );
 end;
 $$;
 
