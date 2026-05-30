@@ -7547,6 +7547,10 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
   late DateTime _date;
   late int _hour;
   late int _minute;
+  // Duracion personalizada en minutos. Si es null, se usa la duracion del
+  // servicio. Permite agendar mas (o distinto) tiempo del que dura el servicio
+  // —por ejemplo bloquear 2h para un servicio de 1h.
+  int? _customDurationMin;
   String? _clientId;
   String? _therapistId;
   String? _sucursalId;
@@ -7594,12 +7598,43 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
   int get _selectedServiceDuration =>
       (_selectedService?['duration'] as num?)?.toInt() ?? 60;
 
-  // Hora de termino = inicio + duracion del servicio. Solo para mostrar.
-  String get _endTimeLabel {
-    final totalMin = _hour * 60 + _minute + _selectedServiceDuration;
-    final endH = (totalMin ~/ 60) % 24;
-    final endM = totalMin % 60;
-    return '${endH.toString().padLeft(2, '0')}:${endM.toString().padLeft(2, '0')}';
+  // Duracion efectiva de la reserva: la personalizada si el usuario movio la
+  // hora de fin, si no la del servicio.
+  int get _effectiveDuration => _customDurationMin ?? _selectedServiceDuration;
+
+  // Minuto absoluto del dia en que comienza / termina la reserva.
+  int get _startTotalMin => _hour * 60 + _minute;
+  int get _endTotalMin => _startTotalMin + _effectiveDuration;
+  int get _endHour => (_endTotalMin ~/ 60) % 24;
+  int get _endMinute => _endTotalMin % 60;
+
+  // Opciones del selector de hora de fin: desde la primera hora disponible
+  // hasta las 23h, garantizando que la hora actual de fin siempre exista.
+  List<int> get _endHourItems {
+    final startH = _availableHours.isNotEmpty ? _availableHours.first : 0;
+    final set = <int>{for (int h = startH; h <= 23; h++) h, _endHour};
+    final list = set.toList()..sort();
+    return list;
+  }
+
+  // Minutos en cuartos de hora, mas el minuto actual de fin por si el servicio
+  // termina en un minuto fuera de la rejilla (ej. servicio de 50 min -> :50).
+  List<int> get _endMinuteItems {
+    final set = <int>{0, 15, 30, 45, _endMinute};
+    final list = set.toList()..sort();
+    return list;
+  }
+
+  // El usuario eligio una nueva hora de fin -> recalcula la duracion.
+  void _setEndTime({int? hour, int? minute}) {
+    final h = hour ?? _endHour;
+    final m = minute ?? _endMinute;
+    var endAbs = h * 60 + m;
+    // La hora de fin debe quedar despues del inicio; minimo 15 min.
+    if (endAbs <= _startTotalMin) {
+      endAbs = _startTotalMin + 15;
+    }
+    setState(() => _customDurationMin = endAbs - _startTotalMin);
   }
 
   String get _selectedServiceName => _selectedService?['name'] as String? ?? '';
@@ -7644,6 +7679,10 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
         ? (widget.editBooking?.sucursalId ?? widget.initialBranchId)
         : kDefaultBranchId;
     _serviceId = widget.editBooking?.serviceId;
+    // Al editar, preservamos la duracion real de la cita (puede diferir de la
+    // del servicio si se extendio manualmente). En cita nueva queda null y se
+    // toma la duracion del servicio.
+    _customDurationMin = widget.editBooking?.durationMinutes;
     // Cita nueva: nace 'scheduled' (Agendada). Recepción la pasa a 'confirmed'
     // cuando se valida (botón "Confirmar cita" del detalle).
     _status = widget.editBooking?.status ?? 'scheduled';
@@ -7698,105 +7737,6 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
         setState(() => _serviceLoadError = '$e');
       }
     }
-  }
-
-  void _showRepeatDialog(BuildContext ctx) {
-    showDialog(
-      context: ctx,
-      builder: (_) => Dialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 360),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      'Repetir reserva',
-                      style: GoogleFonts.inter(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.black87,
-                      ),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      icon: const Icon(
-                        Icons.close,
-                        size: 18,
-                        color: Colors.black38,
-                      ),
-                      onPressed: () => Navigator.pop(ctx),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                ...[
-                  ('Ninguna', Icons.block_outlined),
-                  ('Diaria', Icons.today_outlined),
-                  ('Semanal', Icons.view_week_outlined),
-                  ('Mensual', Icons.calendar_month_outlined),
-                ].map(
-                  (opt) => ListTile(
-                    dense: true,
-                    leading: Icon(opt.$2, size: 18, color: Colors.black45),
-                    title: Text(
-                      opt.$1,
-                      style: GoogleFonts.inter(
-                        fontSize: 13,
-                        color: Colors.black87,
-                      ),
-                    ),
-                    onTap: () => Navigator.pop(ctx),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: SaharaTheme.gold.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color: SaharaTheme.gold.withValues(alpha: 0.3),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.info_outline,
-                        size: 14,
-                        color: SaharaTheme.gold,
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          'Reservas recurrentes disponibles en la próxima versión.',
-                          style: GoogleFonts.inter(
-                            fontSize: 11,
-                            color: SaharaTheme.gold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
   }
 
   Future<Iterable<Map<String, dynamic>>> _searchClients(
@@ -7881,7 +7821,7 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
         serviceName: _selectedServiceName,
         bookingDate: _date,
         bookingTime: timeStr,
-        durationMinutes: _selectedServiceDuration,
+        durationMinutes: _effectiveDuration,
         status: _status,
         notes: _notesCtrl.text.trim(),
         sourcePlatform: kIsWeb ? 'web' : 'mobile',
@@ -8168,50 +8108,56 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
                                         onChanged: (v) =>
                                             setState(() => _minute = v),
                                       ),
-                                      const SizedBox(width: 10),
-                                      InkWell(
-                                        onTap: () => _showRepeatDialog(context),
-                                        borderRadius: BorderRadius.circular(6),
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 10,
-                                            vertical: 8,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            border: Border.all(
-                                              color: const Color(0xFFDDD9D3),
-                                            ),
-                                            borderRadius: BorderRadius.circular(
-                                              6,
-                                            ),
-                                            color: Colors.white,
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              const Icon(
-                                                Icons.repeat,
-                                                size: 14,
-                                                color: Colors.black45,
-                                              ),
-                                              const SizedBox(width: 4),
-                                              Text(
-                                                'Repetir',
-                                                style: GoogleFonts.inter(
-                                                  fontSize: 12,
-                                                  color: Colors.black54,
-                                                  fontWeight: FontWeight.w500,
-                                                ),
-                                              ),
-                                            ],
+                                      const SizedBox(width: 14),
+                                      // Etiqueta "Termina" + selector de hora de
+                                      // fin editable. Permite agendar mas (o
+                                      // distinto) tiempo del que dura el servicio.
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          right: 8,
+                                        ),
+                                        child: Text(
+                                          'Termina',
+                                          style: GoogleFonts.inter(
+                                            fontSize: 12,
+                                            color: Colors.black45,
+                                            fontWeight: FontWeight.w600,
                                           ),
                                         ),
+                                      ),
+                                      _TimeDropdown(
+                                        value: _endHour,
+                                        items: _endHourItems,
+                                        onChanged: (v) =>
+                                            _setEndTime(hour: v),
+                                      ),
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 4,
+                                        ),
+                                        child: Text(
+                                          ':',
+                                          style: GoogleFonts.inter(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w600,
+                                            color: Colors.black54,
+                                          ),
+                                        ),
+                                      ),
+                                      _TimeDropdown(
+                                        value: _endMinute,
+                                        items: _endMinuteItems,
+                                        label: (v) =>
+                                            v.toString().padLeft(2, '0'),
+                                        onChanged: (v) =>
+                                            _setEndTime(minute: v),
                                       ),
                                     ],
                                   ),
                                   const SizedBox(height: 6),
                                   Text(
-                                    'Termina $_endTimeLabel  ·  $_selectedServiceDuration min',
+                                    'Duración $_effectiveDuration min'
+                                    '${_customDurationMin != null && _customDurationMin != _selectedServiceDuration ? '  ·  servicio $_selectedServiceDuration min' : ''}',
                                     style: GoogleFonts.inter(
                                       fontSize: 12,
                                       color: Colors.black45,
@@ -8596,6 +8542,10 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
                                         _serviceId = s['id'] as String;
                                         _serviceOpen = false;
                                         _serviceSearch = '';
+                                        // Al elegir servicio, la hora de fin
+                                        // vuelve a seguir su duracion (se quita
+                                        // cualquier extension manual previa).
+                                        _customDurationMin = null;
                                       }),
                                       child: Container(
                                         padding: const EdgeInsets.symmetric(
