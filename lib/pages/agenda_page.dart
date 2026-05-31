@@ -6388,6 +6388,13 @@ class _BookingDetailDialog extends StatelessWidget {
               // Details
               _DetailRow(icon: Icons.schedule, text: '${b.timeLabel} - ${b.endTimeLabel}'),
               _DetailRow(icon: Icons.timer, text: '${b.durationMinutes} min'),
+              // Precio del servicio (total), distinto del anticipo. Recepción lo
+              // necesita de un vistazo para cobrar el resto.
+              if (b.servicePrice > 0)
+                _DetailRow(
+                  icon: Icons.sell_outlined,
+                  text: 'Servicio: \$${b.servicePrice.toStringAsFixed(0)} MXN',
+                ),
               _DetailRow(
                 icon: Icons.person,
                 text: hasAssignedTherapist ? b.therapistName : 'Sin asignar',
@@ -6495,7 +6502,12 @@ class _BookingDetailDialog extends StatelessWidget {
                       onTap: onViewTicket,
                     ),
                   _DialogBtn(
-                    label: 'Reagendar',
+                    // Abre el formulario completo de la cita (prellenado):
+                    // servicio, terapeuta, fecha, hora, duración, estatus y
+                    // notas. Es el mismo dialog de creación en modo "Editar
+                    // reserva". Antes se llamaba "Reagendar", lo que daba a
+                    // entender que solo movía fecha/hora.
+                    label: 'Editar',
                     color: SaharaTheme.gold,
                     onTap: () {
                       Navigator.pop(context);
@@ -6519,9 +6531,25 @@ class _BookingDetailDialog extends StatelessWidget {
                   _DialogBtn(
                     label: 'Abrir chat',
                     color: const Color(0xFF2088D8),
-                    onTap: () {
+                    onTap: () async {
+                      // Abre la conversación en el WhatsApp del operador
+                      // (app de escritorio / WhatsApp Web ya abierto en la
+                      // máquina). Usamos un deep link wa.me en lugar del chat
+                      // interno para que caiga directo en el WhatsApp de Edgar.
+                      final raw = b.clientPhone ?? '';
+                      var phone = raw.replaceAll(RegExp(r'\D'), '');
+                      if (phone.length == 10) phone = '52$phone'; // MX por defecto
+                      if (phone.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('El cliente no tiene teléfono registrado'),
+                          ),
+                        );
+                        return;
+                      }
                       Navigator.pop(context);
-                      onOpenChat();
+                      final url = Uri.parse('https://wa.me/$phone');
+                      await launchUrl(url, mode: LaunchMode.externalApplication);
                     },
                   ),
                   if (b.status == 'paid')
@@ -7841,11 +7869,12 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
         );
       }
 
-      // Aviso operativo. Las citas nacen 'scheduled' (Agendada) y no disparan
-      // WhatsApp automático — recepción debe confirmarlas con el botón
-      // "Confirmar cita" del detalle para que se envíe la notificación.
-      // Si recepción cambió el badge a 'confirmed' antes de guardar, el
-      // trigger handle_booking_whatsapp_events encola el mensaje al insertar.
+      // Aviso operativo. Las citas presenciales nacen 'scheduled' (Agendada) con
+      // booking_source='reception', y el trigger handle_booking_whatsapp_events
+      // YA le manda al cliente "tu cita ha sido agendada" automáticamente al
+      // insertar (tarea #21). Confirmarla desde el detalle envía un SEGUNDO
+      // mensaje distinto ("confirmada"). Si recepción cambió el badge a
+      // 'confirmed' antes de guardar, el trigger encola directo el de confirmada.
       if (mounted && result != null && widget.editBooking == null) {
         final isConfirmed = _status == 'confirmed';
         ScaffoldMessenger.of(context).showSnackBar(
@@ -7853,7 +7882,7 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
             content: Text(
               isConfirmed
                   ? '✓ Cita confirmada. WhatsApp enviado al cliente.'
-                  : 'ℹ Cita agendada. Confírmala desde el detalle para notificar al cliente.',
+                  : 'ℹ Cita agendada. Ya avisamos al cliente por WhatsApp. Confírmala desde el detalle cuando esté lista.',
             ),
             backgroundColor: isConfirmed
                 ? const Color(0xFF5DAA6E)

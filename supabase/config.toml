@@ -26,3 +26,8 @@ verify_jwt = false
 # Validación interna: el booking debe existir y estar en pending_payment.
 [functions.create_appointment_deposit_payment_intent]
 verify_jwt = false
+
+# Creador puntual de plantillas Meta. Sin JWT pero protegido por TEMPLATE_SETUP_KEY
+# (header x-setup-key / query ?k=). Se invoca server-to-server con la llave.
+[functions.create_meta_template]
+verify_jwt = false

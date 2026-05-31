@@ -509,6 +509,27 @@ type ToolContext = {
   messageText?: string | null
 }
 
+// "Ahora" en zona Tijuana, como wall-clock (mismo truco que buildSystemPrompt).
+// En un server UTC (Deno Deploy) toISOString/toTimeString devuelven la hora de
+// pared de Tijuana, no UTC. Las usamos solo para comparar contra fecha/hora pedida.
+function tjNowParts(): { date: string; time: string } {
+  const tjNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Tijuana" }))
+  return {
+    date: tjNow.toISOString().slice(0, 10),
+    time: tjNow.toTimeString().slice(0, 5),
+  }
+}
+
+// Guard determinista: ¿la fecha/hora solicitada ya pasó en Tijuana?
+// No dependemos de que el modelo razone bien las fechas; bloqueamos a nivel código.
+// Comparación lexicográfica de "YYYY-MM-DDTHH:MM" (ambos en hora de pared Tijuana).
+function isPastTjDateTime(date: string, time: string): boolean {
+  if (!date) return false
+  const t = (time && time.length >= 5) ? time.slice(0, 5) : (time || "00:00")
+  const { date: nowDate, time: nowTime } = tjNowParts()
+  return `${date}T${t}` < `${nowDate}T${nowTime}`
+}
+
 async function execTool(
   name: string,
   input: Record<string, unknown>,
@@ -656,6 +677,20 @@ async function execTool(
       const time = String(input.requested_time ?? "").trim()
       if (!serviceId || !date || !time) {
         return { error: "missing_service_or_datetime" }
+      }
+      // 🛡️ Nunca agendar en el pasado. Si la fecha/hora ya pasó en Tijuana,
+      // no consultamos disponibilidad ni creamos booking: pedimos otra hora.
+      if (isPastTjDateTime(date, time)) {
+        const tjNow = tjNowParts()
+        return {
+          error: "past_datetime",
+          available: false,
+          requested_date: date,
+          requested_time: time,
+          server_now_date: tjNow.date,
+          server_now_time: tjNow.time,
+          note: "La fecha/hora solicitada ya pasó en zona Tijuana. Pide al cliente un día/hora futuros.",
+        }
       }
       const timeNorm = time.length === 5 ? `${time}:00` : time
       const requestedStaffId = await resolveRequestedStaffId(input, ctx.messageText)
@@ -861,6 +896,17 @@ async function execTool(
       const time = String(input.booking_time ?? "").trim()
       if (!serviceId || !date || !time) {
         return { error: "missing_service_or_datetime" }
+      }
+      // 🛡️ Defensa en profundidad: jamás crear una cita en el pasado (Tijuana).
+      if (isPastTjDateTime(date, time)) {
+        const tjNow = tjNowParts()
+        return {
+          ok: false,
+          error: "past_datetime",
+          server_now_date: tjNow.date,
+          server_now_time: tjNow.time,
+          note: "La fecha/hora ya pasó en zona Tijuana. Pide al cliente un día/hora futuros antes de crear la cita.",
+        }
       }
       // Normalizar HH:MM → HH:MM:00 para tipo time
       const timeNorm = time.length === 5 ? `${time}:00` : time
@@ -1802,6 +1848,19 @@ REGLAS DE FECHAS (CRÍTICO):
   jueves NO es 30 según la tabla, PREGUNTA al cliente: "¿Te refieres al
   jueves [fecha real] o al sábado [fecha real, si el 30 es sábado]?".
   NUNCA inventes una fecha donde día y número no coincidan.
+- 🚫 NUNCA agendes en el PASADO. Una cita siempre es a FUTURO.
+- DÍA DE LA SEMANA AMBIGUO: si HOY es el mismo día que pide el cliente
+  (ej. hoy es sábado y dice "el sábado"), NO asumas que es hoy. Si el
+  cliente dio también un número/fecha (ej. "sábado 6 de junio"), usa esa
+  fecha exacta de la tabla. Si solo dijo el nombre del día sin número y la
+  hora de hoy para ese día ya pasó, entiéndelo como el PRÓXIMO [día] (la
+  siguiente ocurrencia en la tabla), o PREGUNTA: "¿Te refieres a hoy [fecha]
+  o al próximo [día] [fecha]?". Nunca lo agendes hoy si la hora ya pasó.
+- HORA YA PASADA HOY: si el cliente pide una hora de HOY que ya pasó según
+  "Hora actual Tijuana", NO la agendes. Ofrece una hora más tarde de hoy o
+  el siguiente día disponible.
+- Si check_availability_for_booking devuelve error="past_datetime", NO
+  insistas: discúlpate brevemente y pide al cliente una fecha/hora futura.
 - Zona horaria oficial: America/Tijuana.
 
 FLUJO TÍPICO:
