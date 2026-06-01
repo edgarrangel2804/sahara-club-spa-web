@@ -165,24 +165,34 @@ export function bodyParamsForTemplateKey(
     case "reservation_rescheduled":
       return [v("nombre_cliente"), v("fecha_reserva"), v("hora_reserva"), v("nombre_terapeuta")]
     case "welcome":
+    case "first_visit":
+      // En DB el template_key se renombró welcome -> first_visit
+      // (bienvenida_cliente). Cubrimos ambas claves por compatibilidad.
       return [v("nombre_cliente")]
     case "payment_pending":
       // Plantilla Meta pago_pendiente: {{1}} nombre, {{2}} monto, {{3}} concepto.
       // Antes mandábamos codigo_reserva / link_pago que ni siquiera existen como
       // placeholders en la plantilla aprobada — Meta rechazaba con 131008.
       return [v("nombre_cliente"), v("monto"), v("concepto")]
-    case "payment_received_admin":
-      // Plantilla Meta pago_anticipo_recibido. Es una ALERTA A ADMINS, no al
-      // cliente. {{1}} nombre del cliente, {{2}} teléfono del cliente,
-      // {{3}} servicio, {{4}} fecha legible "sábado 6 de junio a las 12:00",
-      // {{5}} monto. Routing va por payload.telefono (el del admin).
+    case "payment_received_admin": {
+      // Plantilla Meta pago_anticipo_recibido (APPROVED, 6 placeholders). Es una
+      // ALERTA A ADMINS, no al cliente. El cuerpo aprobado en Meta es:
+      //   Cliente: {{1}} / Teléfono: {{2}} / Servicio: {{3}}
+      //   Fecha: {{4}} a las {{5}} / Monto: ${{6}} MXN
+      // Por eso {{4}} es la fecha SIN hora y {{6}} es solo el número (la
+      // plantilla ya pone el "$ … MXN"). Routing va por payload.telefono (admin).
+      const fechaHora = v("fecha_hora") // "sábado 6 de junio a las 12:00"
+      const fechaLegible = fechaHora.replace(/\s+a las\s+\d{1,2}:\d{2}.*$/i, "").trim()
+      const montoNumero = v("monto").replace(/[^\d.]/g, "") // "$200 MXN" -> "200"
       return [
         v("nombre_completo_cliente"),
         v("telefono_cliente"),
         v("nombre_servicio"),
-        v("fecha_hora"),
-        v("monto"),
+        fechaLegible || v("fecha_reserva"),
+        v("hora_reserva"),
+        montoNumero || v("monto"),
       ]
+    }
     default:
       return []
   }

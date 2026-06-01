@@ -78,7 +78,7 @@ Deno.serve(async (req) => {
     if (req.method === "GET" || action === "status") {
       const qs = nameFilter ? `&name=${encodeURIComponent(nameFilter)}` : ""
       const res = await fetch(
-        `https://graph.facebook.com/v21.0/${wabaIdEarly}/message_templates?fields=name,status,category,language&limit=100${qs}`,
+        `https://graph.facebook.com/v21.0/${wabaIdEarly}/message_templates?fields=name,status,category,language,components&limit=100${qs}`,
         { headers: { Authorization: `Bearer ${settings.accessToken}` } },
       )
       const data = await res.json().catch(() => ({}))
