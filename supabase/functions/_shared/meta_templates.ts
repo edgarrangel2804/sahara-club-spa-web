@@ -171,6 +171,18 @@ export function bodyParamsForTemplateKey(
       // Antes mandábamos codigo_reserva / link_pago que ni siquiera existen como
       // placeholders en la plantilla aprobada — Meta rechazaba con 131008.
       return [v("nombre_cliente"), v("monto"), v("concepto")]
+    case "payment_received_admin":
+      // Plantilla Meta pago_anticipo_recibido. Es una ALERTA A ADMINS, no al
+      // cliente. {{1}} nombre del cliente, {{2}} teléfono del cliente,
+      // {{3}} servicio, {{4}} fecha legible "sábado 6 de junio a las 12:00",
+      // {{5}} monto. Routing va por payload.telefono (el del admin).
+      return [
+        v("nombre_completo_cliente"),
+        v("telefono_cliente"),
+        v("nombre_servicio"),
+        v("fecha_hora"),
+        v("monto"),
+      ]
     default:
       return []
   }
