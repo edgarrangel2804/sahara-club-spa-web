@@ -273,7 +273,13 @@ begin
   )
   into result
   from public.bookings b
-  left join public.clients c on c.id = b.client_record_id
+  -- Resuelve el cliente por client_record_id (web/landing/recepcion/IA) y, si
+  -- viene NULL (citas creadas desde la app movil, que solo setean client_id =
+  -- auth uid), cae al fallback por profile_id. Aditivo: las filas con
+  -- client_record_id conservan su resolucion original.
+  left join public.clients c
+    on c.id = b.client_record_id
+    or (b.client_record_id is null and c.profile_id = b.client_id)
   left join public.staff st on st.id = b.therapist_id
   left join public.services sv on sv.id = b.service_id
   left join public.sucursales br on br.id = coalesce(b.sucursal_id, public.get_default_branch_id())
