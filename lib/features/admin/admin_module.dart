@@ -699,11 +699,56 @@ class _AdminModuleState extends State<AdminModule>
     final ok = await _confirmDelete(
       context,
       'Eliminar miembro',
-      'Seguro que deseas eliminar a ${s.name}?',
+      'Seguro que deseas eliminar a ${s.name}?\n\n'
+          'Si tiene historial de citas, no se podra borrar y se desactivara '
+          'en su lugar (sale de la agenda pero conserva su historial).',
     );
-    if (ok == true) {
-      await Supabase.instance.client.from('staff').delete().eq('id', s.id);
+    if (ok != true) return;
+
+    final supa = Supabase.instance.client;
+    try {
+      await supa.from('staff').delete().eq('id', s.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${s.name} eliminado.')),
+      );
       _load();
+    } catch (e) {
+      // El caso esperado: la persona tiene citas (bookings.therapist_id es
+      // NO ACTION) u otro historial, asi que Postgres rechaza el borrado
+      // (foreign_key_violation, codigo 23503). Politica aprobada: baja +
+      // borrado solo sin historial. Caemos a baja automatica.
+      final msg = e.toString().toLowerCase();
+      final isFkViolation =
+          msg.contains('23503') || msg.contains('foreign key');
+      if (!isFkViolation) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo eliminar a ${s.name}: $e')),
+        );
+        return;
+      }
+      try {
+        await supa
+            .from('staff')
+            .update({'active': false, 'show_in_calendar': false})
+            .eq('id', s.id);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${s.name} tiene historial de citas, no se puede borrar. '
+              'Se desactivo: ya no aparece en la agenda.',
+            ),
+          ),
+        );
+        _load();
+      } catch (e2) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo procesar a ${s.name}: $e2')),
+        );
+      }
     }
   }
 

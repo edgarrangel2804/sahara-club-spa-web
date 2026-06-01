@@ -1224,6 +1224,11 @@ class _AgendaPageState extends State<AgendaPage> {
           .from('staff')
           .select('id, full_name, allow_off_hours_booking')
           .eq('role', 'therapist')
+          // Solo terapeutas ACTIVAS aparecen como columna en la agenda. El día
+          // de descanso NO se controla aquí: una terapeuta activa que hoy
+          // descansa sigue visible y se marca "Descanso" via _liveStatusFor.
+          // Desactivar (staff.active=false) la quita por completo de la agenda.
+          .eq('active', true)
           .order('full_name');
       if (!mounted) return;
       setState(() {
