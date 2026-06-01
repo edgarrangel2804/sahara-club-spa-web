@@ -89,7 +89,7 @@ class BookingSyncService {
         .from('bookings')
         .select('''
           id, client_id, client_record_id, service_id, sucursal_id, booking_date, booking_time,
-          duration_min, status, therapist_id, client_notes, source_platform,
+          duration_min, status, therapist_id, client_notes, source_platform, booking_source,
           payment_requirement, waiver_reason, gift_card_id, membership_id,
           deposit_required_cents, deposit_paid_cents,
           client:profiles!bookings_client_id_fkey(full_name, phone),

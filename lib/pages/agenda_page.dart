@@ -194,6 +194,7 @@ class _Booking {
     this.membershipId,
     this.depositRequiredCents,
     this.depositPaidCents,
+    this.bookingSource,
   });
 
   final String? sucursalId;
@@ -206,6 +207,10 @@ class _Booking {
   final String? membershipId;
   final int?    depositRequiredCents;
   final int?    depositPaidCents;
+  // De dónde nació la cita: reception | mobile_app | whatsapp_ai | web | landing.
+  // Se muestra como chip en la tarjeta para que recepción identifique de un
+  // vistazo el origen.
+  final String? bookingSource;
 
 
   factory _Booking.fromMap(Map<String, dynamic> m) {
@@ -252,6 +257,7 @@ class _Booking {
         membershipId: m['membership_id'] as String?,
         depositRequiredCents: (m['deposit_required_cents'] as num?)?.toInt(),
         depositPaidCents: (m['deposit_paid_cents'] as num?)?.toInt(),
+        bookingSource: m['booking_source'] as String?,
       );
     } catch (e) {
       debugPrint('Error parsing booking ${m['id']}: $e');
@@ -6138,6 +6144,110 @@ class _GridPainter extends CustomPainter {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// Origen de la cita - chip que aparece en la esquina superior de la tarjeta
+// para indicar de dónde salió la reserva. `reception` es el default operativo
+// y no se muestra (sería ruido visual en el ~80% de las citas).
+// ═════════════════════════════════════════════════════════════════════════════
+enum _BookingOrigin {
+  mobileApp,
+  whatsappAi,
+  web,
+  landing;
+
+  static _BookingOrigin? fromSource(String? source) {
+    if (source == null) return null;
+    switch (source) {
+      case 'mobile_app':
+        return _BookingOrigin.mobileApp;
+      case 'whatsapp_ai':
+        return _BookingOrigin.whatsappAi;
+      case 'web':
+      case 'web_concierge':
+        return _BookingOrigin.web;
+      case 'landing':
+        return _BookingOrigin.landing;
+      default:
+        return null; // reception / admin / external → sin chip
+    }
+  }
+
+  String get label {
+    switch (this) {
+      case _BookingOrigin.mobileApp:
+        return 'App';
+      case _BookingOrigin.whatsappAi:
+        return 'WhatsApp';
+      case _BookingOrigin.web:
+        return 'Web';
+      case _BookingOrigin.landing:
+        return 'Landing';
+    }
+  }
+
+  IconData get icon {
+    switch (this) {
+      case _BookingOrigin.mobileApp:
+        return Icons.phone_iphone_rounded;
+      case _BookingOrigin.whatsappAi:
+        return Icons.chat_bubble_rounded;
+      case _BookingOrigin.web:
+        return Icons.public_rounded;
+      case _BookingOrigin.landing:
+        return Icons.web_rounded;
+    }
+  }
+
+  Color get color {
+    switch (this) {
+      case _BookingOrigin.mobileApp:
+        return const Color(0xFF5C8CC9); // azul
+      case _BookingOrigin.whatsappAi:
+        return const Color(0xFF128C7E); // verde WhatsApp
+      case _BookingOrigin.web:
+        return const Color(0xFF8B6FE5); // morado
+      case _BookingOrigin.landing:
+        return const Color(0xFF8B6FE5);
+    }
+  }
+}
+
+class _OriginChip extends StatelessWidget {
+  const _OriginChip({required this.origin});
+  final _BookingOrigin origin;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Origen: ${origin.label}',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+        decoration: BoxDecoration(
+          color: origin.color.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(3),
+          border: Border.all(color: origin.color.withValues(alpha: 0.45)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(origin.icon, size: 9, color: origin.color),
+            const SizedBox(width: 3),
+            Text(
+              origin.label,
+              style: GoogleFonts.inter(
+                color: origin.color,
+                fontSize: 8.5,
+                fontWeight: FontWeight.w700,
+                height: 1.0,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // Booking Card
 // ═════════════════════════════════════════════════════════════════════════════
 class _BookingCard extends StatefulWidget {
@@ -6186,8 +6296,11 @@ class _BookingCardState extends State<_BookingCard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Línea 1: nombre (izq) + chip waiver (der) si aplica.
-              // Movemos el chip arriba para liberar la 3ra línea para la hora.
+              // Línea 1: nombre (izq) + chip de origen + chip waiver (der).
+              // El chip de origen es un mini icono+letra que indica de dónde
+              // vino la cita (App, WhatsApp, Web, Recepción). Recepción no
+              // muestra chip (es el default, evita ruido visual). El waiver
+              // queda a la derecha del todo si aplica.
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -6203,6 +6316,12 @@ class _BookingCardState extends State<_BookingCard> {
                       maxLines: 1,
                     ),
                   ),
+                  if (_BookingOrigin.fromSource(b.bookingSource) != null) ...[
+                    const SizedBox(width: 4),
+                    _OriginChip(
+                      origin: _BookingOrigin.fromSource(b.bookingSource)!,
+                    ),
+                  ],
                   if (b.paymentRequirement == 'waived' &&
                       b.durationMinutes >= 30) ...[
                     const SizedBox(width: 4),
