@@ -139,12 +139,18 @@ class BookingSyncService {
     if (normalized.isEmpty) {
       return null;
     }
-    final row = await _client
+    // Si hay clientes duplicados con el mismo nombre (data sucia de carga
+    // manual), tomamos el más reciente para que la asignación no falle con
+    // 406 "multiple rows returned". Pendiente: campaña de dedup en clients.
+    final rows = await _client
         .from('clients')
         .select('id')
         .eq('full_name', normalized)
-        .maybeSingle();
-    return row?['id']?.toString();
+        .order('created_at', ascending: false)
+        .limit(1);
+    final list = rows as List;
+    if (list.isEmpty) return null;
+    return (list.first as Map)['id']?.toString();
   }
 
   Future<String?> _resolveValidClientRecordId({
