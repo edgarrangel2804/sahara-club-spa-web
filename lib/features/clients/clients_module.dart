@@ -1919,10 +1919,15 @@ class _GiftCardFormDialog extends StatefulWidget {
 
 class _GiftCardFormDialogState extends State<_GiftCardFormDialog> {
   final _codeCtrl = TextEditingController();
-  final _amountCtrl = TextEditingController(text: '500');
   DateTime _expires = DateTime.now().add(const Duration(days: 365));
   bool _saving = false;
   String? _error;
+
+  // Catálogo de servicios para el dropdown. El gift card se define por un
+  // servicio de Sahara Sol Spa; su valor = precio de ese servicio.
+  List<Map<String, dynamic>> _services = [];
+  String? _serviceId;
+  bool _loadingServices = true;
 
   String _genCode() {
     final ts = DateTime.now().millisecondsSinceEpoch.toRadixString(36).toUpperCase();
@@ -1933,14 +1938,50 @@ class _GiftCardFormDialogState extends State<_GiftCardFormDialog> {
   void initState() {
     super.initState();
     _codeCtrl.text = _genCode();
+    _loadServices();
+  }
+
+  Future<void> _loadServices() async {
+    try {
+      final data = await Supabase.instance.client
+          .from('services')
+          .select('id, name, price')
+          .order('name');
+      if (!mounted) return;
+      setState(() {
+        _services = (data as List).cast<Map<String, dynamic>>();
+        _loadingServices = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = 'No se pudieron cargar los servicios: $e';
+          _loadingServices = false;
+        });
+      }
+    }
+  }
+
+  Map<String, dynamic>? get _selectedService {
+    if (_serviceId == null) return null;
+    for (final s in _services) {
+      if (s['id'] == _serviceId) return s;
+    }
+    return null;
   }
 
   Future<void> _save() async {
-    final amount = double.tryParse(_amountCtrl.text.trim());
-    if (amount == null || amount <= 0) {
-      setState(() => _error = 'Monto inválido');
+    final service = _selectedService;
+    if (service == null) {
+      setState(() => _error = 'Selecciona un servicio');
       return;
     }
+    final amount = (service['price'] as num?)?.toDouble() ?? 0;
+    if (amount <= 0) {
+      setState(() => _error = 'El servicio seleccionado no tiene precio válido');
+      return;
+    }
+    final serviceName = service['name'] as String? ?? '';
     setState(() {
       _saving = true;
       _error = null;
@@ -1956,6 +1997,8 @@ class _GiftCardFormDialogState extends State<_GiftCardFormDialog> {
             'currency': 'MXN',
             'client_id': widget.client.id,
             'recipient_name': widget.client.fullName,
+            'service_id': _serviceId,
+            'service_name': serviceName,
             'valid_from': DateTime.now().toIso8601String(),
             'expires_at': _expires.toIso8601String(),
             'status': 'active',
@@ -1970,7 +2013,7 @@ class _GiftCardFormDialogState extends State<_GiftCardFormDialog> {
         'amount': amount,
         'balance_before': 0,
         'balance_after': amount,
-        'notes': 'Carga inicial',
+        'notes': 'Carga inicial · Servicio: $serviceName',
         'created_by': me,
       });
       if (!mounted) return;
@@ -1999,11 +2042,46 @@ class _GiftCardFormDialogState extends State<_GiftCardFormDialog> {
             decoration: const InputDecoration(labelText: 'Código'),
           ),
           const SizedBox(height: 12),
-          TextField(
-            controller: _amountCtrl,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Monto MXN'),
-          ),
+          _loadingServices
+              ? const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: SizedBox(
+                      height: 20, width: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2)),
+                )
+              : DropdownButtonFormField<String>(
+                  initialValue: _serviceId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Servicio'),
+                  hint: const Text('Selecciona un servicio'),
+                  items: _services.map((s) {
+                    final price = (s['price'] as num?)?.toDouble() ?? 0;
+                    return DropdownMenuItem<String>(
+                      value: s['id'] as String,
+                      child: Text(
+                        '${s['name']}  ·  \$${price.toStringAsFixed(0)} MXN',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (v) => setState(() {
+                    _serviceId = v;
+                    _error = null;
+                  }),
+                ),
+          if (_selectedService != null) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Valor del gift card: \$${((_selectedService!['price'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)} MXN',
+                style: GoogleFonts.inter(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black87),
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           Row(children: [
             Expanded(
