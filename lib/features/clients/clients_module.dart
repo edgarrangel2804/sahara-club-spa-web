@@ -840,6 +840,7 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
               onAddPackage: () => _openAddPackageDialog(),
               onSeeMovements: () => _openMovementsDialog(),
               onRefresh: _loadBenefits,
+              onRegisterPayment: (pkg) => _openRegisterPaymentDialog(pkg),
             ),
             const SizedBox(height: 16),
 
@@ -949,6 +950,14 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
       context: context,
       builder: (_) => _BenefitsMovementsDialog(client: widget.client),
     );
+  }
+
+  Future<void> _openRegisterPaymentDialog(Map<String, dynamic> pkg) async {
+    final changed = await showDialog<bool>(
+      context: context,
+      builder: (_) => _PackagePaymentDialog(clientPackage: pkg),
+    );
+    if (changed == true) await _loadBenefits();
   }
 
   Future<void> _confirmDelete(BuildContext ctx) async {
@@ -1589,6 +1598,7 @@ class _BenefitsCard extends StatelessWidget {
     required this.onAddPackage,
     required this.onSeeMovements,
     required this.onRefresh,
+    required this.onRegisterPayment,
   });
 
   final bool loading;
@@ -1599,6 +1609,8 @@ class _BenefitsCard extends StatelessWidget {
   final VoidCallback onAddPackage;
   final VoidCallback onSeeMovements;
   final VoidCallback onRefresh;
+  // Registrar un abono del plan de pagos de un paquete (recibe la fila del paquete).
+  final void Function(Map<String, dynamic>) onRegisterPayment;
 
   String _fmtMoney(num v) => '\$${v.toStringAsFixed(0)} MXN';
   String _fmtDate(dynamic v) {
@@ -1647,6 +1659,23 @@ class _BenefitsCard extends StatelessWidget {
           if (status != 'activo')
             Text('Estado: $status',
                 style: GoogleFonts.inter(fontSize: 11, color: Colors.black45)),
+          if (pending > 0)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => onRegisterPayment(p),
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFFB37500),
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  minimumSize: const Size(0, 28),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                icon: const Icon(Icons.payments_outlined, size: 14),
+                label: Text('Registrar abono',
+                    style: GoogleFonts.inter(
+                        fontSize: 11.5, fontWeight: FontWeight.w600)),
+              ),
+            ),
         ],
       ),
     );
@@ -1904,6 +1933,216 @@ class _BenefitActionBtn extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
     ),
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plan de pagos del paquete — registrar abonos (recepción)
+// ─────────────────────────────────────────────────────────────────────────────
+class _PackagePaymentDialog extends StatefulWidget {
+  const _PackagePaymentDialog({required this.clientPackage});
+  final Map<String, dynamic> clientPackage;
+
+  @override
+  State<_PackagePaymentDialog> createState() => _PackagePaymentDialogState();
+}
+
+class _PackagePaymentDialogState extends State<_PackagePaymentDialog> {
+  List<Map<String, dynamic>> _payments = [];
+  bool _loading = true;
+  bool _saving = false;
+  bool _changed = false;
+  String? _error;
+  String _method = 'efectivo';
+
+  String get _pkgId => widget.clientPackage['id'].toString();
+  double get _total =>
+      (widget.clientPackage['total_amount'] as num?)?.toDouble() ?? 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final data = await Supabase.instance.client
+          .from('client_package_payments')
+          .select('id, installment_number, amount, status, paid_at, payment_method')
+          .eq('client_package_id', _pkgId)
+          .order('installment_number');
+      if (!mounted) return;
+      setState(() {
+        _payments = (data as List).cast<Map<String, dynamic>>();
+        _loading = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = 'No se pudo cargar el plan de pagos: $e';
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  String _fmtMoney(num v) => '\$${v.toStringAsFixed(0)} MXN';
+
+  Future<void> _markPaid(Map<String, dynamic> p) async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final db = Supabase.instance.client;
+      await db.from('client_package_payments').update({
+        'status': 'pagado',
+        'paid_at': DateTime.now().toIso8601String(),
+        'payment_method': _method,
+      }).eq('id', p['id']);
+
+      // Recalcular pagado/pendiente desde la fuente (evita desincronización).
+      final rows = await db
+          .from('client_package_payments')
+          .select('amount, status')
+          .eq('client_package_id', _pkgId);
+      double paid = 0;
+      for (final r in (rows as List)) {
+        if ((r['status'] as String?) == 'pagado') {
+          paid += (r['amount'] as num?)?.toDouble() ?? 0;
+        }
+      }
+      final pending = (_total - paid).clamp(0, _total).toDouble();
+      await db.from('client_packages').update({
+        'paid_amount': paid,
+        'pending_amount': pending,
+      }).eq('id', _pkgId);
+
+      _changed = true;
+      await _load();
+      if (mounted) setState(() => _saving = false);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = 'No se pudo registrar el abono: $e';
+          _saving = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = (widget.clientPackage['name'] as String?)?.trim();
+    final paidCount = _payments.where((p) => p['status'] == 'pagado').length;
+    return AlertDialog(
+      backgroundColor: const Color(0xFFF5F3EF),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Text(
+        (name == null || name.isEmpty) ? 'Plan de pagos' : 'Abonos · $name',
+        style: GoogleFonts.playfairDisplay(
+            fontSize: 18, fontWeight: FontWeight.bold),
+      ),
+      content: SizedBox(
+        width: 420,
+        child: _loading
+            ? const SizedBox(
+                height: 90,
+                child: Center(
+                    child: CircularProgressIndicator(color: SaharaTheme.gold)))
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Total: ${_fmtMoney(_total)} · $paidCount de ${_payments.length} abonos pagados',
+                    style: GoogleFonts.inter(fontSize: 12.5, color: Colors.black54),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: _method,
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'Método de pago del abono'),
+                    items: const [
+                      DropdownMenuItem(value: 'efectivo', child: Text('Efectivo')),
+                      DropdownMenuItem(value: 'tarjeta', child: Text('Tarjeta')),
+                      DropdownMenuItem(value: 'transferencia', child: Text('Transferencia')),
+                      DropdownMenuItem(value: 'stripe', child: Text('Stripe')),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) setState(() => _method = v);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  ..._payments.map(_paymentRow),
+                  if (_error != null) ...[
+                    const SizedBox(height: 8),
+                    Text(_error!,
+                        style: const TextStyle(color: Colors.red, fontSize: 12)),
+                  ],
+                ],
+              ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context, _changed),
+          child: const Text('Cerrar'),
+        ),
+      ],
+    );
+  }
+
+  Widget _paymentRow(Map<String, dynamic> p) {
+    final n = (p['installment_number'] as num?)?.toInt() ?? 0;
+    final amount = (p['amount'] as num?)?.toDouble() ?? 0;
+    final paid = (p['status'] as String?) == 'pagado';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Container(
+            width: 26, height: 26,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: paid
+                  ? const Color(0xFF2D8A4F).withValues(alpha: 0.12)
+                  : const Color(0xFFB37500).withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Text('$n',
+                style: GoogleFonts.inter(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: paid ? const Color(0xFF2D8A4F) : const Color(0xFFB37500))),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text('Abono $n · ${_fmtMoney(amount)}',
+                style: GoogleFonts.inter(fontSize: 13, color: Colors.black87)),
+          ),
+          if (paid)
+            Text('Pagado',
+                style: GoogleFonts.inter(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF2D8A4F)))
+          else
+            FilledButton(
+              onPressed: _saving ? null : () => _markPaid(p),
+              style: FilledButton.styleFrom(
+                backgroundColor: SaharaTheme.gold,
+                foregroundColor: Colors.black,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                minimumSize: const Size(0, 32),
+              ),
+              child: Text('Marcar pagado',
+                  style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600)),
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
