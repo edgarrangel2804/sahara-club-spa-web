@@ -6590,12 +6590,6 @@ class _BookingDetailDialog extends StatelessWidget {
                       color: const Color(0xFFB32D2D),
                       onTap: () => _updateStatus(context, 'cancelled'),
                     ),
-                  if (b.status == 'confirmed' || b.status == 'rescheduled')
-                    _DialogBtn(
-                      label: 'Check-in',
-                      color: const Color(0xFF2088D8),
-                      onTap: () => _updateStatus(context, 'checked_in'),
-                    ),
                   // "No se presentó": el cliente tenía cita pero no llegó.
                   // Disponible mientras la cita está agendada/confirmada y el
                   // servicio aún no inicia ni se cobró.
@@ -6620,17 +6614,23 @@ class _BookingDetailDialog extends StatelessWidget {
                     onSendTemplate: (key) =>
                         _sendTemplateToBooking(context, b, key),
                   ),
-                  if (b.status == 'checked_in')
+                  // Flujo simplificado: tras confirmar, recepción solo maneja
+                  // dos botones — "Iniciar sesión" y "Terminar sesión".
+                  // (Se incluye 'checked_in' por compatibilidad con citas viejas
+                  // que quedaron en ese estado del flujo anterior.)
+                  if (b.status == 'confirmed' ||
+                      b.status == 'rescheduled' ||
+                      b.status == 'checked_in')
                     _DialogBtn(
-                      label: 'Iniciar servicio',
+                      label: 'Iniciar sesión',
                       color: const Color(0xFF6A54E0),
                       onTap: () => _updateStatus(context, 'in_progress'),
                     ),
                   if (b.status == 'in_progress')
                     _DialogBtn(
-                      label: 'Finalizar servicio',
-                      color: const Color(0xFF666666),
-                      onTap: () => _updateStatus(context, 'completed'),
+                      label: 'Terminar sesión',
+                      color: const Color(0xFF0E8F55),
+                      onTap: () => _endSessionAndViewTicket(context),
                     ),
                   if (b.status == 'awaiting_payment' || b.status == 'completed')
                     _DialogBtn(
@@ -6749,6 +6749,28 @@ class _BookingDetailDialog extends StatelessWidget {
       if (updated && ctx.mounted) {
         Navigator.pop(ctx);
         onRefresh();
+      }
+    } catch (e) {
+      if (ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: const Color(0xFF2A1010),
+          ),
+        );
+      }
+    }
+  }
+
+  // "Terminar sesión": marca la cita como completada (la BD genera el ticket y
+  // la deja en 'awaiting_payment') y abre el ticket directo, sin que recepción
+  // tenga que oprimir "Ver ticket". onViewTicket (_openSaleFromBooking) cierra
+  // este diálogo y navega al módulo Ventas con la venta ya creada.
+  Future<void> _endSessionAndViewTicket(BuildContext ctx) async {
+    try {
+      final updated = await onUpdateStatus('completed');
+      if (updated && ctx.mounted) {
+        onViewTicket();
       }
     } catch (e) {
       if (ctx.mounted) {
