@@ -18,6 +18,22 @@ String _genUuid() {
       '${h(b[10])}${h(b[11])}${h(b[12])}${h(b[13])}${h(b[14])}${h(b[15])}';
 }
 
+// ── Capitalización de nombre ──────────────────────────────────────────────────
+// Regla del negocio: nombre y apellidos siempre con la primera letra de cada
+// palabra en mayúscula. Espeja el trigger normalize_client_full_name() de la BD
+// para dar feedback inmediato en el form (la BD es la fuente de verdad y aplica
+// la misma regla a todos los orígenes: recepción, IA, app y landing).
+String titleCaseName(String input) {
+  final cleaned = input.trim().replaceAll(RegExp(r'\s+'), ' ');
+  if (cleaned.isEmpty) return cleaned;
+  return cleaned
+      .split(' ')
+      .map((w) => w.isEmpty
+          ? w
+          : '${w.substring(0, 1).toUpperCase()}${w.substring(1).toLowerCase()}')
+      .join(' ');
+}
+
 // ── Model ─────────────────────────────────────────────────────────────────────
 class _Client {
   final String  id;
@@ -1037,8 +1053,9 @@ class _ClientFormDialogState extends State<_ClientFormDialog> {
     }
     setState(() => _saving = true);
     try {
+      final normalizedName = titleCaseName(_nameCtrl.text);
       final payload = {
-        'full_name':  _nameCtrl.text.trim(),
+        'full_name':  normalizedName,
         'email':      _emailCtrl.text.trim(),
         'phone':      _phoneCtrl.text.trim(),
         'notes':      _notesCtrl.text.trim(),
@@ -1079,7 +1096,7 @@ class _ClientFormDialogState extends State<_ClientFormDialog> {
 
       final saved = _Client(
         id:        savedId,
-        fullName:  _nameCtrl.text.trim(),
+        fullName:  normalizedName,
         email:     _emailCtrl.text.trim(),
         phone:     _phoneCtrl.text.trim(),
         birthDate: _birthDate,

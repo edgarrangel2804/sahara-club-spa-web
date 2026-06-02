@@ -1441,7 +1441,14 @@ class _AgendaPageState extends State<AgendaPage> {
             userRole: _userRole,
             messagesUnreadCount: _messagesUnreadCount,
             pendingConfirmCount: _pendingConfirmCount,
-            onModuleTap: (m) => setState(() => _activeModule = m),
+            onModuleTap: (m) {
+              setState(() => _activeModule = m);
+              // Al volver a la agenda, recargamos: editar un cliente en el
+              // módulo Clientes no dispara la suscripción realtime de bookings
+              // (escucha otra tabla), así que sin esto el nombre del join
+              // quedaría obsoleto en las tarjetas en memoria.
+              if (m == 'agenda') _loadBookings();
+            },
             onLogout: _logout,
           ),
           Expanded(
