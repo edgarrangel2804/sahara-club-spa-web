@@ -6589,6 +6589,23 @@ class _BookingDetailDialog extends StatelessWidget {
                       color: const Color(0xFF2088D8),
                       onTap: () => _updateStatus(context, 'checked_in'),
                     ),
+                  // "No se presentó": el cliente tenía cita pero no llegó.
+                  // Disponible mientras la cita está agendada/confirmada y el
+                  // servicio aún no inicia ni se cobró.
+                  if (const [
+                    'scheduled',
+                    'pending',
+                    'waiting',
+                    'pending_reception',
+                    'payment_received',
+                    'confirmed',
+                    'rescheduled',
+                  ].contains(b.status))
+                    _DialogBtn(
+                      label: 'No se presentó',
+                      color: const Color(0xFF7B2D43),
+                      onTap: () => _updateStatus(context, 'no_show'),
+                    ),
                   // Message Center: recepción elige qué plantilla mandar.
                   // No envía automáticamente, abre un selector.
                   _WhatsAppMessageCenterButton(
