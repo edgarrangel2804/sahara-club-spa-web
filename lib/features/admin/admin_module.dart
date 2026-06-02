@@ -4668,7 +4668,6 @@ class _AutomationEventDropdown extends StatelessWidget {
       ('reservation_confirmed', 'Confirmacion'),
       ('reminder_24h', 'Recordatorio 24h'),
       ('reminder_3h', 'Recordatorio 3h'),
-      ('reminder_1h', 'Recordatorio 1h'),
       ('reservation_rescheduled', 'Reagendado'),
       ('reservation_cancelled', 'Cancelacion'),
       ('payment_pending', 'Pago pendiente'),

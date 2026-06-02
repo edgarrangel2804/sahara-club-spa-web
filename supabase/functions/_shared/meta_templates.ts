@@ -158,8 +158,6 @@ export function bodyParamsForTemplateKey(
       // Plantilla Meta recordatorio_3h: {{1}} nombre, {{2}} servicio,
       // {{3}} fecha, {{4}} hora. 4 variables (no 3, ese era el bug).
       return [v("nombre_cliente"), v("nombre_servicio"), v("fecha_reserva"), v("hora_reserva")]
-    case "reminder_1h":
-      return [v("nombre_cliente"), v("nombre_servicio"), v("hora_reserva")]
     case "reservation_cancelled":
       return [v("nombre_cliente"), v("nombre_servicio"), v("fecha_reserva")]
     case "reservation_rescheduled":
