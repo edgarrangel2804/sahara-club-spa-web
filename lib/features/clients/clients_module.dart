@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../theme/sahara_theme.dart';
@@ -536,6 +537,7 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
   String _lastVisit      = '—';
 
   Map<String, dynamic>? _benefits;
+  List<Map<String, dynamic>> _packages = const [];
   bool _loadingBenefits = true;
 
   @override
@@ -561,14 +563,57 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
         'get_customer_benefits_summary',
         params: {'p_client_id': widget.client.id},
       );
+      final packages = await _loadPackages();
       if (!mounted) return;
       setState(() {
         _benefits = res is Map ? Map<String, dynamic>.from(res) : null;
+        _packages = packages;
         _loadingBenefits = false;
       });
     } catch (e) {
       debugPrint('loadBenefits: $e');
       if (mounted) setState(() => _loadingBenefits = false);
+    }
+  }
+
+  // Paquetes activos del cliente + conteo de sesiones (total / usadas).
+  Future<List<Map<String, dynamic>>> _loadPackages() async {
+    try {
+      final db = Supabase.instance.client;
+      final pkgRows = await db
+          .from('client_packages')
+          .select(
+              'id, name, status, total_amount, paid_amount, created_at')
+          .eq('client_id', widget.client.id)
+          .neq('status', 'cancelado')
+          .order('created_at', ascending: false);
+      final packages = (pkgRows as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+      if (packages.isEmpty) return const [];
+
+      final sessRows = await db
+          .from('client_package_sessions')
+          .select('client_package_id, status')
+          .eq('client_id', widget.client.id);
+      final counts = <String, List<int>>{}; // id -> [total, used]
+      for (final s in (sessRows as List)) {
+        final m = Map<String, dynamic>.from(s as Map);
+        final pid = m['client_package_id']?.toString();
+        if (pid == null) continue;
+        final c = counts.putIfAbsent(pid, () => [0, 0]);
+        c[0]++;
+        if ((m['status'] as String?) == 'usada') c[1]++;
+      }
+      for (final p in packages) {
+        final c = counts[p['id']?.toString()] ?? const [0, 0];
+        p['sessions_total'] = c[0];
+        p['sessions_used'] = c[1];
+      }
+      return packages;
+    } catch (e) {
+      debugPrint('loadPackages: $e');
+      return const [];
     }
   }
 
@@ -773,8 +818,10 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
             _BenefitsCard(
               loading: _loadingBenefits,
               benefits: _benefits,
+              packages: _packages,
               onAddGiftCard: () => _openAddGiftCardDialog(),
               onAddMembership: () => _openAddMembershipDialog(),
+              onAddPackage: () => _openAddPackageDialog(),
               onSeeMovements: () => _openMovementsDialog(),
               onRefresh: _loadBenefits,
             ),
@@ -869,6 +916,14 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
     final saved = await showDialog<bool>(
       context: context,
       builder: (_) => _MembershipFormDialog(client: widget.client),
+    );
+    if (saved == true) await _loadBenefits();
+  }
+
+  Future<void> _openAddPackageDialog() async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (_) => _PackageAssignDialog(client: widget.client),
     );
     if (saved == true) await _loadBenefits();
   }
@@ -1511,16 +1566,20 @@ class _BenefitsCard extends StatelessWidget {
   const _BenefitsCard({
     required this.loading,
     required this.benefits,
+    required this.packages,
     required this.onAddGiftCard,
     required this.onAddMembership,
+    required this.onAddPackage,
     required this.onSeeMovements,
     required this.onRefresh,
   });
 
   final bool loading;
   final Map<String, dynamic>? benefits;
+  final List<Map<String, dynamic>> packages;
   final VoidCallback onAddGiftCard;
   final VoidCallback onAddMembership;
+  final VoidCallback onAddPackage;
   final VoidCallback onSeeMovements;
   final VoidCallback onRefresh;
 
@@ -1534,6 +1593,46 @@ class _BenefitsCard extends StatelessWidget {
       const m = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
       return '${d.day} ${m[d.month - 1]} ${d.year}';
     } catch (_) { return s; }
+  }
+
+  Widget _packageRow(Map<String, dynamic> p) {
+    final name = (p['name'] as String?)?.trim();
+    final total = (p['total_amount'] as num?)?.toDouble() ?? 0;
+    final paid = (p['paid_amount'] as num?)?.toDouble() ?? 0;
+    final pending = (total - paid).clamp(0, total).toDouble();
+    final sessionsTotal = (p['sessions_total'] as num?)?.toInt() ?? 0;
+    final sessionsUsed = (p['sessions_used'] as num?)?.toInt() ?? 0;
+    final sessionsLeft = (sessionsTotal - sessionsUsed).clamp(0, sessionsTotal);
+    final status = (p['status'] as String?) ?? 'activo';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            (name == null || name.isEmpty) ? 'Paquete' : name,
+            style: GoogleFonts.inter(
+                fontSize: 12.5, fontWeight: FontWeight.w600, color: Colors.black87),
+          ),
+          Text(
+            'Sesiones restantes: $sessionsLeft (usadas $sessionsUsed de $sessionsTotal)',
+            style: GoogleFonts.inter(fontSize: 12, color: Colors.black54),
+          ),
+          Text(
+            pending <= 0
+                ? 'Pagado: ${_fmtMoney(total)} · liquidado'
+                : 'Pagado: ${_fmtMoney(paid)} · Pendiente: ${_fmtMoney(pending)}',
+            style: GoogleFonts.inter(
+              fontSize: 11.5,
+              color: pending <= 0 ? const Color(0xFF2D8A4F) : const Color(0xFFB37500),
+            ),
+          ),
+          if (status != 'activo')
+            Text('Estado: $status',
+                style: GoogleFonts.inter(fontSize: 11, color: Colors.black45)),
+        ],
+      ),
+    );
   }
 
   @override
@@ -1595,12 +1694,16 @@ class _BenefitsCard extends StatelessWidget {
                     ? 'Membresía'
                     : type == 'gift_card'
                         ? 'Gift Card'
-                        : 'Regular',
+                        : type == 'package'
+                            ? 'Paquete'
+                            : 'Regular',
                 color: type == 'membership'
                     ? const Color(0xFF6A54E0)
                     : type == 'gift_card'
                         ? const Color(0xFFE07B00)
-                        : const Color(0xFF8B8B8B),
+                        : type == 'package'
+                            ? const Color(0xFF1E7E68)
+                            : const Color(0xFF8B8B8B),
               ),
               const SizedBox(width: 8),
               _BenefitChip(
@@ -1617,7 +1720,9 @@ class _BenefitsCard extends StatelessWidget {
                         ? '· cubierto por gift card'
                         : waiver == 'active_membership_with_sessions'
                             ? '· cubierto por membresía'
-                            : '· $waiver',
+                            : waiver == 'active_package_with_sessions'
+                                ? '· cubierto por paquete'
+                                : '· $waiver',
                     style: GoogleFonts.inter(fontSize: 11, color: Colors.black54),
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -1681,6 +1786,34 @@ class _BenefitsCard extends StatelessWidget {
                       style: GoogleFonts.inter(fontSize: 12, color: Colors.black38)),
             ),
 
+            const SizedBox(height: 14),
+
+            // Paquetes
+            Row(children: [
+              Icon(Icons.inventory_2_outlined,
+                  size: 14,
+                  color: packages.isNotEmpty
+                      ? const Color(0xFFC6A76A)
+                      : Colors.black26),
+              const SizedBox(width: 6),
+              Text('Paquetes',
+                  style: GoogleFonts.inter(
+                      fontSize: 12, fontWeight: FontWeight.w600, color: Colors.black87)),
+            ]),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.only(left: 20),
+              child: packages.isEmpty
+                  ? Text('Sin paquetes activos',
+                      style: GoogleFonts.inter(fontSize: 12, color: Colors.black38))
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (final p in packages) _packageRow(p),
+                      ],
+                    ),
+            ),
+
             const SizedBox(height: 16),
 
             // Acciones
@@ -1693,6 +1826,10 @@ class _BenefitsCard extends StatelessWidget {
                   icon: Icons.workspace_premium_outlined,
                   label: 'Agregar membresía',
                   onTap: onAddMembership),
+              _BenefitActionBtn(
+                  icon: Icons.inventory_2_outlined,
+                  label: 'Agregar paquete',
+                  onTap: onAddPackage),
               _BenefitActionBtn(
                   icon: Icons.receipt_long_outlined,
                   label: 'Ver movimientos',
@@ -2077,6 +2214,532 @@ class _MembershipFormDialogState extends State<_MembershipFormDialog> {
               : const Text('Guardar'),
         ),
       ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Asignar paquete a cliente (copia congelada)
+// ─────────────────────────────────────────────────────────────────────────────
+class _AssignLine {
+  _AssignLine({
+    this.serviceId,
+    this.serviceName = '',
+    this.quantity = 1,
+    this.unitPrice = 0,
+  });
+  String? serviceId;
+  String serviceName;
+  int quantity;
+  double unitPrice;
+  double get total => quantity * unitPrice;
+}
+
+class _PackageAssignDialog extends StatefulWidget {
+  const _PackageAssignDialog({required this.client});
+  final _Client client;
+
+  @override
+  State<_PackageAssignDialog> createState() => _PackageAssignDialogState();
+}
+
+class _PackageAssignDialogState extends State<_PackageAssignDialog> {
+  List<Map<String, dynamic>> _basePackages = const [];
+  List<Map<String, dynamic>> _services = const [];
+  String? _basePackageId;
+  final _nameCtrl = TextEditingController();
+  final List<_AssignLine> _lines = [];
+  int _installments = 1; // 1 | 2 | 3
+  Set<int> _allowedInstallments = {1, 2, 3};
+  final _manualTotalCtrl = TextEditingController();
+  bool _manualTotal = false;
+  final _initialPaymentCtrl = TextEditingController();
+  bool _loading = true;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _manualTotalCtrl.dispose();
+    _initialPaymentCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadData() async {
+    try {
+      final db = Supabase.instance.client;
+      final pkgs = await db
+          .from('products')
+          .select(
+              'id, name, description, price, installments_allowed, sessions_total')
+          .eq('is_package', true)
+          .order('name');
+      List<Map<String, dynamic>> services = const [];
+      try {
+        final svc = await db
+            .from('services')
+            .select('id, name, price, is_active')
+            .order('name');
+        services = (svc as List)
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .where((e) => (e['is_active'] as bool?) ?? true)
+            .toList();
+      } catch (_) {}
+      if (!mounted) return;
+      setState(() {
+        _basePackages =
+            (pkgs as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        _services = services;
+        _loading = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = '$e';
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _onSelectBasePackage(String? id) async {
+    if (id == null) return;
+    setState(() {
+      _basePackageId = id;
+      _lines.clear();
+    });
+    final base = _basePackages.firstWhere((p) => p['id'] == id,
+        orElse: () => const {});
+    _nameCtrl.text = (base['name'] as String? ?? '').trim();
+    // Forma de pago permitida segun el paquete base
+    final allowed = ((base['installments_allowed'] as List?)
+            ?.map((e) => (e as num).toInt())
+            .toList()) ??
+        const [1];
+    _allowedInstallments = allowed.isEmpty ? {1} : allowed.toSet();
+    _installments = _allowedInstallments.contains(1)
+        ? 1
+        : _allowedInstallments.reduce((a, b) => a < b ? a : b);
+    // Cargar lineas (package_items) como copia editable
+    try {
+      final items = await Supabase.instance.client
+          .from('package_items')
+          .select('service_id, service_name, quantity, unit_price')
+          .eq('package_id', id);
+      final lines = (items as List).map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        return _AssignLine(
+          serviceId: m['service_id']?.toString(),
+          serviceName: (m['service_name'] as String? ?? '').trim(),
+          quantity: (m['quantity'] as num?)?.toInt() ?? 1,
+          unitPrice: (m['unit_price'] as num?)?.toDouble() ?? 0,
+        );
+      }).toList();
+      if (!mounted) return;
+      setState(() {
+        _lines
+          ..clear()
+          ..addAll(lines);
+      });
+    } catch (_) {}
+  }
+
+  double get _linesTotal => _lines.fold<double>(0, (s, l) => s + l.total);
+  int get _sessionsTotal => _lines.fold<int>(0, (s, l) => s + l.quantity);
+  double get _finalTotal => _manualTotal
+      ? (double.tryParse(_manualTotalCtrl.text.trim()) ?? _linesTotal)
+      : _linesTotal;
+
+  Future<void> _save() async {
+    if (_basePackageId == null) {
+      setState(() => _error = 'Selecciona un paquete');
+      return;
+    }
+    if (_lines.isEmpty || _sessionsTotal <= 0) {
+      setState(() => _error = 'El paquete debe incluir al menos un servicio');
+      return;
+    }
+    final total = _finalTotal;
+    final initialPayment =
+        (double.tryParse(_initialPaymentCtrl.text.trim()) ?? 0).clamp(0, total).toDouble();
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final db = Supabase.instance.client;
+      final planType = _installments == 1
+          ? 'single'
+          : _installments == 2
+              ? 'two_payments'
+              : 'three_payments';
+      final snapshot = _lines
+          .map((l) => {
+                'service_id': l.serviceId,
+                'service_name': l.serviceName.trim(),
+                'quantity': l.quantity,
+                'unit_price': l.unitPrice,
+                'total_price': l.total,
+              })
+          .toList();
+
+      // 1) client_packages (copia congelada)
+      final inserted = await db
+          .from('client_packages')
+          .insert({
+            'client_id': widget.client.id,
+            'package_id': _basePackageId,
+            'name': _nameCtrl.text.trim().isEmpty
+                ? 'Paquete'
+                : _nameCtrl.text.trim(),
+            'status': 'activo',
+            'total_amount': total,
+            'paid_amount': initialPayment,
+            'payment_plan_type': planType,
+            'installments_count': _installments,
+            'items_snapshot': snapshot,
+          })
+          .select('id')
+          .single();
+      final cpId = inserted['id'].toString();
+
+      // 2) Sesiones (1 fila por unidad)
+      final sessions = <Map<String, dynamic>>[];
+      for (final l in _lines) {
+        for (var i = 0; i < l.quantity; i++) {
+          sessions.add({
+            'client_package_id': cpId,
+            'client_id': widget.client.id,
+            'service_id': l.serviceId,
+            'service_name': l.serviceName.trim(),
+            'status': 'pendiente',
+          });
+        }
+      }
+      if (sessions.isNotEmpty) {
+        await db.from('client_package_sessions').insert(sessions);
+      }
+
+      // 3) Plan de pagos (abonos). Reparto parejo; el ultimo cuadra el total.
+      final payments = <Map<String, dynamic>>[];
+      final base = (total / _installments);
+      double remainingPaid = initialPayment;
+      for (var n = 1; n <= _installments; n++) {
+        final amount = n == _installments
+            ? (total - base.floorToDouble() * (_installments - 1))
+            : base.floorToDouble();
+        final isPaid = remainingPaid >= amount && amount > 0;
+        if (isPaid) remainingPaid -= amount;
+        payments.add({
+          'client_package_id': cpId,
+          'client_id': widget.client.id,
+          'installment_number': n,
+          'amount': amount,
+          'status': isPaid ? 'pagado' : 'pendiente',
+          'paid_at': isPaid ? DateTime.now().toIso8601String() : null,
+          'payment_method': isPaid ? 'manual' : null,
+        });
+      }
+      if (payments.isNotEmpty) {
+        await db.from('client_package_payments').insert(payments);
+      }
+
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = '$e';
+          _saving = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const AlertDialog(
+        content: SizedBox(
+          width: 300,
+          height: 90,
+          child: Center(child: CircularProgressIndicator(color: SaharaTheme.gold)),
+        ),
+      );
+    }
+    return AlertDialog(
+      backgroundColor: const Color(0xFFF5F3EF),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Text('Agregar paquete',
+          style: GoogleFonts.playfairDisplay(
+              fontSize: 18, fontWeight: FontWeight.bold)),
+      content: SizedBox(
+        width: 460,
+        child: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            if (_basePackages.isEmpty)
+              Text(
+                'No hay paquetes creados.\nCréalos primero en Administración → Productos (tipo "Paquete").',
+                style: GoogleFonts.inter(fontSize: 12.5, color: Colors.black54),
+              )
+            else ...[
+              DropdownButtonFormField<String>(
+                initialValue: _basePackageId,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Paquete base'),
+                items: _basePackages
+                    .map((p) => DropdownMenuItem<String>(
+                          value: p['id'] as String,
+                          child: Text((p['name'] as String? ?? '').trim(),
+                              overflow: TextOverflow.ellipsis),
+                        ))
+                    .toList(),
+                onChanged: _onSelectBasePackage,
+              ),
+              if (_basePackageId != null) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _nameCtrl,
+                  decoration:
+                      const InputDecoration(labelText: 'Nombre del paquete'),
+                ),
+                const SizedBox(height: 14),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('SERVICIOS INCLUIDOS',
+                          style: GoogleFonts.inter(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.5,
+                              color: Colors.black54)),
+                      TextButton.icon(
+                        onPressed: () =>
+                            setState(() => _lines.add(_AssignLine())),
+                        icon: const Icon(Icons.add, size: 16),
+                        label: const Text('Agregar'),
+                        style: TextButton.styleFrom(
+                            foregroundColor: SaharaTheme.gold),
+                      ),
+                    ],
+                  ),
+                ),
+                for (int i = 0; i < _lines.length; i++) _lineRow(i),
+                const SizedBox(height: 8),
+                const Divider(height: 1, color: Color(0xFFE6E0D4)),
+                const SizedBox(height: 10),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Total: \$${_finalTotal.toStringAsFixed(0)} MXN · '
+                        '$_sessionsTotal sesión(es)',
+                        style: GoogleFonts.inter(
+                            fontSize: 13.5, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    Row(children: [
+                      Text('Ajustar',
+                          style: GoogleFonts.inter(
+                              fontSize: 11.5, color: Colors.black54)),
+                      Switch(
+                        value: _manualTotal,
+                        activeThumbColor: SaharaTheme.gold,
+                        onChanged: (v) => setState(() {
+                          _manualTotal = v;
+                          if (v && _manualTotalCtrl.text.trim().isEmpty) {
+                            _manualTotalCtrl.text =
+                                _linesTotal.toStringAsFixed(0);
+                          }
+                        }),
+                      ),
+                    ]),
+                  ],
+                ),
+                if (_manualTotal)
+                  TextField(
+                    controller: _manualTotalCtrl,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: const InputDecoration(
+                        labelText: 'Precio final del paquete', prefixText: '\$'),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                const SizedBox(height: 14),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('FORMA DE PAGO',
+                      style: GoogleFonts.inter(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                          color: Colors.black54)),
+                ),
+                const SizedBox(height: 6),
+                Wrap(spacing: 8, children: [
+                  _payChip(1, 'De contado'),
+                  _payChip(2, '2 pagos'),
+                  _payChip(3, '3 pagos'),
+                ]),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: _initialPaymentCtrl,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: const InputDecoration(
+                    labelText: 'Abono inicial (opcional)',
+                    prefixText: '\$',
+                    helperText:
+                        'Lo que el cliente paga ahora. Déjalo vacío si paga después.',
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ],
+            ],
+            if (_error != null) ...[
+              const SizedBox(height: 10),
+              Text(_error!,
+                  style: const TextStyle(color: Colors.red, fontSize: 12)),
+            ],
+          ]),
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: _saving ? null : () => Navigator.pop(context, false),
+            child: const Text('Cancelar')),
+        FilledButton(
+          onPressed: (_saving || _basePackageId == null) ? null : _save,
+          style: FilledButton.styleFrom(
+              backgroundColor: SaharaTheme.gold, foregroundColor: Colors.black),
+          child: _saving
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Asignar paquete'),
+        ),
+      ],
+    );
+  }
+
+  Widget _lineRow(int index) {
+    final line = _lines[index];
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(children: [
+        Expanded(
+          flex: 4,
+          child: DropdownButtonFormField<String?>(
+            initialValue: line.serviceId,
+            isExpanded: true,
+            isDense: true,
+            decoration: const InputDecoration(
+                isDense: true, contentPadding: EdgeInsets.symmetric(vertical: 8)),
+            items: [
+              const DropdownMenuItem<String?>(
+                  value: null, child: Text('Personalizado')),
+              for (final s in _services)
+                DropdownMenuItem<String?>(
+                  value: s['id']?.toString(),
+                  child: Text((s['name'] as String? ?? '').trim(),
+                      overflow: TextOverflow.ellipsis),
+                ),
+            ],
+            onChanged: (value) {
+              setState(() {
+                line.serviceId = value;
+                if (value != null) {
+                  final svc = _services.firstWhere(
+                      (s) => s['id']?.toString() == value,
+                      orElse: () => const {});
+                  line.serviceName = (svc['name'] as String? ?? '').trim();
+                  final p = (svc['price'] as num?)?.toDouble();
+                  if (p != null && line.unitPrice == 0) line.unitPrice = p;
+                }
+              });
+            },
+          ),
+        ),
+        const SizedBox(width: 6),
+        _stepBtn(Icons.remove, () {
+          if (line.quantity > 1) setState(() => line.quantity--);
+        }),
+        SizedBox(
+          width: 24,
+          child: Text('${line.quantity}',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(
+                  fontSize: 13, fontWeight: FontWeight.w600)),
+        ),
+        _stepBtn(Icons.add, () => setState(() => line.quantity++)),
+        const SizedBox(width: 6),
+        SizedBox(
+          width: 70,
+          child: TextFormField(
+            key: ValueKey('assign_price_$index'),
+            initialValue:
+                line.unitPrice == 0 ? '' : line.unitPrice.toStringAsFixed(0),
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            decoration: const InputDecoration(
+                isDense: true, prefixText: '\$'),
+            onChanged: (v) =>
+                setState(() => line.unitPrice = double.tryParse(v) ?? 0),
+          ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.delete_outline, size: 18),
+          color: Colors.redAccent,
+          onPressed: () => setState(() => _lines.removeAt(index)),
+        ),
+      ]),
+    );
+  }
+
+  Widget _stepBtn(IconData icon, VoidCallback onTap) => InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          width: 24,
+          height: 24,
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFF8EE),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: const Color(0xFFE0D2B5)),
+          ),
+          child: Icon(icon, size: 13, color: SaharaTheme.gold),
+        ),
+      );
+
+  Widget _payChip(int n, String label) {
+    final enabled = _allowedInstallments.contains(n);
+    final selected = _installments == n;
+    return ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: enabled ? (_) => setState(() => _installments = n) : null,
+      selectedColor: const Color(0xFFE8D9B8),
+      labelStyle: GoogleFonts.inter(
+        fontSize: 12,
+        fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+        color: enabled ? Colors.black87 : Colors.black26,
+      ),
+      backgroundColor: const Color(0xFFFFF8EE),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(color: Color(0xFFE0D2B5)),
+      ),
     );
   }
 }

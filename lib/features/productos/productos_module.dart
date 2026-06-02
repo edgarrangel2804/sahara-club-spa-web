@@ -20,6 +20,11 @@ class _Product {
   String digitalFileUrl;
   int? durationMinutes;
   bool active;
+  // Paquetes (Fase 1)
+  bool isPackage;
+  String packageType;
+  List<int> installmentsAllowed;
+  int? sessionsTotal;
 
   _Product({
     required this.id,
@@ -34,6 +39,10 @@ class _Product {
     required this.digitalFileUrl,
     required this.durationMinutes,
     required this.active,
+    this.isPackage = false,
+    this.packageType = '',
+    this.installmentsAllowed = const [],
+    this.sessionsTotal,
   });
 
   factory _Product.fromMap(Map<String, dynamic> m) => _Product(
@@ -57,7 +66,28 @@ class _Product {
     digitalFileUrl: (m['digital_file_url'] as String? ?? '').trim(),
     durationMinutes: (m['duration_minutes'] as num?)?.toInt(),
     active: (m['is_active'] as bool?) ?? (m['active'] as bool?) ?? true,
+    isPackage: (m['is_package'] as bool?) ?? false,
+    packageType: (m['package_type'] as String? ?? '').trim(),
+    installmentsAllowed:
+        ((m['installments_allowed'] as List?)?.map((e) => (e as num).toInt()).toList()) ??
+            const [],
+    sessionsTotal: (m['sessions_total'] as num?)?.toInt(),
   );
+}
+
+// Linea de servicio incluida en un paquete (editable en el formulario).
+class _PackageLine {
+  _PackageLine({
+    this.serviceId,
+    this.serviceName = '',
+    this.quantity = 1,
+    this.unitPrice = 0,
+  });
+  String? serviceId;
+  String serviceName;
+  int quantity;
+  double unitPrice;
+  double get total => quantity * unitPrice;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -85,6 +115,7 @@ class _ProductosModuleState extends State<ProductosModule> {
     ('membership', 'Membresias'),
     ('physical', 'Fisicos'),
     ('gift_card', 'Gift cards'),
+    ('package', 'Paquetes'),
   ];
 
   @override
@@ -1024,6 +1055,486 @@ class _UnifiedProductFormDialogState extends State<_UnifiedProductFormDialog> {
   bool _saving = false;
   bool _uploadingDigitalFile = false;
 
+  // ── Paquetes (Fase 1) ──────────────────────────────────────────────
+  late String _packageTemplate =
+      (widget.product?.packageType.isNotEmpty ?? false)
+          ? widget.product!.packageType
+          : 'paquete_1';
+  List<Map<String, dynamic>> _services = const [];
+  bool _servicesLoaded = false;
+  bool _servicesLoading = false;
+  final List<_PackageLine> _packageLines = [];
+  final Set<int> _allowedInstallments = {1};
+  bool _manualPrice = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.product?.isPackage ?? false) {
+      _manualPrice = true; // ya tiene un precio guardado; no autopisarlo
+      final inst = widget.product!.installmentsAllowed;
+      if (inst.isNotEmpty) {
+        _allowedInstallments
+          ..clear()
+          ..addAll(inst);
+      }
+      _ensureServicesLoaded();
+      _loadPackageItems();
+    }
+  }
+
+  // Etiqueta legible de la plantilla de paquete.
+  String _packageTemplateLabel(String template) {
+    switch (template) {
+      case 'paquete_1':
+        return 'Paquete 1';
+      case 'paquete_2':
+        return 'Paquete 2';
+      case 'paquete_3':
+        return 'Paquete 3';
+      case 'paquete_4':
+        return 'Paquete 4';
+      case 'personalizado':
+        return 'Paquete personalizado';
+      default:
+        return 'Paquete';
+    }
+  }
+
+  // Carga los servicios activos para el selector de líneas del paquete.
+  Future<void> _ensureServicesLoaded() async {
+    if (_servicesLoaded || _servicesLoading) return;
+    _servicesLoading = true;
+    try {
+      final rows = await Supabase.instance.client
+          .from('services')
+          .select('id, name, price, is_active')
+          .order('name');
+      final list = (rows as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .where((e) => (e['is_active'] as bool?) ?? true)
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _services = list;
+        _servicesLoaded = true;
+        _servicesLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _services = const [];
+        _servicesLoaded = true;
+        _servicesLoading = false;
+      });
+    }
+  }
+
+  // En modo edición, carga las líneas existentes (package_items) del paquete.
+  Future<void> _loadPackageItems() async {
+    try {
+      final rows = await Supabase.instance.client
+          .from('package_items')
+          .select('service_id, service_name, quantity, unit_price')
+          .eq('package_id', widget.product!.id);
+      final lines = (rows as List).map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        return _PackageLine(
+          serviceId: m['service_id']?.toString(),
+          serviceName: (m['service_name'] as String? ?? '').trim(),
+          quantity: (m['quantity'] as num?)?.toInt() ?? 1,
+          unitPrice: (m['unit_price'] as num?)?.toDouble() ?? 0,
+        );
+      }).toList();
+      if (!mounted) return;
+      setState(() {
+        _packageLines
+          ..clear()
+          ..addAll(lines);
+      });
+    } catch (_) {
+      // sin líneas previas: se queda vacío y editable
+    }
+  }
+
+  double get _packageTotal =>
+      _packageLines.fold<double>(0, (sum, l) => sum + l.total);
+
+  int get _packageSessionsTotal =>
+      _packageLines.fold<int>(0, (sum, l) => sum + l.quantity);
+
+  void _addPackageLine() {
+    setState(() => _packageLines.add(_PackageLine()));
+  }
+
+  // Persiste las líneas del paquete: borra las previas y reinserta el snapshot
+  // actual de la plantilla base (editable). No toca paquetes ya vendidos.
+  Future<void> _savePackageItems(String productId) async {
+    final db = Supabase.instance.client;
+    await db.from('package_items').delete().eq('package_id', productId);
+    final rows = _packageLines
+        .where((l) => l.serviceName.trim().isNotEmpty || l.serviceId != null)
+        .map((l) => {
+              'package_id': productId,
+              'service_id': l.serviceId,
+              'service_name': l.serviceName.trim(),
+              'quantity': l.quantity,
+              'unit_price': l.unitPrice,
+            })
+        .toList();
+    if (rows.isNotEmpty) {
+      await db.from('package_items').insert(rows);
+    }
+  }
+
+  // ── UI del paquete (plantilla editable) ────────────────────────────
+  List<Widget> _packageSection() {
+    return [
+      const SizedBox(height: 18),
+      Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFBF7EF),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFECE2CF)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.inventory_2_outlined,
+                    size: 18, color: Color(0xFFC6A76A)),
+                const SizedBox(width: 8),
+                Text(
+                  'Configuración del paquete',
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF1A1A1A),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Plantilla editable. Al asignarla a un cliente se guarda una copia '
+              'congelada; editar este paquete no afecta los ya vendidos.',
+              style: GoogleFonts.inter(fontSize: 11, color: Colors.black54),
+            ),
+            const SizedBox(height: 14),
+            _Field(
+              label: 'PLANTILLA',
+              child: DropdownButtonFormField<String>(
+                initialValue: _packageTemplate,
+                style: GoogleFonts.inter(fontSize: 13, color: Colors.black87),
+                decoration: _deco(null),
+                items: const [
+                  DropdownMenuItem(
+                      value: 'paquete_1', child: Text('Paquete 1')),
+                  DropdownMenuItem(
+                      value: 'paquete_2', child: Text('Paquete 2')),
+                  DropdownMenuItem(
+                      value: 'paquete_3', child: Text('Paquete 3')),
+                  DropdownMenuItem(
+                      value: 'paquete_4', child: Text('Paquete 4')),
+                  DropdownMenuItem(
+                      value: 'personalizado',
+                      child: Text('Personalizado')),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() {
+                    final prevLabel = _packageTemplateLabel(_packageTemplate);
+                    _packageTemplate = value;
+                    // Si el nombre seguía siendo la etiqueta por defecto, lo
+                    // actualizamos; si el usuario lo personalizó, lo dejamos.
+                    if (_name.text.trim().isEmpty ||
+                        _name.text.trim() == prevLabel) {
+                      if (value != 'personalizado') {
+                        _name.text = _packageTemplateLabel(value);
+                      }
+                    }
+                  });
+                },
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'SERVICIOS INCLUIDOS',
+                  style: GoogleFonts.inter(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
+                    color: Colors.black54,
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: () {
+                    _ensureServicesLoaded();
+                    _addPackageLine();
+                  },
+                  icon: const Icon(Icons.add, size: 16),
+                  label: Text('Agregar',
+                      style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFFC6A76A),
+                  ),
+                ),
+              ],
+            ),
+            if (_servicesLoading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text('Cargando servicios...',
+                    style: TextStyle(fontSize: 12, color: Colors.black45)),
+              ),
+            if (_packageLines.isEmpty && !_servicesLoading)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'Aún no hay servicios. Usa "Agregar" para incluir uno.',
+                  style:
+                      GoogleFonts.inter(fontSize: 12, color: Colors.black45),
+                ),
+              ),
+            for (int i = 0; i < _packageLines.length; i++) _packageLineRow(i),
+            const SizedBox(height: 14),
+            const Divider(height: 1, color: Color(0xFFECE2CF)),
+            const SizedBox(height: 12),
+            // Total + ajuste manual
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Total sugerido (suma de servicios)',
+                        style: GoogleFonts.inter(
+                            fontSize: 11, color: Colors.black54),
+                      ),
+                      Text(
+                        '\$${_packageTotal.toStringAsFixed(0)} MXN  ·  '
+                        '$_packageSessionsTotal sesión(es)',
+                        style: GoogleFonts.inter(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF1A1A1A),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Row(
+                  children: [
+                    Text('Ajustar precio',
+                        style: GoogleFonts.inter(
+                            fontSize: 12, color: Colors.black54)),
+                    Switch(
+                      value: _manualPrice,
+                      activeThumbColor: const Color(0xFFC6A76A),
+                      onChanged: (v) {
+                        setState(() {
+                          _manualPrice = v;
+                          if (v && _price.text.trim().isEmpty) {
+                            _price.text = _packageTotal.toStringAsFixed(0);
+                          }
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            if (_manualPrice) ...[
+              const SizedBox(height: 8),
+              _Field(
+                label: 'PRECIO FINAL DEL PAQUETE',
+                child: TextFormField(
+                  controller: _price,
+                  style: GoogleFonts.inter(fontSize: 13),
+                  decoration: _deco('\$0').copyWith(prefixText: '\$'),
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            Text(
+              'FORMA DE PAGO PERMITIDA',
+              style: GoogleFonts.inter(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.5,
+                color: Colors.black54,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [
+                _installmentChip(1, 'De contado'),
+                _installmentChip(2, '2 pagos'),
+                _installmentChip(3, '3 pagos'),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ];
+  }
+
+  Widget _packageLineRow(int index) {
+    final line = _packageLines[index];
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // Servicio
+          Expanded(
+            flex: 4,
+            child: DropdownButtonFormField<String?>(
+              initialValue: line.serviceId,
+              isExpanded: true,
+              style: GoogleFonts.inter(fontSize: 12, color: Colors.black87),
+              decoration: _deco('Servicio').copyWith(
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 10),
+              ),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('Personalizado'),
+                ),
+                for (final s in _services)
+                  DropdownMenuItem<String?>(
+                    value: s['id']?.toString(),
+                    child: Text(
+                      (s['name'] as String? ?? '').trim(),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  line.serviceId = value;
+                  if (value != null) {
+                    final svc = _services.firstWhere(
+                      (s) => s['id']?.toString() == value,
+                      orElse: () => const {},
+                    );
+                    line.serviceName =
+                        (svc['name'] as String? ?? '').trim();
+                    final p = (svc['price'] as num?)?.toDouble();
+                    if (p != null && line.unitPrice == 0) line.unitPrice = p;
+                  }
+                });
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Cantidad (stepper)
+          Row(
+            children: [
+              _stepBtn(Icons.remove, () {
+                if (line.quantity > 1) {
+                  setState(() => line.quantity--);
+                }
+              }),
+              SizedBox(
+                width: 26,
+                child: Text(
+                  '${line.quantity}',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.inter(
+                      fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+              ),
+              _stepBtn(Icons.add, () => setState(() => line.quantity++)),
+            ],
+          ),
+          const SizedBox(width: 8),
+          // Precio unitario
+          SizedBox(
+            width: 80,
+            child: TextFormField(
+              key: ValueKey('pkg_price_$index'),
+              initialValue:
+                  line.unitPrice == 0 ? '' : line.unitPrice.toStringAsFixed(0),
+              style: GoogleFonts.inter(fontSize: 12),
+              decoration: _deco('\$').copyWith(
+                prefixText: '\$',
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 10),
+              ),
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              onChanged: (v) {
+                setState(() => line.unitPrice = double.tryParse(v) ?? 0);
+              },
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline, size: 18),
+            color: Colors.redAccent,
+            onPressed: () => setState(() => _packageLines.removeAt(index)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _stepBtn(IconData icon, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        width: 26,
+        height: 26,
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF8EE),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: const Color(0xFFE0D2B5)),
+        ),
+        child: Icon(icon, size: 14, color: const Color(0xFFC6A76A)),
+      ),
+    );
+  }
+
+  Widget _installmentChip(int n, String label) {
+    final selected = _allowedInstallments.contains(n);
+    return FilterChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: (value) {
+        setState(() {
+          if (value) {
+            _allowedInstallments.add(n);
+          } else if (_allowedInstallments.length > 1) {
+            _allowedInstallments.remove(n);
+          }
+        });
+      },
+      selectedColor: const Color(0xFFE8D9B8),
+      checkmarkColor: const Color(0xFF1A1A1A),
+      labelStyle: GoogleFonts.inter(
+        fontSize: 12,
+        fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+        color: Colors.black87,
+      ),
+      backgroundColor: const Color(0xFFFFF8EE),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(color: Color(0xFFE0D2B5)),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _name.dispose();
@@ -1042,9 +1553,16 @@ class _UnifiedProductFormDialogState extends State<_UnifiedProductFormDialog> {
     setState(() => _saving = true);
     try {
       final normalizedType = _normalizeProductType(_productType);
+      final isPackage = normalizedType == 'package';
       final stockValue =
           normalizedType == 'physical' ? (int.tryParse(_stock.text) ?? 0) : 999;
       final durationValue = int.tryParse(_duration.text);
+
+      // Para paquetes el precio es la suma de los servicios, salvo que se
+      // ajuste manualmente. Las sesiones totales = suma de cantidades.
+      final priceValue = isPackage && !_manualPrice
+          ? _packageTotal
+          : (double.tryParse(_price.text) ?? 0);
 
       final payload = <String, dynamic>{
         'name': _name.text.trim(),
@@ -1053,7 +1571,7 @@ class _UnifiedProductFormDialogState extends State<_UnifiedProductFormDialog> {
         'short_description': _shortDesc.text.trim().isEmpty
             ? _desc.text.trim()
             : _shortDesc.text.trim(),
-        'price': double.tryParse(_price.text) ?? 0,
+        'price': priceValue,
         'currency': 'MXN',
         'stock': stockValue,
         'stock_quantity': stockValue,
@@ -1072,10 +1590,25 @@ class _UnifiedProductFormDialogState extends State<_UnifiedProductFormDialog> {
         'is_active': _active,
       };
 
+      if (isPackage) {
+        final installments = (_allowedInstallments.toList()..sort());
+        payload['is_package'] = true;
+        payload['package_type'] = _packageTemplate;
+        payload['payment_plan_enabled'] = installments.any((n) => n > 1);
+        payload['installments_allowed'] = installments;
+        payload['sessions_total'] = _packageSessionsTotal;
+      }
+
       if (widget.product == null) {
-        await _persistProductInsert(payload);
+        final newId = await _persistProductInsert(payload);
+        if (isPackage && newId != null) {
+          await _savePackageItems(newId);
+        }
       } else {
         await _persistProductUpdate(widget.product!.id, payload);
+        if (isPackage) {
+          await _savePackageItems(widget.product!.id);
+        }
       }
 
       if (!mounted) return;
@@ -1160,15 +1693,23 @@ class _UnifiedProductFormDialogState extends State<_UnifiedProductFormDialog> {
     }
   }
 
-  Future<void> _persistProductInsert(Map<String, dynamic> payload) async {
+  Future<String?> _persistProductInsert(Map<String, dynamic> payload) async {
     final supportsRichSchema = await _detectRichProductSchema();
     final normalizedPayload = _payloadWithLegacyTypeFields(payload);
     if (supportsRichSchema) {
-      await Supabase.instance.client.from('products').insert(normalizedPayload);
-    } else {
-      await Supabase.instance.client
+      final inserted = await Supabase.instance.client
           .from('products')
-          .insert(_legacyDialogPayload(normalizedPayload));
+          .insert(normalizedPayload)
+          .select('id')
+          .single();
+      return inserted['id']?.toString();
+    } else {
+      final inserted = await Supabase.instance.client
+          .from('products')
+          .insert(_legacyDialogPayload(normalizedPayload))
+          .select('id')
+          .single();
+      return inserted['id']?.toString();
     }
   }
 
@@ -1329,6 +1870,10 @@ class _UnifiedProductFormDialogState extends State<_UnifiedProductFormDialog> {
                                 value: 'gift_card',
                                 child: Text('Gift card'),
                               ),
+                              DropdownMenuItem(
+                                value: 'package',
+                                child: Text('Paquete'),
+                              ),
                             ],
                             onChanged: (value) {
                               if (value == null) return;
@@ -1337,6 +1882,12 @@ class _UnifiedProductFormDialogState extends State<_UnifiedProductFormDialog> {
                                 _category = _categoryForType(value, _category);
                                 if (value != 'physical') {
                                   _stock.text = '999';
+                                }
+                                if (value == 'package') {
+                                  _ensureServicesLoaded();
+                                  if (_name.text.trim().isEmpty) {
+                                    _name.text = _packageTemplateLabel(_packageTemplate);
+                                  }
                                 }
                               });
                             },
@@ -1364,6 +1915,7 @@ class _UnifiedProductFormDialogState extends State<_UnifiedProductFormDialog> {
                       ),
                     ],
                   ),
+                  if (_productType != 'package') ...[
                   const SizedBox(height: 14),
                   Row(
                     children: [
@@ -1423,6 +1975,8 @@ class _UnifiedProductFormDialogState extends State<_UnifiedProductFormDialog> {
                       ),
                     ],
                   ),
+                  ],
+                  if (_productType == 'package') ..._packageSection(),
                   const SizedBox(height: 14),
                   _Field(
                     label: 'IMAGEN / PORTADA',
@@ -1745,6 +2299,7 @@ String _normalizeProductCategory(String? raw) {
     case 'digital':
     case 'memberships':
     case 'gift_cards':
+    case 'paquetes':
     case 'physical':
     case 'general':
     case 'aceite':
@@ -1780,6 +2335,14 @@ String _normalizeProductType(
   String? fallbackCategory,
   String? name,
 }) {
+  // Paquete: solo por senal explicita (product_type='package' o categoria
+  // 'paquetes'). NO por nombre, para no clasificar mal cosas como
+  // "paquete de velas" que en realidad son fisicos.
+  final rawLower = (raw ?? '').trim().toLowerCase();
+  final catLower = (fallbackCategory ?? '').trim().toLowerCase();
+  if (rawLower == 'package' || catLower == 'paquetes' || catLower == 'paquete') {
+    return 'package';
+  }
   final haystack =
       '${raw ?? ''} ${fallbackCategory ?? ''} ${name ?? ''}'.toLowerCase();
   if (haystack.contains('membership') || haystack.contains('membres')) {
@@ -1818,6 +2381,8 @@ String _categoryForType(String type, String? currentCategory) {
       return 'memberships';
     case 'gift_card':
       return 'gift_cards';
+    case 'package':
+      return 'paquetes';
     case 'physical':
       final normalized = _normalizeProductCategory(currentCategory);
       if (const {
@@ -1904,6 +2469,10 @@ List<DropdownMenuItem<String>> _categoryItemsFor(String type) {
       return const [
         DropdownMenuItem(value: 'gift_cards', child: Text('Gift cards')),
       ];
+    case 'package':
+      return const [
+        DropdownMenuItem(value: 'paquetes', child: Text('Paquetes')),
+      ];
     case 'physical':
       return const [
         DropdownMenuItem(value: 'physical', child: Text('Productos fisicos')),
@@ -1929,6 +2498,7 @@ String _catLabel(String cat) {
     'digital': 'Digital',
     'memberships': 'Membresias',
     'gift_cards': 'Gift cards',
+    'paquetes': 'Paquetes',
     'physical': 'Fisicos',
     'general': 'General',
     'aceite': 'Aceite',

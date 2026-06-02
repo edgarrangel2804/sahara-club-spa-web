@@ -771,6 +771,9 @@ async function execTool(
                   // === WAIVER APPLIES ===
                   const giftCardId = reqResult.gift_card_id as string | null
                   const membershipId = reqResult.membership_id as string | null
+                  const clientPackageId = reqResult.client_package_id as string | null
+                  const clientPackageSessionId =
+                    reqResult.client_package_session_id as string | null
                   await supabase
                     .from("bookings")
                     .update({
@@ -779,6 +782,8 @@ async function execTool(
                       waiver_reason: waiverReason,
                       gift_card_id: giftCardId,
                       membership_id: membershipId,
+                      client_package_id: clientPackageId,
+                      client_package_session_id: clientPackageSessionId,
                       deposit_required_cents: depositCents,
                     })
                     .eq("id", bookingId)
@@ -798,7 +803,9 @@ async function execTool(
                       ? "Gift card activa con saldo"
                       : waiverReason === "membership"
                         ? "Membresía activa con sesiones"
-                        : "Override admin"
+                        : waiverReason === "package"
+                          ? "Paquete activo con sesiones"
+                          : "Override admin"
                     const alert = [
                       "📅 *Nueva solicitud IA (sin anticipo)*",
                       "",
