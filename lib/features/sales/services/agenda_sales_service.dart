@@ -184,6 +184,42 @@ class AgendaSalesService {
     );
   }
 
+  // Canjea el gift card (vale de un solo uso) del cliente para el servicio de la
+  // cita. Marca la tarjeta como redeemed vía RPC atómico. Lanza si no hay una
+  // tarjeta válida, para abortar el cobro.
+  Future<void> _redeemServiceGiftCard({
+    String? bookingId,
+    required double amount,
+  }) async {
+    final id = bookingId?.trim() ?? '';
+    if (id.isEmpty) {
+      throw Exception(
+          'No se puede pagar con gift card: la venta no tiene una cita asociada.');
+    }
+    final booking = await _client
+        .from('bookings')
+        .select('client_record_id, service_id')
+        .eq('id', id)
+        .maybeSingle();
+    final clientId = (booking?['client_record_id'] as String?)?.trim();
+    final serviceId = (booking?['service_id'] as String?)?.trim();
+    if (clientId == null || clientId.isEmpty ||
+        serviceId == null || serviceId.isEmpty) {
+      throw Exception(
+          'La cita no tiene cliente o servicio para canjear el gift card.');
+    }
+    final res = await _client.rpc('redeem_service_gift_card', params: {
+      'p_client_id': clientId,
+      'p_service_id': serviceId,
+      'p_booking_id': id,
+      'p_amount': amount,
+    });
+    final map = Map<String, dynamic>.from(res as Map);
+    if (map['ok'] != true) {
+      throw Exception(map['error']?.toString() ?? 'No se pudo canjear el gift card.');
+    }
+  }
+
   Future<void> collectPayment({
     required String saleId,
     required String paymentMethod,
@@ -195,6 +231,14 @@ class AgendaSalesService {
   }) async {
     final double finalTotal = max(0.0, baseTotal - discount + tip).toDouble();
     final currentUserId = _client.auth.currentUser?.id;
+
+    // Gift card de un solo uso por servicio: se canjea ANTES de marcar la venta
+    // para poder abortar el cobro si el cliente no tiene una tarjeta válida para
+    // este servicio. Si el canje falla, lanza y no se registra nada del cobro.
+    if (paymentMethod == 'gift_card') {
+      await _redeemServiceGiftCard(bookingId: bookingId, amount: finalTotal);
+    }
+
     String existingNotes = '';
 
     try {
