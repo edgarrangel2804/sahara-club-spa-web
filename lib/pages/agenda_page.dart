@@ -9932,7 +9932,7 @@ const List<_WhatsAppMessageOption> _kMessageOptions = [
   ),
 ];
 
-class _WhatsAppMessageCenterButton extends StatelessWidget {
+class _WhatsAppMessageCenterButton extends StatefulWidget {
   const _WhatsAppMessageCenterButton({
     required this.booking,
     required this.onSendTemplate,
@@ -9940,6 +9940,73 @@ class _WhatsAppMessageCenterButton extends StatelessWidget {
 
   final _Booking booking;
   final Future<void> Function(String templateKey) onSendTemplate;
+
+  @override
+  State<_WhatsAppMessageCenterButton> createState() =>
+      _WhatsAppMessageCenterButtonState();
+}
+
+class _WhatsAppMessageCenterButtonState
+    extends State<_WhatsAppMessageCenterButton> {
+  // template_key -> cuerpo de la plantilla (con placeholders [[...]])
+  final Map<String, String> _bodies = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTemplateBodies();
+  }
+
+  Future<void> _loadTemplateBodies() async {
+    try {
+      final data = await Supabase.instance.client
+          .from('whatsapp_templates')
+          .select('template_key, message_body, message');
+      if (!mounted) return;
+      setState(() {
+        for (final row in (data as List)) {
+          final m = row as Map;
+          final key = m['template_key']?.toString();
+          final body = (m['message_body'] ?? m['message'])?.toString();
+          if (key != null && body != null && body.trim().isNotEmpty) {
+            _bodies[key] = body;
+          }
+        }
+      });
+    } catch (_) {
+      // Sin preview; el menú sigue funcionando con la descripción corta.
+    }
+  }
+
+  // Rellena los placeholders [[...]] con los datos reales de la cita, para que
+  // recepción vea exactamente lo que se enviará antes de mandarlo.
+  String? _renderPreview(String key) {
+    final body = _bodies[key];
+    if (body == null) return null;
+    final b = widget.booking;
+    String two(int n) => n.toString().padLeft(2, '0');
+    final fecha = '${two(b.date.day)}/${two(b.date.month)}/${b.date.year}';
+    final hora = '${two(b.startMinute ~/ 60)}:${two(b.startMinute % 60)}';
+    final repl = <String, String>{
+      'nombre_cliente': b.clientName,
+      'fecha_reserva': fecha,
+      'hora_reserva': hora,
+      'nombre_servicio': b.serviceName,
+      'nombre_terapeuta': b.therapistName,
+      'nombre_local': (b.branchName ?? '').trim().isEmpty
+          ? 'Sahara Club Spa'
+          : b.branchName!.trim(),
+      'direccion_local': (b.branchAddress ?? '').trim(),
+      'codigo_reserva': b.id.length >= 8
+          ? b.id.substring(0, 8).toUpperCase()
+          : b.id.toUpperCase(),
+      'link_pago': '(enlace de pago)',
+      'emoji_confirmacion': '✨',
+    };
+    var out = body;
+    repl.forEach((k, v) => out = out.replaceAll('[[$k]]', v));
+    return out.trim();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -9950,13 +10017,37 @@ class _WhatsAppMessageCenterButton extends StatelessWidget {
       onSelected: (key) async {
         final confirmed = await _confirmSend(context, key);
         if (confirmed != true) return;
-        await onSendTemplate(key);
+        await widget.onSendTemplate(key);
       },
       itemBuilder: (ctx) => _kMessageOptions
           .map(
             (opt) => PopupMenuItem<String>(
               value: opt.key,
-              child: ConstrainedBox(
+              child: Tooltip(
+                // Hover ~2s sobre la opción muestra el texto real del mensaje
+                // (con los datos de la cita) para que recepción confirme qué
+                // se enviará, no solo el título.
+                waitDuration: const Duration(seconds: 2),
+                preferBelow: false,
+                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFDCF8C6),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFB7E0A0)),
+                ),
+                richMessage: WidgetSpan(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 300),
+                    child: Text(
+                      _renderPreview(opt.key) ??
+                          'Cargando vista previa del mensaje…',
+                      style: GoogleFonts.inter(
+                          fontSize: 12, color: Colors.black87, height: 1.4),
+                    ),
+                  ),
+                ),
+                child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 280),
                 child: Row(
                   children: [
@@ -9998,6 +10089,7 @@ class _WhatsAppMessageCenterButton extends StatelessWidget {
                   ],
                 ),
               ),
+            ),
             ),
           )
           .toList(),
@@ -10061,7 +10153,7 @@ class _WhatsAppMessageCenterButton extends StatelessWidget {
           ],
         ),
         content: Text(
-          '¿Enviar mensaje de WhatsApp a ${booking.clientName}?\n\n${opt.description}',
+          '¿Enviar mensaje de WhatsApp a ${widget.booking.clientName}?\n\n${opt.description}',
           style: GoogleFonts.inter(fontSize: 13, color: Colors.black87),
         ),
         actions: [
