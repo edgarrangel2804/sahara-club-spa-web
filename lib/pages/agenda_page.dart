@@ -6409,6 +6409,8 @@ String _paymentLineLabel(_Booking b) {
         return 'Gift Card · sin anticipo';
       case 'membership':
         return 'Membresía · sin anticipo';
+      case 'package':
+        return 'Pagado con paquete';
       case 'admin_override':
         return 'Sin anticipo · autorizado';
       default:
@@ -6426,6 +6428,8 @@ Color _paymentLineColor(_Booking b) {
         return const Color(0xFFE07B00);
       case 'membership':
         return const Color(0xFF6A54E0);
+      case 'package':
+        return const Color(0xFF2D8A4F);
       default:
         return const Color(0xFF2D8A4F);
     }
@@ -7759,6 +7763,13 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
   // al cliente sin que humano haya validado.
   String _status = 'scheduled';
   bool _saving = false;
+
+  // ── Paquete de sesiones activo del cliente ──────────────────────────────
+  // Se detecta automáticamente al seleccionar cliente + servicio.
+  // Si el cliente tiene sesiones disponibles se ofrece usarlas.
+  Map<String, dynamic>? _activePackage;   // fila de client_packages
+  bool _usePackage = false;               // recepción activa la opción
+  bool _checkingPackage = false;
   bool _showInfo = false;
   bool _serviceOpen = false;
   String _serviceSearch = '';
@@ -7937,6 +7948,40 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
     }
   }
 
+  // Detecta si el cliente tiene un paquete activo para el servicio seleccionado.
+  // Se llama al cambiar cliente o servicio; actualiza _activePackage y resetea _usePackage.
+  Future<void> _checkActivePackage() async {
+    final clientId = _clientId?.trim() ?? '';
+    final serviceId = _serviceId?.trim() ?? '';
+    if (clientId.isEmpty || serviceId.isEmpty) {
+      if (mounted) setState(() { _activePackage = null; _usePackage = false; });
+      return;
+    }
+    setState(() => _checkingPackage = true);
+    try {
+      // Busca un client_package activo cuyo base_service_id coincida con el
+      // servicio de la cita y que tenga sesiones pendientes.
+      final rows = await Supabase.instance.client
+          .from('client_packages')
+          .select('id, name, sessions_total, sessions_used, sessions_remaining')
+          .eq('client_id', clientId)
+          .eq('base_service_id', serviceId)
+          .eq('status', 'activo')
+          .gt('sessions_remaining', 0)
+          .order('purchased_at')
+          .limit(1);
+      if (!mounted) return;
+      final list = (rows as List).cast<Map<String, dynamic>>();
+      setState(() {
+        _activePackage = list.isEmpty ? null : list.first;
+        if (_activePackage == null) _usePackage = false;
+        _checkingPackage = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() { _checkingPackage = false; });
+    }
+  }
+
   Future<Iterable<Map<String, dynamic>>> _searchClients(
     TextEditingValue v,
   ) async {
@@ -8030,6 +8075,22 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
         throw Exception(validation.errorMessage ?? 'No se pudo validar la reserva.');
       }
       final result = await _bookingSyncService.upsertBooking(draft);
+
+      // Si recepción eligió usar una sesión de paquete, marcamos el booking
+      // con client_package_id y waiver_reason='package'. El trigger
+      // apply_waiver_on_booking_confirm descuentará la sesión cuando la cita
+      // pase a 'confirmed'.
+      if (_usePackage && _activePackage != null && result != null) {
+        final bookingId = result['id']?.toString();
+        if (bookingId != null) {
+          await Supabase.instance.client.from('bookings').update({
+            'payment_requirement': 'waived',
+            'waiver_reason': 'package',
+            'client_package_id': _activePackage!['id'],
+          }).eq('id', bookingId);
+        }
+      }
+
       if (validation.warningMessage != null && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -8389,9 +8450,10 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
                                   optionsBuilder: _searchClients,
                                   displayStringForOption: (o) =>
                                       o['full_name'] as String? ?? '',
-                                  onSelected: (o) => setState(
-                                    () => _clientId = o['id'] as String,
-                                  ),
+                                  onSelected: (o) {
+                                    setState(() => _clientId = o['id'] as String);
+                                    _checkActivePackage();
+                                  },
                                   fieldViewBuilder:
                                       (ctx, ctrl, focus, onSubmitted) =>
                                           TextField(
@@ -8537,6 +8599,66 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
                     ),
 
                     const SizedBox(height: 12),
+
+                    // ── Banner: paquete activo detectado ──────────────────
+                    if (_checkingPackage)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 4),
+                        child: LinearProgressIndicator(color: SaharaTheme.gold),
+                      )
+                    else if (_activePackage != null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF2D8A4F).withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                              color: const Color(0xFF2D8A4F)
+                                  .withValues(alpha: 0.35)),
+                        ),
+                        child: Row(children: [
+                          const Icon(Icons.local_activity_outlined,
+                              size: 18, color: Color(0xFF2D8A4F)),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '${_activePackage!['name']}',
+                                  style: GoogleFonts.inter(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                      color: const Color(0xFF1A6035)),
+                                ),
+                                Text(
+                                  'Restan ${_activePackage!['sessions_remaining']} de '
+                                  '${_activePackage!['sessions_total']} sesiones',
+                                  style: GoogleFonts.inter(
+                                      fontSize: 12,
+                                      color: const Color(0xFF2D8A4F)),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Switch(
+                            value: _usePackage,
+                            activeColor: const Color(0xFF2D8A4F),
+                            onChanged: (v) => setState(() => _usePackage = v),
+                          ),
+                          Text(
+                            _usePackage ? 'Usar sesión' : 'No usar',
+                            style: GoogleFonts.inter(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: _usePackage
+                                    ? const Color(0xFF2D8A4F)
+                                    : Colors.black38),
+                          ),
+                        ]),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
 
                     // Card: Profesional
                     _NbCard(
@@ -8737,15 +8859,15 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
                                     final s = _filteredServices[i];
                                     final selected = _serviceId == s['id'];
                                     return InkWell(
-                                      onTap: () => setState(() {
-                                        _serviceId = s['id'] as String;
-                                        _serviceOpen = false;
-                                        _serviceSearch = '';
-                                        // Al elegir servicio, la hora de fin
-                                        // vuelve a seguir su duracion (se quita
-                                        // cualquier extension manual previa).
-                                        _customDurationMin = null;
-                                      }),
+                                      onTap: () {
+                                        setState(() {
+                                          _serviceId = s['id'] as String;
+                                          _serviceOpen = false;
+                                          _serviceSearch = '';
+                                          _customDurationMin = null;
+                                        });
+                                        _checkActivePackage();
+                                      },
                                       child: Container(
                                         padding: const EdgeInsets.symmetric(
                                           horizontal: 16,

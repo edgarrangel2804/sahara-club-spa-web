@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../theme/sahara_theme.dart';
+import 'client_packages_panel.dart';
 
 // ── UUID helper (no external package needed) ──────────────────────────────────
 String _genUuid() {
@@ -841,6 +842,13 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
               onSeeMovements: () => _openMovementsDialog(),
               onRefresh: _loadBenefits,
               onRegisterPayment: (pkg) => _openRegisterPaymentDialog(pkg),
+            ),
+            const SizedBox(height: 16),
+
+            // ── Paquetes de sesiones ─────────────────────────────────────────
+            ClientPackagesPanel(
+              clientId: c.id,
+              clientName: c.fullName,
             ),
             const SizedBox(height: 16),
 
