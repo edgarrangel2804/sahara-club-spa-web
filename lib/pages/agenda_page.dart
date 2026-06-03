@@ -20,9 +20,13 @@ import '../features/reportes/reportes_module.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
-const _kHourHeight = 64.0;
-// Más ancho que antes (64) para que la etiqueta de hora en 12h con AM/PM
-// (p. ej. "10:30 AM") quepa en una sola línea sin envolverse.
+// Altura de una hora completa en la grilla (px). Todas las alturas y posiciones
+// se calculan como: top = minutosDesdeInicio / 60 * _kHourHeight
+//                  height = duracionMinutos  / 60 * _kHourHeight
+const _kHourHeight = 96.0;          // 96 px = 1 hora (era 64 — más espacio visual)
+const _kSnapMinutes = 15;            // precisión interna de drag/resize
+const _kShowSubdivisionLines = false; // false = solo líneas por hora (Agenda Pro)
+// Más ancho que antes para que la etiqueta de hora quepa sin envolverse.
 const _kTimeColWidth = 76.0;
 const _kSidebarWidth = 224.0;
 const _kDefaultCalendarStartMinute = 0;
@@ -5466,8 +5470,11 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
     }
 
     final totalMinutes = widget.calendarHours.totalDisplayMinutes;
-    final halfHourRows = max(1, (totalMinutes / 30).ceil());
-    final gridHeight = halfHourRows * (_kHourHeight / 2);
+    // Grilla basada en horas completas (Agenda Pro style).
+    // _kShowSubdivisionLines = false → solo líneas y etiquetas cada 60 min.
+    // La precisión interna (_kSnapMinutes = 15) no cambia.
+    final hourRows = max(1, (totalMinutes / 60).ceil());
+    final gridHeight = hourRows * _kHourHeight;
 
     return LayoutBuilder(builder: (context, constraints) {
       final available =
@@ -5599,20 +5606,20 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Columna de horas
+                    // Columna de horas — solo etiquetas por hora completa
                     SizedBox(
                       width: _kHourLabelWidth,
                       child: Column(
                         children: List.generate(
-                          halfHourRows,
+                          hourRows,
                           (i) {
                             final m =
-                                widget.calendarHours.startMinute + i * 30;
+                                widget.calendarHours.startMinute + i * 60;
                             final inBusiness = _isBusinessHour(m);
                             return Container(
-                              height: _kHourHeight / 2,
+                              height: _kHourHeight,
                               padding: const EdgeInsets.only(
-                                  right: 6, top: 2),
+                                  right: 6, top: 4),
                               decoration: const BoxDecoration(
                                 border: Border(
                                   right: BorderSide(color: Color(0xFFE0DDD8)),
@@ -5622,10 +5629,10 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
                               child: Text(
                                 _minuteLabel24(m),
                                 style: GoogleFonts.inter(
-                                  fontSize: 10,
+                                  fontSize: 11,
                                   color: inBusiness
-                                      ? Colors.black
-                                      : Colors.black54,
+                                      ? Colors.black87
+                                      : Colors.black45,
                                   fontWeight: inBusiness
                                       ? FontWeight.w700
                                       : FontWeight.w400,
@@ -5859,19 +5866,20 @@ class _TherapistColumn extends StatelessWidget {
       ),
       child: Stack(
         children: [
-          // Líneas horizontales cada 30 minutos
+          // Líneas horizontales por hora completa (Agenda Pro style).
+          // _kShowSubdivisionLines = false → no se dibujan medias horas.
+          // La precisión interna de snap (_kSnapMinutes = 15) no cambia.
           ...List.generate(
-            max(1, (gridHeight / (_kHourHeight / 2)).ceil()),
+            max(1, (gridHeight / _kHourHeight).ceil()),
             (i) {
-              final m = calendarHours.startMinute + i * 30;
-              final isHour = m % 60 == 0;
+              final m = calendarHours.startMinute + i * 60;
               return Positioned(
                 top: _topForMinute(m),
                 left: 0,
                 right: 0,
                 child: Container(
                   height: 1,
-                  color: Color(isHour ? 0xFFE0DDD8 : 0xFFF1EEE9),
+                  color: const Color(0xFFE0DDD8),
                 ),
               );
             },
