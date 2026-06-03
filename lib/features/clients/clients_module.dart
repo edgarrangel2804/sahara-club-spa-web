@@ -2175,6 +2175,7 @@ class _GiftCardFormDialogState extends State<_GiftCardFormDialog> {
   List<Map<String, dynamic>> _services = [];
   String? _serviceId;
   bool _loadingServices = true;
+  String _paymentMethod = 'efectivo'; // método de pago al vender la gift card
 
   String _genCode() {
     final ts = DateTime.now().millisecondsSinceEpoch.toRadixString(36).toUpperCase();
@@ -2235,34 +2236,62 @@ class _GiftCardFormDialogState extends State<_GiftCardFormDialog> {
     });
     try {
       final me = Supabase.instance.client.auth.currentUser?.id;
-      final res = await Supabase.instance.client
-          .from('gift_cards')
-          .insert({
-            'code': _codeCtrl.text.trim(),
-            'initial_balance': amount,
-            'current_balance': amount,
-            'currency': 'MXN',
-            'client_id': widget.client.id,
-            'recipient_name': widget.client.fullName,
-            'service_id': _serviceId,
-            'service_name': serviceName,
-            'valid_from': DateTime.now().toIso8601String(),
-            'expires_at': _expires.toIso8601String(),
-            'status': 'active',
-          })
-          .select('id')
-          .single();
+      final db = Supabase.instance.client;
+
+      // 1) Registrar la venta como ingreso del día (igual que los paquetes).
+      //    El cliente compra la gift card hoy; debe aparecer en finanzas hoy.
+      final saleRes = await db.from('sales').insert({
+        'customer_id': widget.client.id,
+        'total': amount,
+        'subtotal': amount,
+        'payment_method': _paymentMethod,
+        'payment_status': 'paid',
+        'sale_status': 'completed',
+        'status': 'paid',
+        'created_by': me,
+        'notes': 'Venta de gift card · Servicio: $serviceName',
+      }).select('id').single();
+      final saleId = saleRes['id'] as String;
+
+      await db.from('sale_items').insert({
+        'sale_id': saleId,
+        'name': 'Gift card · $serviceName',
+        'description': 'Gift card para 1 sesión de $serviceName',
+        'quantity': 1,
+        'unit_price': amount,
+        'total_price': amount,
+        'service_id': _serviceId,
+      });
+
+      // 2) Crear la gift card vinculada a la venta.
+      final res = await db.from('gift_cards').insert({
+        'code': _codeCtrl.text.trim(),
+        'initial_balance': amount,
+        'current_balance': amount,
+        'currency': 'MXN',
+        'client_id': widget.client.id,
+        'recipient_name': widget.client.fullName,
+        'service_id': _serviceId,
+        'service_name': serviceName,
+        'valid_from': DateTime.now().toIso8601String(),
+        'expires_at': _expires.toIso8601String(),
+        'status': 'active',
+        'notes': 'Venta registrada. Sale ID: $saleId',
+      }).select('id').single();
       final gcId = res['id'] as String;
-      await Supabase.instance.client.from('gift_card_transactions').insert({
+
+      // 3) Transacción interna de la gift card (historial de saldo).
+      await db.from('gift_card_transactions').insert({
         'gift_card_id': gcId,
         'client_id': widget.client.id,
         'type': 'load',
         'amount': amount,
         'balance_before': 0,
         'balance_after': amount,
-        'notes': 'Carga inicial · Servicio: $serviceName',
+        'notes': 'Carga inicial · Servicio: $serviceName · Cobrado por $_paymentMethod',
         'created_by': me,
       });
+
       if (!mounted) return;
       Navigator.pop(context, true);
     } catch (e) {
@@ -2330,6 +2359,19 @@ class _GiftCardFormDialogState extends State<_GiftCardFormDialog> {
             ),
           ],
           const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: _paymentMethod,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Método de pago'),
+            items: const [
+              DropdownMenuItem(value: 'efectivo',      child: Text('Efectivo')),
+              DropdownMenuItem(value: 'tarjeta',       child: Text('Tarjeta')),
+              DropdownMenuItem(value: 'transferencia', child: Text('Transferencia')),
+              DropdownMenuItem(value: 'stripe',        child: Text('Stripe')),
+            ],
+            onChanged: (v) { if (v != null) setState(() => _paymentMethod = v); },
+          ),
+          const SizedBox(height: 12),
           Row(children: [
             Expanded(
               child: Text('Vence: ${_expires.day}/${_expires.month}/${_expires.year}',
@@ -2366,7 +2408,7 @@ class _GiftCardFormDialogState extends State<_GiftCardFormDialog> {
               ? const SizedBox(
                   width: 16, height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2))
-              : const Text('Guardar'),
+              : const Text('Guardar y registrar venta'),
         ),
       ],
     );
