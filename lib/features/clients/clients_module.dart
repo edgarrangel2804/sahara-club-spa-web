@@ -2004,28 +2004,14 @@ class _PackagePaymentDialogState extends State<_PackagePaymentDialog> {
     });
     try {
       final db = Supabase.instance.client;
-      await db.from('client_package_payments').update({
-        'status': 'pagado',
-        'paid_at': DateTime.now().toIso8601String(),
-        'payment_method': _method,
-      }).eq('id', p['id']);
-
-      // Recalcular pagado/pendiente desde la fuente (evita desincronización).
-      final rows = await db
-          .from('client_package_payments')
-          .select('amount, status')
-          .eq('client_package_id', _pkgId);
-      double paid = 0;
-      for (final r in (rows as List)) {
-        if ((r['status'] as String?) == 'pagado') {
-          paid += (r['amount'] as num?)?.toDouble() ?? 0;
-        }
-      }
-      final pending = (_total - paid).clamp(0, _total).toDouble();
-      await db.from('client_packages').update({
-        'paid_amount': paid,
-        'pending_amount': pending,
-      }).eq('id', _pkgId);
+      // RPC pay_package_installment: marca el abono pagado, registra el ingreso
+      // del día (base caja) y recalcula paid_amount. No toca pending_amount
+      // (es columna generada) ni desincroniza nada.
+      await db.rpc('pay_package_installment', params: {
+        'p_payment_id': p['id'],
+        'p_payment_method': _method,
+        'p_created_by': db.auth.currentUser?.id,
+      });
 
       _changed = true;
       await _load();
@@ -2774,66 +2760,22 @@ class _PackageAssignDialogState extends State<_PackageAssignDialog> {
               })
           .toList();
 
-      // 1) client_packages (copia congelada)
-      final inserted = await db
-          .from('client_packages')
-          .insert({
-            'client_id': widget.client.id,
-            'package_id': _basePackageId,
-            'name': _nameCtrl.text.trim().isEmpty
-                ? 'Paquete'
-                : _nameCtrl.text.trim(),
-            'status': 'activo',
-            'total_amount': total,
-            'paid_amount': initialPayment,
-            'payment_plan_type': planType,
-            'installments_count': _installments,
-            'items_snapshot': snapshot,
-          })
-          .select('id')
-          .single();
-      final cpId = inserted['id'].toString();
-
-      // 2) Sesiones (1 fila por unidad)
-      final sessions = <Map<String, dynamic>>[];
-      for (final l in _lines) {
-        for (var i = 0; i < l.quantity; i++) {
-          sessions.add({
-            'client_package_id': cpId,
-            'client_id': widget.client.id,
-            'service_id': l.serviceId,
-            'service_name': l.serviceName.trim(),
-            'status': 'pendiente',
-          });
-        }
-      }
-      if (sessions.isNotEmpty) {
-        await db.from('client_package_sessions').insert(sessions);
-      }
-
-      // 3) Plan de pagos (abonos). Reparto parejo; el ultimo cuadra el total.
-      final payments = <Map<String, dynamic>>[];
-      final base = (total / _installments);
-      double remainingPaid = initialPayment;
-      for (var n = 1; n <= _installments; n++) {
-        final amount = n == _installments
-            ? (total - base.floorToDouble() * (_installments - 1))
-            : base.floorToDouble();
-        final isPaid = remainingPaid >= amount && amount > 0;
-        if (isPaid) remainingPaid -= amount;
-        payments.add({
-          'client_package_id': cpId,
-          'client_id': widget.client.id,
-          'installment_number': n,
-          'amount': amount,
-          'status': isPaid ? 'pagado' : 'pendiente',
-          'paid_at': isPaid ? DateTime.now().toIso8601String() : null,
-          'payment_method': isPaid ? 'manual' : null,
-        });
-      }
-      if (payments.isNotEmpty) {
-        await db.from('client_package_payments').insert(payments);
-      }
+      // Flujo unificado: un solo RPC crea la copia congelada (snapshot +
+      // package_id + plan), las sesiones por servicio, registra el ingreso del
+      // anticipo (base caja) y arma los abonos — todo atómico. Los abonos que
+      // queden pendientes entran como ingreso al cobrarse (pay_package_installment).
+      await db.rpc('sell_client_package', params: {
+        'p_client_id': widget.client.id,
+        'p_package_id': _basePackageId,
+        'p_name': _nameCtrl.text.trim().isEmpty ? 'Paquete' : _nameCtrl.text.trim(),
+        'p_lines': snapshot,
+        'p_total': total,
+        'p_plan_type': planType,
+        'p_installments': _installments,
+        'p_initial_payment': initialPayment,
+        'p_payment_method': 'efectivo',
+        'p_created_by': db.auth.currentUser?.id,
+      });
 
       if (!mounted) return;
       Navigator.pop(context, true);
