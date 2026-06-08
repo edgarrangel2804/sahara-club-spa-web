@@ -98,8 +98,12 @@ class _Sale {
     paymentStatus: m['payment_status'] as String? ?? (m['status'] as String? ?? 'paid'),
     saleStatus:    m['sale_status']    as String? ?? 'completed',
     notes:         m['notes']          as String? ?? '',
+    // Supabase devuelve created_at como timestamptz (UTC). Lo pasamos a hora
+    // local para que la fecha mostrada y el filtro por día/semana/mes usen el
+    // mismo marco horario (si no, una venta cerca de medianoche podría verse en
+    // un día y filtrarse en otro).
     createdAt:     m['created_at'] != null
-        ? DateTime.parse(m['created_at'] as String)
+        ? DateTime.parse(m['created_at'] as String).toLocal()
         : DateTime.now(),
     items:         (m['sale_items'] as List?)?.cast<Map<String, dynamic>>() ?? [],
   );
@@ -278,15 +282,24 @@ class _SalesModuleState extends State<SalesModule> {
     final today = DateTime(now.year, now.month, now.day);
     var list    = _sales;
 
-    // Date filter
+    // Date filter — rangos de calendario (no ventanas móviles): el filtro
+    // muestra solo el día/semana/mes actual, no los últimos N días.
+    bool inRange(DateTime d, DateTime from, DateTime to) =>
+        !d.isBefore(from) && d.isBefore(to);
+
     if (_filter == 'today') {
-      list = list.where((s) => s.createdAt.isAfter(today)).toList();
+      final tomorrow = today.add(const Duration(days: 1));
+      list = list.where((s) => inRange(s.createdAt, today, tomorrow)).toList();
     } else if (_filter == 'week') {
-      final weekAgo = today.subtract(const Duration(days: 7));
-      list = list.where((s) => s.createdAt.isAfter(weekAgo)).toList();
+      // Semana actual: lunes 00:00 → lunes siguiente 00:00.
+      final weekStart = today.subtract(Duration(days: today.weekday - 1));
+      final weekEnd   = weekStart.add(const Duration(days: 7));
+      list = list.where((s) => inRange(s.createdAt, weekStart, weekEnd)).toList();
     } else if (_filter == 'month') {
+      // Mes calendario actual: día 1 → día 1 del mes siguiente.
       final monthStart = DateTime(now.year, now.month, 1);
-      list = list.where((s) => s.createdAt.isAfter(monthStart)).toList();
+      final monthEnd   = DateTime(now.year, now.month + 1, 1);
+      list = list.where((s) => inRange(s.createdAt, monthStart, monthEnd)).toList();
     }
 
     // Text search
@@ -300,22 +313,32 @@ class _SalesModuleState extends State<SalesModule> {
   }
 
   // ── Stats helpers ──────────────────────────────────────────────────────────
-  double _sumFor(DateTime from) => _sales
-      .where((s) => s.createdAt.isAfter(from) && s.status == 'paid')
+  // Suma de ventas pagadas dentro del rango [from, to).
+  double _sumBetween(DateTime from, DateTime to) => _sales
+      .where((s) => s.status == 'paid'
+          && !s.createdAt.isBefore(from)
+          && s.createdAt.isBefore(to))
       .fold(0.0, (acc, s) => acc + s.total);
 
   @override
   Widget build(BuildContext context) {
     final now        = DateTime.now();
     final todayStart = DateTime(now.year, now.month, now.day);
-    final weekStart  = todayStart.subtract(const Duration(days: 7));
+    final tomorrow   = todayStart.add(const Duration(days: 1));
+    // Semana calendario actual: lunes 00:00 → lunes siguiente 00:00.
+    final weekStart  = todayStart.subtract(Duration(days: todayStart.weekday - 1));
+    final weekEnd    = weekStart.add(const Duration(days: 7));
+    // Mes calendario actual.
     final monthStart = DateTime(now.year, now.month, 1);
+    final monthEnd   = DateTime(now.year, now.month + 1, 1);
 
-    final todayTotal = _sumFor(todayStart);
-    final weekTotal  = _sumFor(weekStart);
-    final monthTotal = _sumFor(monthStart);
+    final todayTotal = _sumBetween(todayStart, tomorrow);
+    final weekTotal  = _sumBetween(weekStart, weekEnd);
+    final monthTotal = _sumBetween(monthStart, monthEnd);
     final todayCount = _sales
-        .where((s) => s.createdAt.isAfter(todayStart) && s.status == 'paid')
+        .where((s) => s.status == 'paid'
+            && !s.createdAt.isBefore(todayStart)
+            && s.createdAt.isBefore(tomorrow))
         .length;
 
     return Container(
@@ -426,7 +449,7 @@ class _SalesModuleState extends State<SalesModule> {
                 label: 'Total ventas',
                 value: '${_filtered.length}',
                 sub:   _filter == 'today' ? 'hoy'
-                    : _filter == 'week'   ? 'últimos 7 días'
+                    : _filter == 'week'   ? 'esta semana'
                     : _filter == 'month'  ? 'este mes'
                     : 'todos',
                 color: const Color(0xFFB37FEB),
