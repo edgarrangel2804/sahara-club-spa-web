@@ -314,11 +314,19 @@ class _SellPackageDialogState extends State<_SellPackageDialog> {
   bool _saving = false;
   String? _error;
   String _paymentMethod = 'efectivo';
+  int _installments = 1; // 1 | 2 | 3 parcialidades
+  final _anticipoCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _loadServices();
+  }
+
+  @override
+  void dispose() {
+    _anticipoCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _loadServices() async {
@@ -353,6 +361,15 @@ class _SellPackageDialogState extends State<_SellPackageDialog> {
   int get _sessions =>
       (_selectedPkg?['sessions_count'] as num?)?.toInt() ?? 0;
 
+  // Pago inicial que se cobra hoy: de contado = total; a plazos = anticipo
+  // capturado (o el sugerido = total / nº de parcialidades).
+  double get _initialPayment {
+    if (_installments <= 1) return _price;
+    final typed = double.tryParse(_anticipoCtrl.text.trim());
+    final suggested = _installments > 0 ? _price / _installments : _price;
+    return (typed ?? suggested).clamp(0, _price).toDouble();
+  }
+
   Future<void> _save() async {
     if (_selectedPkgServiceId == null) {
       setState(() => _error = 'Selecciona el paquete a vender');
@@ -367,52 +384,48 @@ class _SellPackageDialogState extends State<_SellPackageDialog> {
       final me = Supabase.instance.client.auth.currentUser?.id;
       final db = Supabase.instance.client;
 
-      // 1. Crear la venta (ingreso del día)
-      final saleRes = await db.from('sales').insert({
-        'client_id': null,
-        'customer_id': widget.clientId,
-        'total': _price,
-        'subtotal': _price,
-        'payment_method': _paymentMethod,
-        'payment_status': 'paid',
-        'sale_status': 'completed',
-        'status': 'paid',
-        'created_by': me,
-        'notes': 'Venta de paquete: ${_selectedPkg!['name']}',
-      }).select('id').single();
-      final saleId = saleRes['id'] as String;
+      // Flujo unificado: el servicio-paquete se vende como una línea de N
+      // sesiones del servicio individual. El RPC registra el ingreso del
+      // anticipo (base caja), crea las sesiones y arma el plan de abonos.
+      final base = _baseServices
+          .where((s) => s['id'] == _selectedBaseServiceId)
+          .firstOrNull;
+      final baseName = (base?['name'] as String?) ??
+          (_selectedPkg?['name'] as String? ?? 'Sesión');
+      final planType = _installments == 1
+          ? 'single'
+          : _installments == 2
+              ? 'two_payments'
+              : 'three_payments';
 
-      await db.from('sale_items').insert({
-        'sale_id': saleId,
-        'name': _selectedPkg!['name'],
-        'description': '$_sessions sesiones de paquete',
-        'quantity': 1,
-        'unit_price': _price,
-        'total_price': _price,
-        'service_id': _selectedPkgServiceId,
-      });
-
-      // 2. Crear el client_package con sesiones via RPC
-      await db.rpc('create_client_package', params: {
+      await db.rpc('sell_client_package', params: {
         'p_client_id': widget.clientId,
-        'p_service_id': _selectedPkgServiceId,
-        'p_base_service_id': _selectedBaseServiceId,
-        'p_sessions_total': _sessions,
-        'p_sessions_used': 0,
-        'p_total_amount': _price,
-        'p_origin': 'nueva_venta',
-        'p_sale_id': saleId,
-        'p_migration_note': null,
+        'p_package_id': null, // servicio-paquete: no es plantilla de products
+        'p_name': _selectedPkg!['name'],
+        'p_lines': [
+          {
+            'service_id': _selectedBaseServiceId,
+            'service_name': baseName,
+            'quantity': _sessions,
+            'unit_price': _sessions > 0 ? _price / _sessions : _price,
+          }
+        ],
+        'p_total': _price,
+        'p_plan_type': planType,
+        'p_installments': _installments,
+        'p_initial_payment': _initialPayment,
+        'p_payment_method': _paymentMethod,
         'p_created_by': me,
-        'p_name': null,
       });
 
       if (!mounted) return;
       Navigator.pop(context, true);
+      final msg = _installments == 1
+          ? 'Paquete vendido: $_sessions sesiones. Ingreso de \$${_price.toStringAsFixed(0)} registrado.'
+          : 'Paquete vendido a $_installments pagos: anticipo de \$${_initialPayment.toStringAsFixed(0)} registrado. Quedan ${_installments - 1} abono(s).';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-              'Paquete vendido: $_sessions sesiones registradas. Venta guardada como ingreso.'),
+          content: Text(msg),
           backgroundColor: const Color(0xFF2D8A4F),
         ),
       );
@@ -558,6 +571,71 @@ class _SellPackageDialogState extends State<_SellPackageDialog> {
                           if (v != null) setState(() => _paymentMethod = v);
                         },
                       ),
+                    ]),
+                    const SizedBox(height: 12),
+                    _card([
+                      _label('Forma de pago'),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [1, 2, 3].map((n) {
+                          final sel = _installments == n;
+                          return Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: InkWell(
+                                onTap: () => setState(() => _installments = n),
+                                borderRadius: BorderRadius.circular(8),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(vertical: 10),
+                                  alignment: Alignment.center,
+                                  decoration: BoxDecoration(
+                                    color: sel
+                                        ? SaharaTheme.gold.withValues(alpha: 0.15)
+                                        : Colors.white,
+                                    border: Border.all(
+                                        color: sel
+                                            ? SaharaTheme.gold
+                                            : const Color(0xFFE0DDD8)),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    n == 1 ? 'De contado' : '$n pagos',
+                                    style: GoogleFonts.inter(
+                                        fontSize: 12.5,
+                                        fontWeight: sel
+                                            ? FontWeight.w700
+                                            : FontWeight.w500,
+                                        color: sel
+                                            ? Colors.black87
+                                            : Colors.black54),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      if (_selectedPkg != null && _installments > 1) ...[
+                        const SizedBox(height: 12),
+                        _label('Anticipo (pago inicial)'),
+                        const SizedBox(height: 6),
+                        TextField(
+                          controller: _anticipoCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: _inputDeco().copyWith(
+                            hintText: (_price / _installments).toStringAsFixed(0),
+                            prefixText: '\$ ',
+                          ),
+                          onChanged: (_) => setState(() {}),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Sugerido \$${(_price / _installments).toStringAsFixed(0)}  ·  '
+                          'quedan ${_installments - 1} abono(s) de \$${(_price / _installments).toStringAsFixed(0)}',
+                          style: GoogleFonts.inter(
+                              fontSize: 11, color: Colors.black45),
+                        ),
+                      ],
                     ]),
                     if (_error != null) ...[
                       const SizedBox(height: 10),

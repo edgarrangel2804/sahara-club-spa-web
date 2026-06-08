@@ -2030,6 +2030,11 @@ class _PackagePaymentDialogState extends State<_PackagePaymentDialog> {
   Widget build(BuildContext context) {
     final name = (widget.clientPackage['name'] as String?)?.trim();
     final paidCount = _payments.where((p) => p['status'] == 'pagado').length;
+    final paidAmount = _payments
+        .where((p) => p['status'] == 'pagado')
+        .fold<double>(0, (s, p) => s + ((p['amount'] as num?)?.toDouble() ?? 0));
+    final pending = (_total - paidAmount).clamp(0, _total).toDouble();
+    final remaining = _payments.length - paidCount;
     return AlertDialog(
       backgroundColor: const Color(0xFFF5F3EF),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -2050,8 +2055,20 @@ class _PackagePaymentDialogState extends State<_PackagePaymentDialog> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Total: ${_fmtMoney(_total)} · $paidCount de ${_payments.length} abonos pagados',
-                    style: GoogleFonts.inter(fontSize: 12.5, color: Colors.black54),
+                    'Total ${_fmtMoney(_total)}  ·  Pagado ${_fmtMoney(paidAmount)}',
+                    style: GoogleFonts.inter(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Pendiente ${_fmtMoney(pending)}  ·  $remaining de ${_payments.length} pago(s) restante(s)',
+                    style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: pending > 0
+                            ? const Color(0xFFB37500)
+                            : const Color(0xFF2D8A4F)),
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
@@ -2091,6 +2108,11 @@ class _PackagePaymentDialogState extends State<_PackagePaymentDialog> {
     final n = (p['installment_number'] as num?)?.toInt() ?? 0;
     final amount = (p['amount'] as num?)?.toDouble() ?? 0;
     final paid = (p['status'] as String?) == 'pagado';
+    final paidAtStr = p['paid_at']?.toString();
+    final paidAt =
+        paidAtStr != null ? DateTime.tryParse(paidAtStr)?.toLocal() : null;
+    String fmtDate(DateTime d) =>
+        '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
@@ -2112,8 +2134,17 @@ class _PackagePaymentDialogState extends State<_PackagePaymentDialog> {
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: Text('Abono $n · ${_fmtMoney(amount)}',
-                style: GoogleFonts.inter(fontSize: 13, color: Colors.black87)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Abono $n · ${_fmtMoney(amount)}',
+                    style: GoogleFonts.inter(fontSize: 13, color: Colors.black87)),
+                if (paid && paidAt != null)
+                  Text('Pagado el ${fmtDate(paidAt)}',
+                      style: GoogleFonts.inter(
+                          fontSize: 11, color: Colors.black45)),
+              ],
+            ),
           ),
           if (paid)
             Text('Pagado',
