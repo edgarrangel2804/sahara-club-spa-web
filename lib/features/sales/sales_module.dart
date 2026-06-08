@@ -291,9 +291,9 @@ class _SalesModuleState extends State<SalesModule> {
       final tomorrow = today.add(const Duration(days: 1));
       list = list.where((s) => inRange(s.createdAt, today, tomorrow)).toList();
     } else if (_filter == 'week') {
-      // Semana actual: lunes 00:00 → lunes siguiente 00:00.
+      // Semana actual: lunes 00:00 → domingo 00:00 (incluye lunes a sábado).
       final weekStart = today.subtract(Duration(days: today.weekday - 1));
-      final weekEnd   = weekStart.add(const Duration(days: 7));
+      final weekEnd   = weekStart.add(const Duration(days: 6));
       list = list.where((s) => inRange(s.createdAt, weekStart, weekEnd)).toList();
     } else if (_filter == 'month') {
       // Mes calendario actual: día 1 → día 1 del mes siguiente.
@@ -325,9 +325,9 @@ class _SalesModuleState extends State<SalesModule> {
     final now        = DateTime.now();
     final todayStart = DateTime(now.year, now.month, now.day);
     final tomorrow   = todayStart.add(const Duration(days: 1));
-    // Semana calendario actual: lunes 00:00 → lunes siguiente 00:00.
+    // Semana calendario actual: lunes 00:00 → domingo 00:00 (lunes a sábado).
     final weekStart  = todayStart.subtract(Duration(days: todayStart.weekday - 1));
-    final weekEnd    = weekStart.add(const Duration(days: 7));
+    final weekEnd    = weekStart.add(const Duration(days: 6));
     // Mes calendario actual.
     final monthStart = DateTime(now.year, now.month, 1);
     final monthEnd   = DateTime(now.year, now.month + 1, 1);
