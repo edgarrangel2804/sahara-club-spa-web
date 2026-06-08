@@ -239,18 +239,30 @@ class _ClientPackagesPanelState extends State<ClientPackagesPanel> {
                     color: statusColor),
               ),
               const Spacer(),
-              if (!isCompleted)
-                TextButton(
-                  onPressed: () => _openSessionHistory(p),
-                  style: TextButton.styleFrom(
-                    foregroundColor: Colors.black45,
-                    padding: EdgeInsets.zero,
-                    minimumSize: const Size(0, 24),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  child: Text('Ver historial',
-                      style: GoogleFonts.inter(fontSize: 11)),
+              TextButton(
+                onPressed: () => _openAdjustDialog(p),
+                style: TextButton.styleFrom(
+                  foregroundColor: SaharaTheme.gold,
+                  padding: EdgeInsets.zero,
+                  minimumSize: const Size(0, 24),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
+                child: Text('Ajustar sesiones',
+                    style: GoogleFonts.inter(
+                        fontSize: 11, fontWeight: FontWeight.w600)),
+              ),
+              const SizedBox(width: 14),
+              TextButton(
+                onPressed: () => _openSessionHistory(p),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.black45,
+                  padding: EdgeInsets.zero,
+                  minimumSize: const Size(0, 24),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: Text('Ver historial',
+                    style: GoogleFonts.inter(fontSize: 11)),
+              ),
             ],
           ),
         ],
@@ -287,6 +299,14 @@ class _ClientPackagesPanelState extends State<ClientPackagesPanel> {
       context: context,
       builder: (_) => _PackageSessionHistoryDialog(pkg: pkg),
     );
+  }
+
+  Future<void> _openAdjustDialog(Map<String, dynamic> pkg) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => _AdjustSessionsDialog(pkg: pkg),
+    );
+    if (ok == true) _load();
   }
 }
 
@@ -1113,6 +1133,7 @@ class _PackageSessionHistoryDialog extends StatefulWidget {
 class _PackageSessionHistoryDialogState
     extends State<_PackageSessionHistoryDialog> {
   List<Map<String, dynamic>> _sessions = [];
+  List<Map<String, dynamic>> _adjustments = [];
   bool _loading = true;
 
   @override
@@ -1123,15 +1144,25 @@ class _PackageSessionHistoryDialogState
 
   Future<void> _load() async {
     try {
-      final data = await Supabase.instance.client
+      final db = Supabase.instance.client;
+      final data = await db
           .from('client_package_sessions')
           .select('id, status, service_name, used_at, appointment_id')
           .eq('client_package_id', widget.pkg['id'])
           .order('status') // pendientes primero
           .order('used_at', ascending: false);
+      // Ajustes manuales (auditoría) del paquete
+      final adj = await db
+          .from('client_package_audit_log')
+          .select(
+              'action, sessions_before, sessions_after, notes, adjusted_by_name, created_at')
+          .eq('client_package_id', widget.pkg['id'])
+          .eq('action', 'ajuste')
+          .order('created_at', ascending: false);
       if (!mounted) return;
       setState(() {
         _sessions = (data as List).cast<Map<String, dynamic>>();
+        _adjustments = (adj as List).cast<Map<String, dynamic>>();
         _loading = false;
       });
     } catch (e) {
@@ -1172,9 +1203,30 @@ class _PackageSessionHistoryDialogState
                 height: 80,
                 child: Center(
                     child: CircularProgressIndicator(color: SaharaTheme.gold)))
-            : Column(
-                mainAxisSize: MainAxisSize.min,
-                children: _sessions.map(_sessionRow).toList(),
+            : SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_adjustments.isNotEmpty) ...[
+                      Text('Ajustes manuales',
+                          style: GoogleFonts.inter(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.black45)),
+                      const SizedBox(height: 4),
+                      ..._adjustments.map(_adjustmentRow),
+                      const Divider(height: 20),
+                      Text('Sesiones',
+                          style: GoogleFonts.inter(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.black45)),
+                      const SizedBox(height: 4),
+                    ],
+                    ..._sessions.map(_sessionRow),
+                  ],
+                ),
               ),
       ),
       actions: [
@@ -1183,6 +1235,45 @@ class _PackageSessionHistoryDialogState
           child: const Text('Cerrar'),
         ),
       ],
+    );
+  }
+
+  Widget _adjustmentRow(Map<String, dynamic> a) {
+    final before = (a['sessions_before'] as num?)?.toInt() ?? 0;
+    final after = (a['sessions_after'] as num?)?.toInt() ?? 0;
+    final who = (a['adjusted_by_name'] as String?)?.trim();
+    final reason = (a['notes'] as String?)?.trim();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            color: SaharaTheme.gold.withValues(alpha: 0.14),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.tune, size: 14, color: SaharaTheme.gold),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Usadas: $before → $after  ·  ${_fmtDate(a['created_at'])}',
+                style: GoogleFonts.inter(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black87)),
+            if (who != null && who.isNotEmpty)
+              Text('Por $who',
+                  style:
+                      GoogleFonts.inter(fontSize: 11, color: Colors.black54)),
+            if (reason != null && reason.isNotEmpty)
+              Text(reason,
+                  style:
+                      GoogleFonts.inter(fontSize: 11, color: Colors.black45)),
+          ]),
+        ),
+      ]),
     );
   }
 
@@ -1225,6 +1316,211 @@ class _PackageSessionHistoryDialogState
       ]),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Diálogo: Ajustar sesiones usadas (regularizar paquetes ya vendidos)
+// No afecta total vendido ni ingresos; solo el saldo de sesiones + auditoría.
+// ─────────────────────────────────────────────────────────────────────────────
+class _AdjustSessionsDialog extends StatefulWidget {
+  const _AdjustSessionsDialog({required this.pkg});
+  final Map<String, dynamic> pkg;
+
+  @override
+  State<_AdjustSessionsDialog> createState() => _AdjustSessionsDialogState();
+}
+
+class _AdjustSessionsDialogState extends State<_AdjustSessionsDialog> {
+  late final int _total;
+  late final int _currentUsed;
+  late final TextEditingController _usedCtrl;
+  final _reasonCtrl = TextEditingController();
+  DateTime _date = DateTime.now();
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _total = (widget.pkg['sessions_total'] as num?)?.toInt() ?? 0;
+    _currentUsed = (widget.pkg['sessions_used'] as num?)?.toInt() ?? 0;
+    _usedCtrl = TextEditingController(text: '$_currentUsed');
+  }
+
+  @override
+  void dispose() {
+    _usedCtrl.dispose();
+    _reasonCtrl.dispose();
+    super.dispose();
+  }
+
+  int get _target {
+    final v = int.tryParse(_usedCtrl.text.trim()) ?? _currentUsed;
+    return v.clamp(0, _total);
+  }
+
+  Future<void> _save() async {
+    if (_reasonCtrl.text.trim().isEmpty) {
+      setState(() => _error = 'Indica el motivo del ajuste');
+      return;
+    }
+    setState(() { _saving = true; _error = null; });
+    try {
+      final db = Supabase.instance.client;
+      await db.rpc('adjust_package_sessions_used', params: {
+        'p_client_package_id': widget.pkg['id'],
+        'p_sessions_used': _target,
+        'p_reason': _reasonCtrl.text.trim(),
+        'p_adjusted_by': db.auth.currentUser?.id,
+        'p_adjusted_at': _date.toUtc().toIso8601String(),
+      });
+      if (!mounted) return;
+      Navigator.pop(context, true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+              'Sesiones ajustadas: $_target usadas, ${_total - _target} disponibles.'),
+          backgroundColor: const Color(0xFF2D8A4F),
+        ),
+      );
+    } catch (e) {
+      if (mounted) setState(() { _error = 'Error: $e'; _saving = false; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = (widget.pkg['name'] as String?) ?? 'Paquete';
+    final resultingRemaining = _total - _target;
+    return AlertDialog(
+      backgroundColor: const Color(0xFFF5F3EF),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Text('Ajustar sesiones · $name',
+          style: GoogleFonts.playfairDisplay(
+              fontSize: 17, fontWeight: FontWeight.bold)),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFECE9E4)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _stat('Compradas', '$_total'),
+                  _stat('Usadas (actual)', '$_currentUsed'),
+                  _stat('Disponibles', '${_total - _currentUsed}'),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            _label('Sesiones usadas a registrar *'),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _usedCtrl,
+              keyboardType: TextInputType.number,
+              decoration: _inputDeco().copyWith(
+                  helperText: 'Total absoluto de sesiones ya usadas (máx $_total)'),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 6),
+            Text('Quedarán $resultingRemaining sesiones disponibles',
+                style: GoogleFonts.inter(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF2D8A4F))),
+            const SizedBox(height: 14),
+            _label('Motivo del ajuste *'),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _reasonCtrl,
+              maxLines: 2,
+              decoration: _inputDeco().copyWith(
+                  hintText: 'Ej: Cliente ya usó 4 sesiones antes del sistema'),
+            ),
+            const SizedBox(height: 14),
+            _label('Fecha del ajuste'),
+            const SizedBox(height: 6),
+            InkWell(
+              onTap: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: _date,
+                  firstDate: DateTime(2020),
+                  lastDate: DateTime.now(),
+                );
+                if (picked != null) setState(() => _date = picked);
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFE0DDD8)),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.calendar_today_outlined,
+                      size: 14, color: Colors.black45),
+                  const SizedBox(width: 8),
+                  Text(
+                      '${_date.day.toString().padLeft(2, '0')}/${_date.month.toString().padLeft(2, '0')}/${_date.year}',
+                      style: GoogleFonts.inter(fontSize: 13)),
+                ]),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+                'No afecta el total vendido ni registra ingresos; solo ajusta el saldo de sesiones y queda en auditoría.',
+                style: GoogleFonts.inter(fontSize: 11, color: Colors.black45)),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(_error!,
+                  style: const TextStyle(color: Colors.red, fontSize: 12)),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context),
+          child: Text('Cancelar',
+              style: GoogleFonts.inter(color: Colors.black54)),
+        ),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          style: FilledButton.styleFrom(
+              backgroundColor: SaharaTheme.gold, foregroundColor: Colors.black),
+          child: _saving
+              ? const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.black))
+              : Text('Guardar ajuste',
+                  style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+        ),
+      ],
+    );
+  }
+
+  Widget _stat(String label, String value) => Column(
+        children: [
+          Text(value,
+              style: GoogleFonts.inter(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black87)),
+          Text(label,
+              style: GoogleFonts.inter(fontSize: 10.5, color: Colors.black45)),
+        ],
+      );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
