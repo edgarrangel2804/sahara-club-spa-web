@@ -385,7 +385,8 @@ export async function fulfillOrder(
       const serviceName = String(metadata.service_name ?? "")
       const now = new Date()
       const expiresAt = new Date(now)
-      expiresAt.setMonth(expiresAt.getMonth() + 12)
+      // Las gift cards de servicio vencen en 1 mes (vigencia típica del servicio).
+      expiresAt.setMonth(expiresAt.getMonth() + 1)
       const { error } = await supabase
         .from("gift_cards")
         .upsert({
