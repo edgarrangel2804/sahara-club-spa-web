@@ -219,8 +219,8 @@ function timingSafeEqual(left: string, right: string) {
 
 export function generateGiftCardCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-  let code = "SAH-"
-  const values = crypto.getRandomValues(new Uint8Array(10))
+  let code = "SAHARA-"
+  const values = crypto.getRandomValues(new Uint8Array(8))
   for (const value of values) {
     code += alphabet[value % alphabet.length]
   }
@@ -379,6 +379,13 @@ export async function fulfillOrder(
     }
 
     if (productType === "gift_card") {
+      // Gift card POR SERVICIO: entitula 1 sesión del servicio elegido.
+      // Mismo modelo que las que emite recepción (service_id + vigencia 12 meses).
+      const serviceId = metadata.service_id ? String(metadata.service_id) : null
+      const serviceName = String(metadata.service_name ?? "")
+      const now = new Date()
+      const expiresAt = new Date(now)
+      expiresAt.setMonth(expiresAt.getMonth() + 12)
       const { error } = await supabase
         .from("gift_cards")
         .upsert({
@@ -392,6 +399,10 @@ export async function fulfillOrder(
           sender_name: String(metadata.sender_name ?? ""),
           message: String(metadata.message ?? ""),
           delivery_method: String(metadata.delivery_method ?? "digital"),
+          service_id: serviceId,
+          service_name: serviceName,
+          valid_from: now.toISOString(),
+          expires_at: expiresAt.toISOString(),
           status: "active",
         }, { onConflict: "order_item_id" })
       if (error) throw error

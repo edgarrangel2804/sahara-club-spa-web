@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../theme/sahara_theme.dart';
 import '../cart/cart_page.dart';
@@ -26,8 +27,58 @@ class _GiftCardPageState extends State<GiftCardPage> {
   final TextEditingController _senderController = TextEditingController();
   final TextEditingController _messageController = TextEditingController();
 
-  int? _selectedAmount = 2500;
+  String? _selectedServiceId;
+  List<_GiftService> _services = const [];
+  bool _loadingServices = true;
+  String? _servicesError;
   bool _physicalDelivery = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadServices();
+  }
+
+  Future<void> _loadServices() async {
+    try {
+      final data = await Supabase.instance.client
+          .from('services')
+          .select('id, name, price, is_active, price_on_quote, is_package')
+          .order('name');
+      final list = (data as List)
+          .cast<Map<String, dynamic>>()
+          .where((m) =>
+              (m['is_active'] as bool? ?? true) &&
+              (m['price_on_quote'] as bool? ?? false) == false &&
+              (m['is_package'] as bool? ?? false) == false &&
+              ((m['price'] as num?)?.toDouble() ?? 0) > 0)
+          .map((m) => _GiftService(
+                id: m['id'].toString(),
+                name: (m['name'] as String? ?? 'Servicio').trim(),
+                price: (m['price'] as num?)?.toDouble() ?? 0,
+              ))
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _services = list;
+        _selectedServiceId = list.isNotEmpty ? list.first.id : null;
+        _loadingServices = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _servicesError = '$e';
+        _loadingServices = false;
+      });
+    }
+  }
+
+  _GiftService? get _selectedService {
+    for (final s in _services) {
+      if (s.id == _selectedServiceId) return s;
+    }
+    return null;
+  }
 
   @override
   void dispose() {
@@ -36,8 +87,6 @@ class _GiftCardPageState extends State<GiftCardPage> {
     _messageController.dispose();
     super.dispose();
   }
-
-  static const List<int> _presetAmounts = <int>[1000, 2500, 5000];
 
   @override
   Widget build(BuildContext context) {
@@ -133,11 +182,15 @@ class _GiftCardPageState extends State<GiftCardPage> {
                           final left = Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _SectionTitle(title: 'Selecciona el monto'),
+                              _SectionTitle(title: 'Elige el servicio a regalar'),
                               const SizedBox(height: 32),
-                              _AmountGrid(
-                                selectedAmount: _selectedAmount,
-                                onSelected: (amount) => setState(() => _selectedAmount = amount),
+                              _ServiceGrid(
+                                services: _services,
+                                selectedServiceId: _selectedServiceId,
+                                loading: _loadingServices,
+                                error: _servicesError,
+                                onSelected: (id) =>
+                                    setState(() => _selectedServiceId = id),
                               ),
                               const SizedBox(height: 72),
                               _SectionTitle(title: 'Ritual de entrega'),
@@ -199,7 +252,9 @@ class _GiftCardPageState extends State<GiftCardPage> {
 
   StoreProduct _buildSelectedGiftCard() {
     final base = widget.product;
-    final selectedAmount = _selectedAmount ?? base.price.round();
+    final service = _selectedService;
+    final price = service?.price ?? base.price;
+    final serviceName = service?.name ?? base.name;
     final deliveryLabel = _physicalDelivery
         ? 'Entrega fisica premium'
         : 'Entrega digital inmediata';
@@ -208,19 +263,18 @@ class _GiftCardPageState extends State<GiftCardPage> {
     final sender = _senderController.text.trim();
 
     return StoreProduct(
-      id: '${base.id}-$selectedAmount-${_physicalDelivery ? 'physical' : 'digital'}',
-      name: base.name,
-      slug: '${base.slug}-$selectedAmount',
+      id: '${base.id}-${service?.id ?? 'na'}-${_physicalDelivery ? 'physical' : 'digital'}',
+      name: 'Gift card · $serviceName',
+      slug: '${base.slug}-${service?.id ?? ''}',
       description: [
-        base.description,
-        'Denominacion seleccionada: $selectedAmount MXN.',
+        'Gift card para 1 sesion de $serviceName.',
         'Entrega: $deliveryLabel.',
         if (recipient.isNotEmpty) 'Destinatario: $recipient.',
         if (sender.isNotEmpty) 'Remitente: $sender.',
         if (message.isNotEmpty) 'Mensaje: $message.',
       ].join(' '),
       shortDescription: base.shortDescription,
-      price: selectedAmount.toDouble(),
+      price: price,
       currency: base.currency,
       type: base.type,
       imageUrl: base.imageUrl,
@@ -235,7 +289,10 @@ class _GiftCardPageState extends State<GiftCardPage> {
       isFeatured: base.isFeatured,
       checkoutMetadata: <String, dynamic>{
         'base_product_id': base.id,
-        'gift_card_amount': selectedAmount,
+        'product_type': 'gift_card',
+        'gift_card_kind': 'service',
+        if (service != null) 'service_id': service.id,
+        'service_name': serviceName,
         'delivery_method': _physicalDelivery ? 'physical' : 'digital',
         'recipient_name': recipient,
         'sender_name': sender,
@@ -248,6 +305,14 @@ class _GiftCardPageState extends State<GiftCardPage> {
     final recipient = _recipientController.text.trim();
     final sender = _senderController.text.trim();
 
+    if (_selectedService == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Selecciona el servicio que quieres regalar.'),
+        ),
+      );
+      return;
+    }
     if (recipient.isEmpty || sender.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Completa destinatario y remitente para continuar.')),
@@ -368,41 +433,74 @@ class _SectionTitle extends StatelessWidget {
   }
 }
 
-class _AmountGrid extends StatelessWidget {
-  const _AmountGrid({
-    required this.selectedAmount,
+class _GiftService {
+  const _GiftService({
+    required this.id,
+    required this.name,
+    required this.price,
+  });
+
+  final String id;
+  final String name;
+  final double price;
+
+  String get priceLabel => '\$${price.toStringAsFixed(0)} MXN';
+}
+
+class _ServiceGrid extends StatelessWidget {
+  const _ServiceGrid({
+    required this.services,
+    required this.selectedServiceId,
+    required this.loading,
+    required this.error,
     required this.onSelected,
   });
 
-  final int? selectedAmount;
-  final ValueChanged<int?> onSelected;
+  final List<_GiftService> services;
+  final String? selectedServiceId;
+  final bool loading;
+  final String? error;
+  final ValueChanged<String> onSelected;
 
   @override
   Widget build(BuildContext context) {
+    if (loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 40),
+        child: Center(
+          child: CircularProgressIndicator(color: _GiftPalette.primary),
+        ),
+      );
+    }
+    if (error != null) {
+      return Text(
+        'No pudimos cargar los servicios. Intenta de nuevo.',
+        style: GoogleFonts.inter(color: _GiftPalette.textSoft, fontSize: 15),
+      );
+    }
+    if (services.isEmpty) {
+      return Text(
+        'Por ahora no hay servicios disponibles para regalar.',
+        style: GoogleFonts.inter(color: _GiftPalette.textSoft, fontSize: 15),
+      );
+    }
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 680 ? 4 : 2;
+        final columns = constraints.maxWidth >= 680 ? 2 : 1;
         return GridView.count(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           crossAxisCount: columns,
           crossAxisSpacing: 16,
           mainAxisSpacing: 16,
-          childAspectRatio: 1,
+          childAspectRatio: 3.4,
           children: [
-            for (final amount in _GiftCardPageState._presetAmounts)
-              _AmountTile(
-                label: 'MXN',
-                value: '\$${amount.toString()}',
-                selected: selectedAmount == amount,
-                onTap: () => onSelected(amount),
+            for (final service in services)
+              _ServiceTile(
+                service: service,
+                selected: selectedServiceId == service.id,
+                onTap: () => onSelected(service.id),
               ),
-            _AmountTile(
-              label: 'OTRO',
-              icon: Icons.edit_outlined,
-              selected: selectedAmount == null,
-              onTap: () => onSelected(null),
-            ),
           ],
         );
       },
@@ -410,18 +508,14 @@ class _AmountGrid extends StatelessWidget {
   }
 }
 
-class _AmountTile extends StatelessWidget {
-  const _AmountTile({
-    required this.label,
-    this.value,
-    this.icon,
+class _ServiceTile extends StatelessWidget {
+  const _ServiceTile({
+    required this.service,
     required this.selected,
     required this.onTap,
   });
 
-  final String label;
-  final String? value;
-  final IconData? icon;
+  final _GiftService service;
   final bool selected;
   final VoidCallback onTap;
 
@@ -431,6 +525,7 @@ class _AmountTile extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 240),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
         decoration: BoxDecoration(
           color: selected
               ? _GiftPalette.primary.withValues(alpha: 0.09)
@@ -441,29 +536,46 @@ class _AmountTile extends StatelessWidget {
                 : _GiftPalette.primary.withValues(alpha: 0.18),
           ),
         ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+        child: Row(
           children: [
-            Text(
-              label,
-              style: GoogleFonts.inter(
-                color: selected ? _GiftPalette.primary : _GiftPalette.textMuted,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 2.2,
+            Icon(
+              selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              color: selected ? _GiftPalette.primary : _GiftPalette.textMuted,
+              size: 20,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    service.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.inter(
+                      color: selected
+                          ? _GiftPalette.primary
+                          : _GiftPalette.textStrong,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    service.priceLabel,
+                    style: GoogleFonts.playfairDisplay(
+                      color: selected
+                          ? _GiftPalette.primary
+                          : _GiftPalette.textSoft,
+                      fontSize: 20,
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 12),
-            if (value != null)
-              Text(
-                value!,
-                style: GoogleFonts.playfairDisplay(
-                  color: selected ? _GiftPalette.primary : _GiftPalette.textStrong,
-                  fontSize: 34,
-                ),
-              )
-            else
-              Icon(icon, color: selected ? _GiftPalette.primary : _GiftPalette.textMuted, size: 26),
           ],
         ),
       ),
