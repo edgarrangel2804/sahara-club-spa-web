@@ -7,22 +7,21 @@ import 'reception_alert.dart';
 
 /// Banner flotante GRANDE y notorio que aparece en medio de la agenda cuando
 /// llega una alerta nueva (cita, cancelación, reagenda… cualquier origen).
-/// Entra animado, pulsa para llamar la atención y se auto-cierra tras un rato
-/// (la barra de progreso muestra el tiempo restante; se pausa al pasar el mouse).
-/// La alerta sigue en la campana aunque se cierre el banner.
+/// Entra animado y pulsa para llamar la atención. NO se auto-cierra: permanece
+/// fijo hasta que recepción lo atienda ("Ver en agenda") o lo cierre con la X,
+/// para que nadie se pierda la notificación. La alerta sigue en la campana
+/// aunque se cierre el banner.
 class ReceptionAlertBanner extends StatefulWidget {
   const ReceptionAlertBanner({
     super.key,
     required this.alert,
     required this.onOpen,
     required this.onDismiss,
-    this.autoDismiss = const Duration(seconds: 16),
   });
 
   final ReceptionAlert alert;
   final VoidCallback onOpen;
   final VoidCallback onDismiss;
-  final Duration autoDismiss;
 
   @override
   State<ReceptionAlertBanner> createState() => _ReceptionAlertBannerState();
@@ -32,8 +31,6 @@ class _ReceptionAlertBannerState extends State<ReceptionAlertBanner>
     with TickerProviderStateMixin {
   late final AnimationController _enter;
   late final AnimationController _pulse;
-  late final AnimationController _progress;
-  bool _hovering = false;
   bool _leaving = false;
 
   @override
@@ -47,20 +44,12 @@ class _ReceptionAlertBannerState extends State<ReceptionAlertBanner>
       vsync: this,
       duration: const Duration(milliseconds: 1100),
     )..repeat(reverse: true);
-    _progress = AnimationController(
-      vsync: this,
-      duration: widget.autoDismiss,
-    )..addStatusListener((s) {
-        if (s == AnimationStatus.completed) _close();
-      });
-    _progress.forward();
   }
 
   @override
   void dispose() {
     _enter.dispose();
     _pulse.dispose();
-    _progress.dispose();
     super.dispose();
   }
 
@@ -70,15 +59,6 @@ class _ReceptionAlertBannerState extends State<ReceptionAlertBanner>
     _pulse.stop();
     await _enter.reverse();
     if (mounted) widget.onDismiss();
-  }
-
-  void _onHover(bool v) {
-    setState(() => _hovering = v);
-    if (v) {
-      _progress.stop();
-    } else if (!_leaving) {
-      _progress.forward();
-    }
   }
 
   @override
@@ -131,14 +111,11 @@ class _ReceptionAlertBannerState extends State<ReceptionAlertBanner>
           ),
         );
       },
-      child: MouseRegion(
-        onEnter: (_) => _onHover(true),
-        onExit: (_) => _onHover(false),
-        child: Material(
-          color: Colors.transparent,
-          child: Container(
-            width: cardWidth,
-            clipBehavior: Clip.antiAlias,
+      child: Material(
+        color: Colors.transparent,
+        child: Container(
+          width: cardWidth,
+          clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(16),
@@ -274,23 +251,10 @@ class _ReceptionAlertBannerState extends State<ReceptionAlertBanner>
                     ],
                   ),
                 ),
-                // Barra de progreso de auto-cierre (se detiene al hover)
-                AnimatedBuilder(
-                  animation: _progress,
-                  builder: (context, _) => LinearProgressIndicator(
-                    value: _hovering ? null : 1.0 - _progress.value,
-                    minHeight: 3,
-                    backgroundColor: const Color(0xFFEFece8),
-                    valueColor: AlwaysStoppedAnimation(
-                      accent.withValues(alpha: 0.55),
-                    ),
-                  ),
-                ),
               ],
             ),
           ),
         ),
-      ),
     );
   }
 }
