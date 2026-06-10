@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
       // sin body → usa DEFAULT_TEMPLATE
     }
 
-    const components = [
+    const components: Array<Record<string, unknown>> = [
       {
         type: "BODY",
         text: spec.body_text,
@@ -107,6 +107,16 @@ Deno.serve(async (req) => {
           : {}),
       },
     ]
+    // Botones opcionales (ej. URL dinámica para abrir la tarjeta de regalo).
+    const specButtons = (spec as { buttons?: unknown[] }).buttons
+    if (Array.isArray(specButtons) && specButtons.length > 0) {
+      components.push({ type: "BUTTONS", buttons: specButtons })
+    }
+    // Header opcional (ej. emoji/título corto).
+    const specHeader = (spec as { header_text?: string }).header_text
+    if (typeof specHeader === "string" && specHeader.length > 0) {
+      components.unshift({ type: "HEADER", format: "TEXT", text: specHeader })
+    }
 
     const wabaId = settings.row.whatsapp_business_account_id
     const res = await fetch(
