@@ -2497,70 +2497,128 @@ Deno.serve(async (req) => {
     let totalCacheRead = 0, totalCacheCreate = 0
     let finalText = ""
     let stopReason = ""
+    // ¿Se creó (o ya existía) una cita real en este turno? La usamos para el
+    // guardrail anti-confirmación-falsa de más abajo.
+    let bookingCreatedThisTurn = false
 
-    for (let i = 0; i < 5; i++) {  // máx 5 iteraciones tool_use
-      const resp = await callAnthropic(
-        apiKey, (settings.active_model || settings.llm_model), system, messages,
-        settings.temperature, settings.max_output_tokens,
-        cachedTools,
-        // Solo forzamos en la PRIMERA iteración; después dejamos al modelo libre
-        i === 0 ? forceToolChoice : undefined,
-      )
-      totalIn += resp.usage.input_tokens
-      totalOut += resp.usage.output_tokens
-      totalCacheRead += resp.usage.cache_read_input_tokens ?? 0
-      totalCacheCreate += resp.usage.cache_creation_input_tokens ?? 0
-      stopReason = resp.stop_reason
+    // Detecta que el modelo AFIRMA haber registrado la cita (wording del prompt).
+    const claimsBookingRegistered = (txt: string) =>
+      /registramos tu solicitud|recepci[oó]n validar[aá]|tu solicitud (qued|para|ha sido)|qued[oó] (agendad|registrad)/i
+        .test(txt)
 
-      // Buscar texto y tool_use en content
-      const textParts: string[] = []
-      const toolCalls: Array<{ id: string; name: string; input: Record<string, unknown> }> = []
-      for (const part of resp.content) {
-        if (part.type === "text") textParts.push(String(part.text ?? ""))
-        if (part.type === "tool_use") {
-          toolCalls.push({
-            id: String(part.id), name: String(part.name),
-            input: (part.input ?? {}) as Record<string, unknown>,
+    // Hasta 2 pasadas. Pasada 0: flujo normal. Si el modelo confirma una cita
+    // SIN haber llamado ninguna herramienta de reserva (mintió), hacemos una
+    // pasada 1 forzando check_availability_for_booking (que crea la cita) antes
+    // de responder. Así jamás confirmamos algo que no quedó en la agenda.
+    for (let pass = 0; pass < 2; pass++) {
+      const passForce = pass === 1
+        ? { type: "tool", name: "check_availability_for_booking" }
+        : forceToolChoice
+
+      for (let i = 0; i < 5; i++) {  // máx 5 iteraciones tool_use
+        const resp = await callAnthropic(
+          apiKey, (settings.active_model || settings.llm_model), system, messages,
+          settings.temperature, settings.max_output_tokens,
+          cachedTools,
+          // Solo forzamos en la PRIMERA iteración; después dejamos al modelo libre
+          i === 0 ? passForce : undefined,
+        )
+        totalIn += resp.usage.input_tokens
+        totalOut += resp.usage.output_tokens
+        totalCacheRead += resp.usage.cache_read_input_tokens ?? 0
+        totalCacheCreate += resp.usage.cache_creation_input_tokens ?? 0
+        stopReason = resp.stop_reason
+
+        // Buscar texto y tool_use en content
+        const textParts: string[] = []
+        const toolCalls: Array<{ id: string; name: string; input: Record<string, unknown> }> = []
+        for (const part of resp.content) {
+          if (part.type === "text") textParts.push(String(part.text ?? ""))
+          if (part.type === "tool_use") {
+            toolCalls.push({
+              id: String(part.id), name: String(part.name),
+              input: (part.input ?? {}) as Record<string, unknown>,
+            })
+          }
+        }
+
+        finalText = textParts.join("\n").trim()
+
+        if (toolCalls.length === 0 || resp.stop_reason !== "tool_use") {
+          break
+        }
+
+        // Push assistant turn con tool_use
+        messages.push({ role: "assistant", content: resp.content })
+
+        // Ejecutar tools y push tool_result
+        const adminToolNames = new Set(ADMIN_TOOLS.map((t) => t.name))
+        const results: Array<Record<string, unknown>> = []
+        for (const t of toolCalls) {
+          const isAdminCall = adminToolNames.has(t.name)
+          // Hard block: si un número NO admin llama una admin tool (por seguridad belt-and-suspenders)
+          const out = isAdminCall && !isAdmin
+            ? { error: "tool_restricted_to_admin" }
+            : isAdminCall
+              ? await execAdminTool(t.name, t.input)
+              : await execTool(t.name, t.input, {
+                  phone,
+                  conversationId: convId,
+                  clientName: client?.full_name ?? null,
+                  messageText,
+                })
+          // Señal de cita real: booking_id presente, recién creada o duplicado
+          // (duplicado ⇒ ya existe una cita para ese slot, confirmar es válido).
+          if (out && typeof out === "object") {
+            const o = out as Record<string, unknown>
+            if (o.booking_id || o.created === true ||
+                o.booking_created === true || o.duplicate_prevented === true) {
+              bookingCreatedThisTurn = true
+            }
+          }
+          await supabase.from("ai_messages").insert({
+            conversation_id: convId, role: "tool",
+            tool_name: t.name, tool_input: t.input, tool_output: out,
+            is_admin_query: isAdmin,
+          })
+          results.push({
+            type: "tool_result", tool_use_id: t.id,
+            content: JSON.stringify(out).slice(0, 8000),
           })
         }
+        messages.push({ role: "user", content: results })
       }
 
-      finalText = textParts.join("\n").trim()
-
-      if (toolCalls.length === 0 || resp.stop_reason !== "tool_use") {
-        break
-      }
-
-      // Push assistant turn con tool_use
-      messages.push({ role: "assistant", content: resp.content })
-
-      // Ejecutar tools y push tool_result
-      const adminToolNames = new Set(ADMIN_TOOLS.map((t) => t.name))
-      const results: Array<Record<string, unknown>> = []
-      for (const t of toolCalls) {
-        const isAdminCall = adminToolNames.has(t.name)
-        // Hard block: si un número NO admin llama una admin tool (por seguridad belt-and-suspenders)
-        const out = isAdminCall && !isAdmin
-          ? { error: "tool_restricted_to_admin" }
-          : isAdminCall
-            ? await execAdminTool(t.name, t.input)
-            : await execTool(t.name, t.input, {
-                phone,
-                conversationId: convId,
-                clientName: client?.full_name ?? null,
-                messageText,
-              })
-        await supabase.from("ai_messages").insert({
-          conversation_id: convId, role: "tool",
-          tool_name: t.name, tool_input: t.input, tool_output: out,
-          is_admin_query: isAdmin,
+      // Guardrail: el modelo confirmó una cita que NO creó → corregir una vez.
+      if (pass === 0 && !isAdmin &&
+          claimsBookingRegistered(finalText) && !bookingCreatedThisTurn) {
+        // NO enviamos la confirmación falsa. Registramos lo dicho + corrección
+        // y dejamos que la pasada 1 (con tool forzada) cree la cita de verdad.
+        messages.push({ role: "assistant", content: finalText })
+        messages.push({
+          role: "user",
+          content:
+            "[SISTEMA] ⚠️ NO has creado ninguna cita: en tu último turno no " +
+            "llamaste ninguna herramienta de reserva, así que NADA quedó en la " +
+            "agenda. Es OBLIGATORIO que llames check_availability_for_booking " +
+            "AHORA con el servicio, la fecha y la hora ya acordados en esta " +
+            "conversación (dedúcelos del historial). PROHIBIDO decir " +
+            "'Registramos tu solicitud' o que recepción validará hasta que la " +
+            "herramienta devuelva un booking_id real. Si el horario no está " +
+            "disponible, ofrece las alternativas que devuelva la herramienta.",
         })
-        results.push({
-          type: "tool_result", tool_use_id: t.id,
-          content: JSON.stringify(out).slice(0, 8000),
-        })
+        continue
       }
-      messages.push({ role: "user", content: results })
+      break
+    }
+
+    // Última red de seguridad: si tras la corrección el modelo SIGUE afirmando
+    // que registró la cita sin que exista, no le mentimos al cliente.
+    if (!isAdmin && claimsBookingRegistered(finalText) && !bookingCreatedThisTurn) {
+      finalText =
+        "Estoy validando la disponibilidad de ese horario con recepción; en " +
+        "cuanto quede confirmado te aviso por aquí 🌿 ¿Quieres que te proponga " +
+        "horarios alternativos por si acaso?"
     }
 
     const elapsed = Date.now() - startedAt
