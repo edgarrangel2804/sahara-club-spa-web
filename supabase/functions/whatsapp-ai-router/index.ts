@@ -429,7 +429,7 @@ async function createGiftCardCheckout(opts: {
           customer_email: buyerEmail,
           customer_phone: opts.buyerPhone,
           notes: `Gift card de servicio comprada por WhatsApp para ${opts.recipientName}`,
-          success_url: "https://saharaclubspa.com/?giftcard=ok",
+          success_url: "https://saharaclubspa.com/tarjeta-regalo?session_id={CHECKOUT_SESSION_ID}",
           cancel_url: "https://saharaclubspa.com/?giftcard=cancel",
           items: [item],
         }),

@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../theme/sahara_theme.dart';
 import 'controllers/store_cart_controller.dart';
 import 'models/cart_item.dart';
+import 'models/store_product.dart';
 import 'services/store_checkout_service.dart';
 
 class CheckoutPage extends StatefulWidget {
@@ -191,7 +192,14 @@ class _CheckoutPageState extends State<CheckoutPage> {
     setState(() => _submitting = true);
 
     try {
-      final successUrl = _buildReturnUrl('success', includeSessionPlaceholder: true);
+      // Si el carrito incluye una gift card, al pagar mostramos la tarjeta
+      // digital con QR en /tarjeta-regalo; si no, retorno normal de la tienda.
+      final hasGiftCard = _cart.items.any(
+        (it) => it.product.type == StoreProductType.giftCard,
+      );
+      final successUrl = hasGiftCard
+          ? '${Uri.base.origin}/tarjeta-regalo?session_id={CHECKOUT_SESSION_ID}'
+          : _buildReturnUrl('success', includeSessionPlaceholder: true);
       final cancelUrl = _buildReturnUrl('cancel');
 
       final result = await _checkoutService.createCheckoutSession(
