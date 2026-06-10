@@ -20,6 +20,7 @@ import '../features/reportes/reportes_module.dart';
 import '../features/reception_alerts/reception_alert.dart';
 import '../features/reception_alerts/reception_alerts_service.dart';
 import '../features/reception_alerts/reception_alerts_bell.dart';
+import '../features/reception_alerts/reception_alert_banner.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
@@ -669,6 +670,9 @@ class _AgendaPageState extends State<AgendaPage> {
   RealtimeChannel? _alertsChannel;
   int _alertsUnseenCount = 0;
   List<ReceptionAlert> _alerts = const [];
+  // Banners flotantes notorios (en medio de la agenda) para alertas nuevas.
+  final List<ReceptionAlert> _floatingAlerts = [];
+  OverlayEntry? _bannerOverlay;
 
   Future<void> _logout() async {
     await Supabase.instance.client.auth.signOut();
@@ -730,6 +734,8 @@ class _AgendaPageState extends State<AgendaPage> {
     if (_alertsChannel != null) {
       Supabase.instance.client.removeChannel(_alertsChannel!);
     }
+    _bannerOverlay?.remove();
+    _bannerOverlay = null;
     _pendingConfirmPollTimer?.cancel();
     super.dispose();
   }
@@ -933,29 +939,62 @@ class _AgendaPageState extends State<AgendaPage> {
     );
   }
 
+  // Muestra un banner flotante GRANDE y notorio en medio de la agenda para la
+  // alerta recién llegada (cita nueva, cancelación, reagenda… cualquier canal).
+  // Se apilan hasta 3; el más viejo se descarta si llegan más.
   void _showNewAlertToast(ReceptionAlert alert) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: alert.accent,
-        duration: const Duration(seconds: 6),
-        content: Row(
-          children: [
-            Icon(alert.icon, color: Colors.white, size: 22),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                '${alert.title}: ${alert.clientName ?? 'Cliente WhatsApp'}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+    // Evitar duplicados visuales si el realtime reentrega el mismo id.
+    if (_floatingAlerts.any((a) => a.id == alert.id)) return;
+    _floatingAlerts.insert(0, alert);
+    if (_floatingAlerts.length > 3) {
+      _floatingAlerts.removeRange(3, _floatingAlerts.length);
+    }
+    _ensureBannerOverlay();
+    _bannerOverlay?.markNeedsBuild();
+  }
+
+  void _removeFloatingAlert(ReceptionAlert alert) {
+    _floatingAlerts.removeWhere((a) => a.id == alert.id);
+    if (_floatingAlerts.isEmpty) {
+      _bannerOverlay?.remove();
+      _bannerOverlay = null;
+    } else {
+      _bannerOverlay?.markNeedsBuild();
+    }
+  }
+
+  void _ensureBannerOverlay() {
+    if (_bannerOverlay != null) return;
+    _bannerOverlay = OverlayEntry(
+      builder: (context) {
+        return Positioned(
+          top: 92,
+          left: 0,
+          right: 0,
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final a in _floatingAlerts)
+                  ReceptionAlertBanner(
+                    key: ValueKey(a.id),
+                    alert: a,
+                    onDismiss: () => _removeFloatingAlert(a),
+                    onOpen: () {
+                      _removeFloatingAlert(a);
+                      _openAlertTarget(a);
+                    },
+                  ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
+    final overlay = Overlay.of(context, rootOverlay: true);
+    overlay.insert(_bannerOverlay!);
   }
 
   Future<void> _markAlertResolved(String id) async {
