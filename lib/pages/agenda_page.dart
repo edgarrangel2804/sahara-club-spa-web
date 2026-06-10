@@ -672,7 +672,6 @@ class _AgendaPageState extends State<AgendaPage> {
   List<ReceptionAlert> _alerts = const [];
   // Banners flotantes notorios (en medio de la agenda) para alertas nuevas.
   final List<ReceptionAlert> _floatingAlerts = [];
-  OverlayEntry? _bannerOverlay;
 
   Future<void> _logout() async {
     await Supabase.instance.client.auth.signOut();
@@ -734,8 +733,6 @@ class _AgendaPageState extends State<AgendaPage> {
     if (_alertsChannel != null) {
       Supabase.instance.client.removeChannel(_alertsChannel!);
     }
-    _bannerOverlay?.remove();
-    _bannerOverlay = null;
     _pendingConfirmPollTimer?.cancel();
     super.dispose();
   }
@@ -939,62 +936,54 @@ class _AgendaPageState extends State<AgendaPage> {
     );
   }
 
-  // Muestra un banner flotante GRANDE y notorio en medio de la agenda para la
-  // alerta recién llegada (cita nueva, cancelación, reagenda… cualquier canal).
-  // Se apilan hasta 3; el más viejo se descarta si llegan más.
+  // Agrega un banner flotante GRANDE y notorio para la alerta recién llegada
+  // (cita nueva, cancelación, reagenda… cualquier canal). Los banners viven en
+  // el árbol de la página (Stack en build), manejados con setState: NO se
+  // auto-cierran ni los quita ningún rebuild; permanecen hasta que recepción
+  // los atienda o los cierre. Se apilan hasta 3; el más viejo se descarta.
   void _showNewAlertToast(ReceptionAlert alert) {
     if (!mounted) return;
     // Evitar duplicados visuales si el realtime reentrega el mismo id.
     if (_floatingAlerts.any((a) => a.id == alert.id)) return;
-    _floatingAlerts.insert(0, alert);
-    if (_floatingAlerts.length > 3) {
-      _floatingAlerts.removeRange(3, _floatingAlerts.length);
-    }
-    _ensureBannerOverlay();
-    _bannerOverlay?.markNeedsBuild();
+    setState(() {
+      _floatingAlerts.insert(0, alert);
+      if (_floatingAlerts.length > 3) {
+        _floatingAlerts.removeRange(3, _floatingAlerts.length);
+      }
+    });
   }
 
   void _removeFloatingAlert(ReceptionAlert alert) {
-    _floatingAlerts.removeWhere((a) => a.id == alert.id);
-    if (_floatingAlerts.isEmpty) {
-      _bannerOverlay?.remove();
-      _bannerOverlay = null;
-    } else {
-      _bannerOverlay?.markNeedsBuild();
-    }
+    if (!mounted) return;
+    setState(() => _floatingAlerts.removeWhere((a) => a.id == alert.id));
   }
 
-  void _ensureBannerOverlay() {
-    if (_bannerOverlay != null) return;
-    _bannerOverlay = OverlayEntry(
-      builder: (context) {
-        return Positioned(
-          top: 92,
-          left: 0,
-          right: 0,
-          child: Align(
-            alignment: Alignment.topCenter,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final a in _floatingAlerts)
-                  ReceptionAlertBanner(
-                    key: ValueKey(a.id),
-                    alert: a,
-                    onDismiss: () => _removeFloatingAlert(a),
-                    onOpen: () {
-                      _removeFloatingAlert(a);
-                      _openAlertTarget(a);
-                    },
-                  ),
-              ],
-            ),
-          ),
-        );
-      },
+  // Capa de banners flotantes que se monta encima de toda la agenda.
+  Widget _buildFloatingAlerts() {
+    if (_floatingAlerts.isEmpty) return const SizedBox.shrink();
+    return Positioned(
+      top: 92,
+      left: 0,
+      right: 0,
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final a in _floatingAlerts)
+              ReceptionAlertBanner(
+                key: ValueKey(a.id),
+                alert: a,
+                onDismiss: () => _removeFloatingAlert(a),
+                onOpen: () {
+                  _removeFloatingAlert(a);
+                  _openAlertTarget(a);
+                },
+              ),
+          ],
+        ),
+      ),
     );
-    final overlay = Overlay.of(context, rootOverlay: true);
-    overlay.insert(_bannerOverlay!);
   }
 
   Future<void> _markAlertResolved(String id) async {
@@ -1574,7 +1563,9 @@ class _AgendaPageState extends State<AgendaPage> {
         : visibleModules.contains(_activeModule)
         ? _activeModule
         : visibleModules.first;
-    return Scaffold(
+    return Stack(
+      children: [
+        Scaffold(
       backgroundColor: SaharaTheme.blancoAlmendra,
       body: Column(
         children: [
@@ -1819,6 +1810,9 @@ class _AgendaPageState extends State<AgendaPage> {
           ),
         ],
       ),
+        ),
+        _buildFloatingAlerts(),
+      ],
     );
   }
 
