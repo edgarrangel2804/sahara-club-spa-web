@@ -340,7 +340,11 @@ async function notifyReceptionCancel(
 // Capa ADICIONAL a las notificaciones WhatsApp de arriba, no las reemplaza.
 // Nunca lanza: si falla, solo loguea para no romper la conversación del cliente.
 async function logReceptionAlert(
-  eventType: "booking_cancelled" | "reschedule_requested" | "requires_reception",
+  eventType:
+    | "booking_pending_reception"
+    | "booking_cancelled"
+    | "reschedule_requested"
+    | "requires_reception",
   opts: { bookingId?: string; phone?: string; clientName?: string | null; message?: string },
 ): Promise<void> {
   try {
@@ -989,6 +993,35 @@ async function execTool(
                   // anticipo deshabilitado globalmente
                   result.deposit_disabled = true
                 }
+
+                // 🔔 Alerta SIEMPRE visible en el panel de recepción: cita nueva
+                // por WhatsApp que recepción debe VALIDAR y ASIGNAR TERAPEUTA.
+                // Cubre waiver (membresía/gift card/paquete) y anticipo pendiente;
+                // no depende de que se pague nada ni de human_backup_enabled.
+                try {
+                  const st = String(result.status ?? "")
+                  if (st === "pending_reception" || st === "pending_payment") {
+                    const payLabel = result.payment_requirement === "waived"
+                      ? (waiverReason === "gift_card"
+                          ? "anticipo cubierto por gift card"
+                          : waiverReason === "membership"
+                            ? "anticipo cubierto por membresía"
+                            : waiverReason === "package"
+                              ? "anticipo cubierto por paquete"
+                              : "anticipo exonerado")
+                      : "anticipo pendiente de pago"
+                    await logReceptionAlert("booking_pending_reception", {
+                      bookingId,
+                      phone,
+                      clientName: ctx.clientName ?? null,
+                      message:
+                        `Nueva cita por WhatsApp (${payLabel}). ` +
+                        `Validar en agenda y asignar terapeuta.`,
+                    })
+                  }
+                } catch (e) {
+                  console.warn("booking_pending_reception alert failed:", (e as Error).message)
+                }
               } catch (e) {
                 console.warn("auto-flip with waiver check failed:", (e as Error).message)
                 result.checkout_error = (e as Error).message
@@ -1081,6 +1114,21 @@ async function execTool(
       const result = data as Record<string, unknown> | null
       // Alerta interna a recepción solo si REALMENTE se creó (no en dup)
       if (result?.created === true && result?.booking_id) {
+        // 🔔 Alerta en el panel de recepción (tabla reception_alerts): cita
+        // nueva por validar + asignar terapeuta. log_reception_alert resuelve
+        // servicio/fecha/hora desde el booking_id. Es idempotente con el
+        // auto-encadenado de check_availability_for_booking (si ya lo creó, el
+        // RPC marca duplicate y este bloque no corre).
+        try {
+          await logReceptionAlert("booking_pending_reception", {
+            bookingId: String(result.booking_id),
+            phone,
+            clientName: String(input.client_name ?? ctx.clientName ?? "") || null,
+            message: "Nueva cita por WhatsApp. Validar en agenda y asignar terapeuta.",
+          })
+        } catch (e) {
+          console.warn("booking_pending_reception alert (direct) failed:", (e as Error).message)
+        }
         try {
           // Construir mensaje con datos del booking (servicio, etc.)
           const { data: svc } = await supabase

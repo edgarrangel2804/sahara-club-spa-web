@@ -22,7 +22,7 @@ class ReceptionAlert {
   });
 
   final String id;
-  final String eventType; // booking_cancelled | reschedule_requested | deposit_paid | requires_reception
+  final String eventType; // booking_pending_reception | booking_cancelled | reschedule_requested | deposit_paid | requires_reception
   final String status; // unseen | seen | resolved
   final String channel;
   final DateTime createdAt;
@@ -74,6 +74,8 @@ class ReceptionAlert {
   /// Título legible del evento.
   String get title {
     switch (eventType) {
+      case 'booking_pending_reception':
+        return 'Cita nueva por validar';
       case 'booking_cancelled':
         return 'Cancelación';
       case 'reschedule_requested':
@@ -89,6 +91,8 @@ class ReceptionAlert {
 
   IconData get icon {
     switch (eventType) {
+      case 'booking_pending_reception':
+        return Icons.event_available_outlined;
       case 'booking_cancelled':
         return Icons.event_busy_outlined;
       case 'reschedule_requested':
@@ -104,6 +108,8 @@ class ReceptionAlert {
 
   Color get accent {
     switch (eventType) {
+      case 'booking_pending_reception':
+        return const Color(0xFF2D6CDF); // azul (acción: validar + asignar)
       case 'booking_cancelled':
         return const Color(0xFFD64545); // rojo
       case 'reschedule_requested':

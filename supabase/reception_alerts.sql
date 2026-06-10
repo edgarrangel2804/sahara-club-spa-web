@@ -14,6 +14,7 @@ create table if not exists public.reception_alerts (
   id                uuid primary key default gen_random_uuid(),
   event_type        text not null
                       check (event_type in (
+                        'booking_pending_reception', -- cita nueva por validar + asignar terapeuta
                         'booking_cancelled',     -- cliente canceló su cita
                         'reschedule_requested',  -- cliente reagendó (revalidar)
                         'deposit_paid',          -- anticipo pagado
