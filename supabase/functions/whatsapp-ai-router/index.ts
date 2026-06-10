@@ -336,6 +336,26 @@ async function notifyReceptionCancel(
   return await notifyReceptionRaw(alert)
 }
 
+// Inserta una alerta visible para recepción en el panel (tabla reception_alerts).
+// Capa ADICIONAL a las notificaciones WhatsApp de arriba, no las reemplaza.
+// Nunca lanza: si falla, solo loguea para no romper la conversación del cliente.
+async function logReceptionAlert(
+  eventType: "booking_cancelled" | "reschedule_requested" | "requires_reception",
+  opts: { bookingId?: string; phone?: string; clientName?: string | null; message?: string },
+): Promise<void> {
+  try {
+    await supabase.rpc("log_reception_alert", {
+      p_event_type: eventType,
+      p_booking_id: opts.bookingId ?? null,
+      p_phone: opts.phone ?? null,
+      p_client_name: opts.clientName ?? null,
+      p_message: opts.message ?? null,
+    })
+  } catch (e) {
+    console.warn("logReceptionAlert failed:", (e as Error).message)
+  }
+}
+
 async function loadAnthropicKey(): Promise<string> {
   const { data, error } = await supabase.rpc("get_anthropic_api_key")
   if (error || !data) throw new Error("No se pudo leer anthropic_api_key del Vault")
@@ -1031,6 +1051,16 @@ async function execTool(
         } catch (e) {
           console.warn("reschedule reception alert failed:", (e as Error).message)
         }
+        await logReceptionAlert("reschedule_requested", {
+          bookingId, phone, clientName: ctx.clientName ?? null,
+          message: `Nueva fecha solicitada: ${newDate} ${newTime}`,
+        })
+      } else if (result.error === "requires_reception") {
+        // El cliente quiso reagendar una cita confirmada → recepción debe actuar.
+        await logReceptionAlert("requires_reception", {
+          bookingId, phone, clientName: ctx.clientName ?? null,
+          message: `El cliente pidió reagendar a ${newDate} ${newTime}, pero la cita ya está confirmada.`,
+        })
       }
       return result
     }
@@ -1052,6 +1082,19 @@ async function execTool(
         } catch (e) {
           console.warn("cancel reception alert failed:", (e as Error).message)
         }
+        await logReceptionAlert("booking_cancelled", {
+          bookingId, phone, clientName: ctx.clientName ?? null,
+          message: input.reason ? String(input.reason) : undefined,
+        })
+      } else if (result.error === "requires_reception") {
+        // El cliente quiso cancelar una cita confirmada → recepción debe actuar
+        // (puede haber anticipo / política 24h). No se canceló automáticamente.
+        await logReceptionAlert("requires_reception", {
+          bookingId, phone, clientName: ctx.clientName ?? null,
+          message: input.reason
+            ? `Quiere cancelar (cita confirmada). Motivo: ${String(input.reason)}`
+            : "El cliente quiere cancelar una cita ya confirmada.",
+        })
       }
       return result
     }

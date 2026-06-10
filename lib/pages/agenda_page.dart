@@ -17,6 +17,9 @@ import '../features/admin/admin_module.dart';
 import '../features/admin/finanzas_module.dart';
 import '../features/productos/productos_module.dart';
 import '../features/reportes/reportes_module.dart';
+import '../features/reception_alerts/reception_alert.dart';
+import '../features/reception_alerts/reception_alerts_service.dart';
+import '../features/reception_alerts/reception_alerts_bell.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
@@ -661,6 +664,11 @@ class _AgendaPageState extends State<AgendaPage> {
   RealtimeChannel? _paymentsChannel;
   Timer? _pendingConfirmPollTimer;
   final Set<String> _seenPaymentReceivedIds = {};
+  // ── Alertas de recepción (eventos WhatsApp) ──
+  static const ReceptionAlertsService _alertsService = ReceptionAlertsService();
+  RealtimeChannel? _alertsChannel;
+  int _alertsUnseenCount = 0;
+  List<ReceptionAlert> _alerts = const [];
 
   Future<void> _logout() async {
     await Supabase.instance.client.auth.signOut();
@@ -690,6 +698,8 @@ class _AgendaPageState extends State<AgendaPage> {
     _loadPendingConfirmCount();
     _subscribeToPaymentReceivedRealtime();
     _startPendingConfirmPolling();
+    _loadAlerts();
+    _subscribeToAlertsRealtime();
     _timer = Timer.periodic(
       const Duration(minutes: 1),
       (_) => setState(() => _now = DateTime.now()),
@@ -716,6 +726,9 @@ class _AgendaPageState extends State<AgendaPage> {
     }
     if (_paymentsChannel != null) {
       Supabase.instance.client.removeChannel(_paymentsChannel!);
+    }
+    if (_alertsChannel != null) {
+      Supabase.instance.client.removeChannel(_alertsChannel!);
     }
     _pendingConfirmPollTimer?.cancel();
     super.dispose();
@@ -894,6 +907,92 @@ class _AgendaPageState extends State<AgendaPage> {
         ),
       ),
     );
+  }
+
+  // ── Alertas de recepción ──────────────────────────────────────────────────
+  Future<void> _loadAlerts() async {
+    try {
+      final list = await _alertsService.fetchRecent(limit: 50);
+      if (!mounted) return;
+      setState(() {
+        _alerts = list;
+        _alertsUnseenCount = list.where((a) => a.isUnseen).length;
+      });
+    } catch (_) {}
+  }
+
+  void _subscribeToAlertsRealtime() {
+    _alertsChannel = _alertsService.subscribe(
+      channelName: 'reception-alerts-realtime',
+      onChanged: () {
+        if (mounted) _loadAlerts();
+      },
+      onInserted: (alert) {
+        if (mounted) _showNewAlertToast(alert);
+      },
+    );
+  }
+
+  void _showNewAlertToast(ReceptionAlert alert) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: alert.accent,
+        duration: const Duration(seconds: 6),
+        content: Row(
+          children: [
+            Icon(alert.icon, color: Colors.white, size: 22),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                '${alert.title}: ${alert.clientName ?? 'Cliente WhatsApp'}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _markAlertResolved(String id) async {
+    try {
+      await _alertsService.markResolved(id);
+    } catch (_) {}
+    await _loadAlerts();
+  }
+
+  Future<void> _markAllAlertsSeen() async {
+    try {
+      await _alertsService.markAllSeen();
+    } catch (_) {}
+    await _loadAlerts();
+  }
+
+  Future<void> _openAlertTarget(ReceptionAlert alert) async {
+    if (alert.isUnseen) {
+      try {
+        await _alertsService.markSeen(alert.id);
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    if (alert.bookingId != null) {
+      setState(() {
+        _activeModule = 'agenda';
+        _viewMode = 'day';
+      });
+      if (alert.bookingDate != null) {
+        _goToDate(alert.bookingDate!);
+      } else {
+        _loadBookings();
+      }
+    } else if (alert.clientRecordId != null) {
+      setState(() => _activeModule = 'clientes');
+    }
+    await _loadAlerts();
   }
 
   void _subscribeToScheduleBlocksRealtime() {
@@ -1445,6 +1544,15 @@ class _AgendaPageState extends State<AgendaPage> {
             userRole: _userRole,
             messagesUnreadCount: _messagesUnreadCount,
             pendingConfirmCount: _pendingConfirmCount,
+            alertsUnseenCount: _alertsUnseenCount,
+            alerts: _alerts,
+            onAlertMarkSeen: (id) async {
+              await _alertsService.markSeen(id);
+              await _loadAlerts();
+            },
+            onAlertMarkResolved: _markAlertResolved,
+            onAlertMarkAllSeen: _markAllAlertsSeen,
+            onAlertOpen: _openAlertTarget,
             onModuleTap: (m) {
               setState(() => _activeModule = m);
               // Al volver a la agenda, recargamos: editar un cliente en el
@@ -9311,6 +9419,12 @@ class _ModuleNav extends StatelessWidget {
     required this.userRole,
     required this.messagesUnreadCount,
     required this.pendingConfirmCount,
+    required this.alertsUnseenCount,
+    required this.alerts,
+    required this.onAlertMarkSeen,
+    required this.onAlertMarkResolved,
+    required this.onAlertMarkAllSeen,
+    required this.onAlertOpen,
     required this.onModuleTap,
     required this.onLogout,
   });
@@ -9319,6 +9433,12 @@ class _ModuleNav extends StatelessWidget {
   final String userRole;
   final int messagesUnreadCount;
   final int pendingConfirmCount;
+  final int alertsUnseenCount;
+  final List<ReceptionAlert> alerts;
+  final ValueChanged<String> onAlertMarkSeen;
+  final ValueChanged<String> onAlertMarkResolved;
+  final VoidCallback onAlertMarkAllSeen;
+  final ValueChanged<ReceptionAlert> onAlertOpen;
   final ValueChanged<String> onModuleTap;
   final Future<void> Function() onLogout;
 
@@ -9428,6 +9548,16 @@ class _ModuleNav extends StatelessWidget {
               ),
             ),
           ),
+          ReceptionAlertsBell(
+            unseenCount: alertsUnseenCount,
+            alerts: alerts,
+            compact: compact,
+            onMarkSeen: onAlertMarkSeen,
+            onMarkResolved: onAlertMarkResolved,
+            onMarkAllSeen: onAlertMarkAllSeen,
+            onOpenAlert: onAlertOpen,
+          ),
+          SizedBox(width: compact ? 4 : 8),
           TextButton.icon(
             onPressed: () => onLogout(),
             icon: const Icon(Icons.logout_outlined, size: 18, color: Colors.black87),

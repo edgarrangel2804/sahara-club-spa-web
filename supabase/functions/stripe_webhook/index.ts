@@ -87,6 +87,19 @@ async function handleBookingDepositPayment(
       console.warn("payments insert failed:", payErr.message)
     }
 
+    // Alerta visible en el panel de recepción (tabla reception_alerts).
+    // Capa adicional a la notificación WhatsApp de abajo; nunca debe romper el flujo.
+    try {
+      await supabase.rpc("log_reception_alert", {
+        p_event_type: "deposit_paid",
+        p_booking_id: bookingId,
+        p_message: "Anticipo pagado. Pendiente de confirmar en agenda.",
+        p_amount_mxn: finalAmount,
+      })
+    } catch (e) {
+      console.warn("reception alert (deposit_paid) failed:", (e as Error).message)
+    }
+
     // Notificar a backup humanos + admins IA (los 3 números admin + el backup
     // tablet). Dedup interno: la misma persona no recibe 2 mensajes si está
     // en ambas listas.

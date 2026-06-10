@@ -1,0 +1,119 @@
+import 'package:flutter/material.dart';
+
+/// Alerta interna para recepción (tabla `reception_alerts`).
+/// Eventos importantes originados por el cliente (sobre todo WhatsApp IA) que
+/// recepción debe ver de inmediato en el panel.
+class ReceptionAlert {
+  const ReceptionAlert({
+    required this.id,
+    required this.eventType,
+    required this.status,
+    required this.channel,
+    required this.createdAt,
+    this.bookingId,
+    this.clientRecordId,
+    this.clientName,
+    this.clientPhone,
+    this.serviceName,
+    this.bookingDate,
+    this.bookingTime,
+    this.message,
+    this.amountMxn,
+  });
+
+  final String id;
+  final String eventType; // booking_cancelled | reschedule_requested | deposit_paid | requires_reception
+  final String status; // unseen | seen | resolved
+  final String channel;
+  final DateTime createdAt;
+  final String? bookingId;
+  final String? clientRecordId;
+  final String? clientName;
+  final String? clientPhone;
+  final String? serviceName;
+  final DateTime? bookingDate;
+  final String? bookingTime; // HH:MM
+  final String? message;
+  final num? amountMxn;
+
+  bool get isUnseen => status == 'unseen';
+  bool get isResolved => status == 'resolved';
+
+  factory ReceptionAlert.fromMap(Map<String, dynamic> m) {
+    DateTime? parseDate(dynamic v) {
+      if (v == null) return null;
+      return DateTime.tryParse(v.toString());
+    }
+
+    String? parseTime(dynamic v) {
+      if (v == null) return null;
+      final s = v.toString();
+      return s.length >= 5 ? s.substring(0, 5) : s;
+    }
+
+    return ReceptionAlert(
+      id: m['id'].toString(),
+      eventType: (m['event_type'] ?? '').toString(),
+      status: (m['status'] ?? 'unseen').toString(),
+      channel: (m['channel'] ?? 'whatsapp').toString(),
+      createdAt: parseDate(m['created_at']) ?? DateTime.now(),
+      bookingId: m['booking_id']?.toString(),
+      clientRecordId: m['client_record_id']?.toString(),
+      clientName: m['client_name']?.toString(),
+      clientPhone: m['client_phone']?.toString(),
+      serviceName: m['service_name']?.toString(),
+      bookingDate: parseDate(m['booking_date']),
+      bookingTime: parseTime(m['booking_time']),
+      message: m['message']?.toString(),
+      amountMxn: m['amount_mxn'] is num
+          ? m['amount_mxn'] as num
+          : num.tryParse(m['amount_mxn']?.toString() ?? ''),
+    );
+  }
+
+  /// Título legible del evento.
+  String get title {
+    switch (eventType) {
+      case 'booking_cancelled':
+        return 'Cancelación';
+      case 'reschedule_requested':
+        return 'Reagendamiento';
+      case 'deposit_paid':
+        return 'Pago de anticipo';
+      case 'requires_reception':
+        return 'Requiere recepción';
+      default:
+        return 'Evento';
+    }
+  }
+
+  IconData get icon {
+    switch (eventType) {
+      case 'booking_cancelled':
+        return Icons.event_busy_outlined;
+      case 'reschedule_requested':
+        return Icons.update_outlined;
+      case 'deposit_paid':
+        return Icons.payments_outlined;
+      case 'requires_reception':
+        return Icons.priority_high_rounded;
+      default:
+        return Icons.notifications_outlined;
+    }
+  }
+
+  Color get accent {
+    switch (eventType) {
+      case 'booking_cancelled':
+        return const Color(0xFFD64545); // rojo
+      case 'reschedule_requested':
+        return const Color(0xFFE08A00); // ámbar
+      case 'deposit_paid':
+        return const Color(0xFF1A9E65); // verde
+      case 'requires_reception':
+        return const Color(0xFFB4232A); // rojo intenso (acción humana)
+      default:
+        return Colors.black54;
+    }
+  }
+}
