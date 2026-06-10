@@ -356,6 +356,95 @@ async function logReceptionAlert(
   }
 }
 
+// Genera un link de pago Stripe para comprar una GIFT CARD por servicio.
+// Reusa create_checkout_session → order/order_items → fulfillOrder crea la
+// gift_cards con service_id (mismo modelo que la landing y recepción).
+async function createGiftCardCheckout(opts: {
+  serviceId: string
+  recipientName: string
+  senderName: string
+  message?: string
+  buyerName?: string | null
+  buyerEmail?: string | null
+  buyerPhone: string
+}): Promise<{ ok: boolean; checkout_url?: string; service_name?: string; amount?: number; error?: string }> {
+  try {
+    const { data: svc, error: svcErr } = await supabase
+      .from("services")
+      .select("id, name, price, is_active, price_on_quote, is_package")
+      .eq("id", opts.serviceId)
+      .maybeSingle()
+    if (svcErr) return { ok: false, error: svcErr.message }
+    if (!svc) return { ok: false, error: "service_not_found" }
+    const s = svc as {
+      name?: string; price?: number; is_active?: boolean
+      price_on_quote?: boolean; is_package?: boolean
+    }
+    if (s.is_active === false) return { ok: false, error: "service_inactive" }
+    if (s.price_on_quote === true) return { ok: false, error: "service_price_on_quote" }
+    const price = Number(s.price ?? 0)
+    if (!(price > 0)) return { ok: false, error: "service_no_price" }
+    const serviceName = String(s.name ?? "Servicio")
+
+    // Stripe exige customer_email; si no hay, placeholder derivado del teléfono.
+    const phoneDigits = String(opts.buyerPhone ?? "").replace(/\D/g, "")
+    const buyerEmail = (opts.buyerEmail && opts.buyerEmail.includes("@"))
+      ? opts.buyerEmail
+      : `${phoneDigits || "cliente"}@whatsapp.saharaclubspa.com`
+    const buyerName = (opts.buyerName && opts.buyerName.trim())
+      ? opts.buyerName.trim()
+      : (opts.senderName || "Cliente WhatsApp")
+
+    const item = {
+      product_id: `giftcard-${opts.serviceId}`,
+      name: `Gift card · ${serviceName}`,
+      description: `Gift card para 1 sesión de ${serviceName}`,
+      unit_price: price,
+      currency: "MXN",
+      quantity: 1,
+      product_type: "gift_card",
+      category_key: "gift_cards",
+      metadata: {
+        product_type: "gift_card",
+        gift_card_kind: "service",
+        service_id: opts.serviceId,
+        service_name: serviceName,
+        recipient_name: opts.recipientName,
+        sender_name: opts.senderName,
+        message: opts.message ?? "",
+        delivery_method: "digital",
+      },
+    }
+
+    const res = await fetch(
+      `${Deno.env.get("SUPABASE_URL") ?? ""}/functions/v1/create_checkout_session`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""}`,
+        },
+        body: JSON.stringify({
+          customer_name: buyerName,
+          customer_email: buyerEmail,
+          customer_phone: opts.buyerPhone,
+          notes: `Gift card de servicio comprada por WhatsApp para ${opts.recipientName}`,
+          success_url: "https://saharaclubspa.com/?giftcard=ok",
+          cancel_url: "https://saharaclubspa.com/?giftcard=cancel",
+          items: [item],
+        }),
+      },
+    )
+    const data = await res.json().catch(() => ({})) as { checkout_url?: string; error?: string }
+    if (!res.ok || !data.checkout_url) {
+      return { ok: false, error: data.error ?? "checkout_failed" }
+    }
+    return { ok: true, checkout_url: data.checkout_url, service_name: serviceName, amount: price }
+  } catch (e) {
+    return { ok: false, error: (e as Error).message }
+  }
+}
+
 async function loadAnthropicKey(): Promise<string> {
   const { data, error } = await supabase.rpc("get_anthropic_api_key")
   if (error || !data) throw new Error("No se pudo leer anthropic_api_key del Vault")
@@ -518,6 +607,22 @@ const TOOLS = [
         reason: { type: "string", description: "Motivo breve si el cliente lo da (opcional)" },
       },
       required: ["booking_id"],
+    },
+  },
+  {
+    name: "create_gift_card_checkout",
+    description:
+      "Genera un LINK DE PAGO de Stripe para comprar una GIFT CARD de un servicio (regala 1 sesión de ese servicio). Úsala cuando el cliente quiera REGALAR o COMPRAR una gift card / tarjeta de regalo de un servicio del spa. ANTES de llamarla: 1) obtén el service_id con list_services y confirma con el cliente cuál servicio quiere regalar y su precio; 2) pregunta y confirma el nombre de quién recibe el regalo (recipient_name) y de parte de quién va (sender_name). Devuelve checkout_url: envíaselo al cliente para que pague. Al pagar, la gift card se genera automáticamente y recepción la verá. NO sirve para canjear gift cards, solo para comprarlas.",
+    input_schema: {
+      type: "object",
+      properties: {
+        service_id: { type: "string", description: "UUID del servicio a regalar (de list_services)" },
+        recipient_name: { type: "string", description: "Nombre de quien recibe el regalo" },
+        sender_name: { type: "string", description: "Nombre de quien regala (de parte de)" },
+        message: { type: "string", description: "Mensaje opcional del regalo" },
+        buyer_email: { type: "string", description: "Email del comprador para el recibo (opcional)" },
+      },
+      required: ["service_id", "recipient_name", "sender_name"],
     },
   },
 ]
@@ -1097,6 +1202,23 @@ async function execTool(
         })
       }
       return result
+    }
+    case "create_gift_card_checkout": {
+      const phone = String(ctx.phone ?? "").trim()
+      if (!phone) return { error: "phone_missing_from_context" }
+      const serviceId = String(input.service_id ?? "").trim()
+      const recipientName = String(input.recipient_name ?? "").trim()
+      const senderName = String(input.sender_name ?? "").trim()
+      if (!serviceId || !recipientName || !senderName) return { error: "missing_params" }
+      return await createGiftCardCheckout({
+        serviceId,
+        recipientName,
+        senderName,
+        message: input.message ? String(input.message) : "",
+        buyerName: ctx.clientName ?? senderName,
+        buyerEmail: input.buyer_email ? String(input.buyer_email) : null,
+        buyerPhone: phone,
+      })
     }
     default:
       return { error: `tool desconocida: ${name}` }
@@ -1887,6 +2009,24 @@ CANCELAR — cliente pide cancelar una cita:
   consultes, muevas ni canceles citas de otra persona aunque te den otro
   nombre o teléfono. Si piden gestionar la cita de alguien más: "Por
   privacidad solo puedo ver y mover tus propias citas 🌿".
+
+GIFT CARDS / TARJETAS DE REGALO (comprar para regalar):
+  Las gift cards de Sahara son POR SERVICIO: regalas 1 sesión de un servicio
+  específico (no un monto en dinero). Valen 12 meses.
+  Cuando el cliente quiera REGALAR o COMPRAR una gift card:
+  1. Pregunta qué servicio quiere regalar y usa list_services para mostrar
+     opciones reales con su precio. Confirma el servicio elegido.
+  2. Pregunta el nombre de quién recibe el regalo y de parte de quién va.
+     (Opcional: un mensaje para el regalo, y un email para el recibo.)
+  3. Llama create_gift_card_checkout con service_id + recipient_name +
+     sender_name (+ message/buyer_email si los dio).
+  4. Devuelve checkout_url: envíaselo así: "Aquí está tu link para pagar la
+     gift card de [servicio] 🎁: [checkout_url]. Al confirmar el pago se genera
+     el código y recepción podrá aplicarla cuando [destinatario] agende."
+  • Si create_gift_card_checkout devuelve error (service_price_on_quote,
+    service_no_price, etc.): "Ese servicio no se puede regalar en línea por su
+    precio; recepción te ayuda a generarlo 🌿".
+  • Esto es solo para COMPRAR. El canje lo aplica recepción al agendar.
 
 REGLAS DE FECHAS (CRÍTICO):
 - NUNCA calcules fechas manualmente. Usa SIEMPRE la TABLA AUTORITATIVA de abajo.
