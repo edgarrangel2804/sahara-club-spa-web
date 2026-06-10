@@ -41,17 +41,12 @@ class _GiftCardPageState extends State<GiftCardPage> {
 
   Future<void> _loadServices() async {
     try {
-      final data = await Supabase.instance.client
-          .from('services')
-          .select('id, name, price, is_active, price_on_quote, is_package')
-          .order('name');
+      // RPC security-definer: la tabla services no es legible por anon (RLS),
+      // así que el catálogo regalable se expone vía list_giftable_services.
+      final data =
+          await Supabase.instance.client.rpc('list_giftable_services');
       final list = (data as List)
           .cast<Map<String, dynamic>>()
-          .where((m) =>
-              (m['is_active'] as bool? ?? true) &&
-              (m['price_on_quote'] as bool? ?? false) == false &&
-              (m['is_package'] as bool? ?? false) == false &&
-              ((m['price'] as num?)?.toDouble() ?? 0) > 0)
           .map((m) => _GiftService(
                 id: m['id'].toString(),
                 name: (m['name'] as String? ?? 'Servicio').trim(),
@@ -184,7 +179,7 @@ class _GiftCardPageState extends State<GiftCardPage> {
                             children: [
                               _SectionTitle(title: 'Elige el servicio a regalar'),
                               const SizedBox(height: 32),
-                              _ServiceGrid(
+                              _ServiceDropdown(
                                 services: _services,
                                 selectedServiceId: _selectedServiceId,
                                 loading: _loadingServices,
@@ -447,8 +442,8 @@ class _GiftService {
   String get priceLabel => '\$${price.toStringAsFixed(0)} MXN';
 }
 
-class _ServiceGrid extends StatelessWidget {
-  const _ServiceGrid({
+class _ServiceDropdown extends StatelessWidget {
+  const _ServiceDropdown({
     required this.services,
     required this.selectedServiceId,
     required this.loading,
@@ -466,7 +461,7 @@ class _ServiceGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     if (loading) {
       return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 40),
+        padding: EdgeInsets.symmetric(vertical: 24),
         child: Center(
           child: CircularProgressIndicator(color: _GiftPalette.primary),
         ),
@@ -484,99 +479,41 @@ class _ServiceGrid extends StatelessWidget {
         style: GoogleFonts.inter(color: _GiftPalette.textSoft, fontSize: 15),
       );
     }
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 680 ? 2 : 1;
-        return GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: columns,
-          crossAxisSpacing: 16,
-          mainAxisSpacing: 16,
-          childAspectRatio: 3.4,
-          children: [
-            for (final service in services)
-              _ServiceTile(
-                service: service,
-                selected: selectedServiceId == service.id,
-                onTap: () => onSelected(service.id),
-              ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _ServiceTile extends StatelessWidget {
-  const _ServiceTile({
-    required this.service,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final _GiftService service;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 240),
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-        decoration: BoxDecoration(
-          color: selected
-              ? _GiftPalette.primary.withValues(alpha: 0.09)
-              : _GiftPalette.surfaceLow,
-          border: Border.all(
-            color: selected
-                ? _GiftPalette.primary
-                : _GiftPalette.primary.withValues(alpha: 0.18),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: _GiftPalette.surfaceLow,
+        border: Border.all(color: _GiftPalette.primary.withValues(alpha: 0.30)),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          isExpanded: true,
+          value: selectedServiceId,
+          dropdownColor: _GiftPalette.surfaceLow,
+          icon: const Icon(Icons.keyboard_arrow_down_rounded,
+              color: _GiftPalette.primary),
+          hint: Text(
+            'Selecciona un servicio',
+            style: GoogleFonts.inter(
+                color: _GiftPalette.textMuted, fontSize: 16),
           ),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              selected
-                  ? Icons.radio_button_checked
-                  : Icons.radio_button_unchecked,
-              color: selected ? _GiftPalette.primary : _GiftPalette.textMuted,
-              size: 20,
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    service.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.inter(
-                      color: selected
-                          ? _GiftPalette.primary
-                          : _GiftPalette.textStrong,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
+          items: [
+            for (final s in services)
+              DropdownMenuItem<String>(
+                value: s.id,
+                child: Text(
+                  '${s.name}  ·  ${s.priceLabel}',
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.inter(
+                    color: _GiftPalette.textStrong,
+                    fontSize: 15,
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    service.priceLabel,
-                    style: GoogleFonts.playfairDisplay(
-                      color: selected
-                          ? _GiftPalette.primary
-                          : _GiftPalette.textSoft,
-                      fontSize: 20,
-                    ),
-                  ),
-                ],
+                ),
               ),
-            ),
           ],
+          onChanged: (id) {
+            if (id != null) onSelected(id);
+          },
         ),
       ),
     );
