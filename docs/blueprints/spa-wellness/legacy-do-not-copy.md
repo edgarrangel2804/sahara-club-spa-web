@@ -1,0 +1,48 @@
+# Legacy Do Not Copy
+
+This file records productive Sahara behavior that may be real and useful, but should not be copied directly into NEXORA.
+
+## Database And Migrations
+
+- SQL outside `supabase/migrations` is the central drift risk. Sahara has many productive objects that were applied from loose SQL or directly against the remote database.
+- Do not replay the full remote dump as a migration. Reconstruct capability baselines by domain, in order, with tests.
+- Do not mix schema, one-off data repair, operational seed data, and experiments in the same SQL file.
+- Do not rely on production-only objects that local reset cannot recreate.
+- Do not leave functions deployed remotely without matching Git history.
+
+## Security And RLS
+
+- Do not copy `using (true)` RLS policies as a default pattern. Some ecommerce policies currently allow broad authenticated access.
+- Do not copy anonymous read access for orders or order items without a signed, scoped token design.
+- Do not expose `security definer` RPCs broadly unless the trust boundary is explicit and tested.
+- Do not keep `verify_jwt = false` on Edge Functions without a written reason, compensating auth, and abuse tests.
+- Do not grant broad anon/auth access just because Supabase dumps include default grants.
+
+## Secrets And Configuration
+
+- Do not place an anon key or other live project identifiers in standalone HTML files.
+- Do not mix encrypted production configuration, masked display values, and runtime business settings without clear ownership.
+- Do not require production secrets for local reset or local tests.
+- Do not hardcode Sahara branch IDs, phone numbers, service names, prices, or copy into reusable NEXORA foundations.
+
+## Domain Modeling
+
+- Do not trust product prices or payable totals from the frontend. Server-side pricing must own Gift Card, package, membership, and appointment charges.
+- Do not couple Stripe webhook behavior directly to unrelated booking and notification side effects without idempotent boundaries.
+- Do not let optional domain FKs expand every migration into the whole schema. Define explicit domain ownership and migration order.
+- Do not treat `profiles.role`, `staff.role`, and dynamic permissions as interchangeable. Normalize the role model before reuse.
+- Do not copy duplicate names like `reception` and `receptionist` without a compatibility strategy.
+
+## Notifications And Idempotency
+
+- Do not send WhatsApp/admin notifications from non-idempotent paths.
+- Do not rely on status-only checks when a unique delivery ledger is needed.
+- Do not couple reception UI alerts, WhatsApp provider logs, and Stripe fulfillment without explicit replay safety.
+- Do not allow webhook replay to create duplicate Gift Cards, alerts, or admin notifications.
+
+## Developer Experience
+
+- Do not accept a repository where local Supabase reset cannot recreate the productive baseline.
+- Do not omit generated database types once schema ownership stabilizes.
+- Do not leave undocumented remote drift between Git, Supabase, Edge Functions, and app code.
+- Do not use Sahara as a NEXORA template until each capability has local migrations, reset certification, tests, and security review.
