@@ -26,6 +26,7 @@ void main() {
         isSafeReceiptUrl('https://user@example.com/$bookingId.pdf'),
         isFalse,
       );
+      expect(isSafeReceiptUrl('https://evil.example/$bookingId.pdf'), isFalse);
       expect(isSafeReceiptUrl('javascript:alert(1)'), isFalse);
       expect(isSafeReceiptUrl(null), isFalse);
     });
@@ -100,36 +101,67 @@ void main() {
       },
     );
 
-    test('builds explicit function payloads and voucher URLs', () {
+    test('builds explicit payloads and authorized receipt page URLs', () {
       expect(sendDepositReceiptPayload(bookingId), {'booking_id': bookingId});
       expect(() => sendDepositReceiptPayload('booking-1'), throwsArgumentError);
 
-      final base = Uri.parse('https://example.supabase.co/functions/v1');
-      final tokenUri = buildDepositVoucherUri(
-        functionsBaseUri: base,
-        token: 'abcdefghijklmnopqrstuvwx',
+      const voucherToken =
+          'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOP.abcdefghijklmnopqrstuvwxyz123456';
+      final pageUri = buildAuthorizedReceiptPageUri(
+        pageBaseUri: Uri.parse(
+          'https://saharaclubspa.com/comprobante-anticipo.html',
+        ),
+        voucherToken: voucherToken,
       );
       expect(
-        tokenUri.toString(),
-        'https://example.supabase.co/functions/v1/deposit_voucher?token=abcdefghijklmnopqrstuvwx',
-      );
-
-      final sessionUri = buildDepositVoucherUri(
-        functionsBaseUri: base,
-        sessionId: 'cs_live_1234567890abcdef',
-      );
-      expect(
-        sessionUri.toString(),
-        'https://example.supabase.co/functions/v1/deposit_voucher?session_id=cs_live_1234567890abcdef',
+        pageUri.toString(),
+        'https://saharaclubspa.com/comprobante-anticipo.html?voucher_token=$voucherToken',
       );
 
       expect(
-        buildDepositVoucherUri(functionsBaseUri: base, token: 'short'),
+        buildAuthorizedReceiptPageUri(
+          pageBaseUri: Uri.parse('https://evil.example/comprobante.html'),
+          voucherToken: voucherToken,
+        ),
         isNull,
       );
       expect(
-        buildDepositVoucherUri(functionsBaseUri: base, sessionId: bookingId),
+        buildAuthorizedReceiptPageUri(
+          pageBaseUri: Uri.parse(
+            'https://saharaclubspa.com/comprobante-anticipo.html',
+          ),
+          voucherToken: 'short',
+        ),
         isNull,
+      );
+    });
+
+    test('validates backend authorized links without exposing tokens', () {
+      const voucherToken =
+          'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOP.abcdefghijklmnopqrstuvwxyz123456';
+      final response = AuthorizedReceiptLinkResponse.fromFunctionData({
+        'ok': true,
+        'receipt_url':
+            'https://saharaclubspa.com/comprobante-anticipo.html?voucher_token=$voucherToken',
+      });
+
+      expect(response.ok, isTrue);
+      expect(response.safeUri, isNotNull);
+      expect(
+        redactReceiptToken(response.url),
+        'https://saharaclubspa.com/comprobante-anticipo.html?voucher_token=%5Bredacted%5D',
+      );
+
+      final invalid = AuthorizedReceiptLinkResponse.fromFunctionData({
+        'ok': true,
+        'url':
+            'http://evil.example/comprobante-anticipo.html?voucher_token=$voucherToken',
+      });
+      expect(invalid.safeUri, isNull);
+
+      expect(
+        AuthorizedReceiptLinkResponse.fromFunctionData(['bad']).error,
+        'invalid_response',
       );
     });
   });
