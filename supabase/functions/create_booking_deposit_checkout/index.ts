@@ -11,6 +11,12 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import {
+  buildDepositVoucherSuccessUrl,
+  createDepositVoucherToken,
+  parseVoucherTokenTtl,
+  requireVoucherSigningSecret,
+} from "../_shared/deposit_receipts.ts"
+import {
   corsHeaders,
   createAdminClient,
   jsonResponse,
@@ -21,8 +27,7 @@ import {
 const DEFAULT_AMOUNT_MXN = 200
 const DEFAULT_CURRENCY = "mxn"
 // Tras pagar, Stripe redirige al comprobante (voucher) con el id de la sesión.
-const SUCCESS_URL =
-  "https://saharaclubspa.com/comprobante-anticipo.html?session_id={CHECKOUT_SESSION_ID}"
+const DEFAULT_SUCCESS_URL = "https://saharaclubspa.com/comprobante-anticipo.html"
 const CANCEL_URL = "https://saharaclubspa.com/anticipo-cancelado"
 
 type StripeSession = {
@@ -31,6 +36,11 @@ type StripeSession = {
   payment_intent?: string | null
   status?: string // open, complete, expired
   payment_status?: string // unpaid, paid
+  success_url?: string | null
+}
+
+function hasSignedVoucherSuccessUrl(session: StripeSession): boolean {
+  return String(session.success_url ?? "").includes("voucher_token=")
 }
 
 serve(async (req) => {
@@ -74,7 +84,11 @@ serve(async (req) => {
           `/checkout/sessions/${booking.stripe_session_id}`,
           { method: "GET" },
         )
-        if (existing.status === "open" && existing.payment_status === "unpaid") {
+        if (
+          existing.status === "open" &&
+          existing.payment_status === "unpaid" &&
+          hasSignedVoucherSuccessUrl(existing)
+        ) {
           return jsonResponse({
             ok: true,
             reused: true,
@@ -108,9 +122,25 @@ serve(async (req) => {
     // 4. Crear nueva sesión Stripe
     const description =
       `Anticipo cita: ${serviceName} · ${booking.booking_date} ${booking.booking_time}`
+    const voucherSecret = requireVoucherSigningSecret(
+      Deno.env.get("DEPOSIT_VOUCHER_SIGNING_SECRET"),
+    )
+    const voucherTtlSeconds = parseVoucherTokenTtl(
+      Deno.env.get("DEPOSIT_VOUCHER_TOKEN_TTL_SECONDS"),
+    )
+    const { token: voucherToken } = await createDepositVoucherToken({
+      bookingId,
+      secret: voucherSecret,
+      ttlSeconds: voucherTtlSeconds,
+    })
+    const successUrl = buildDepositVoucherSuccessUrl({
+      baseUrl: Deno.env.get("DEPOSIT_VOUCHER_SUCCESS_BASE_URL") ?? DEFAULT_SUCCESS_URL,
+      voucherToken,
+    })
+
     const form: Record<string, string> = {
       mode: "payment",
-      success_url: SUCCESS_URL,
+      success_url: successUrl,
       cancel_url: CANCEL_URL,
       "metadata[booking_id]": bookingId,
       "metadata[payment_type]": "appointment_deposit",

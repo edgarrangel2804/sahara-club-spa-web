@@ -2,19 +2,18 @@
 // ---------------------------------------------------------------------------
 // Public limited voucher endpoint for appointment deposits.
 //
-// GET  ?token=... or temporary compatibility ?session_id=cs_...
-// POST { token } | { session_id }
-// Response: { ok, folio, cliente, servicio, fecha, hora, monto, moneda, pagado }
-//
-// verify_jwt=false: consumed by the public voucher page with the anon key.
+// POST { voucher_token }
+// Response: minimal paid receipt JSON. No anon table access and no internal IDs.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import {
+  checkVoucherRateLimit,
   isPaidBooking,
-  parseVoucherLookup,
+  parseVoucherTokenInput,
   publicVoucherPayload,
   sanitizePublicError,
-  verifyVoucherToken,
+  verifyDepositVoucherToken,
+  voucherTokenFingerprint,
 } from "../_shared/deposit_receipts.ts"
 
 const cors = {
@@ -29,31 +28,66 @@ const json = (body: unknown, status = 200) =>
     status,
   })
 
+async function readVoucherRequest(req: Request): Promise<{
+  voucherToken?: string
+  token?: string
+  sessionId?: string
+  bookingId?: string
+}> {
+  const url = new URL(req.url)
+  if (req.method === "GET") {
+    return {
+      voucherToken: url.searchParams.get("voucher_token") ?? undefined,
+      token: url.searchParams.get("token") ?? undefined,
+      sessionId: url.searchParams.get("session_id") ?? undefined,
+      bookingId: url.searchParams.get("booking_id") ?? undefined,
+    }
+  }
+  const body = await req.json().catch(() => ({})) as Record<string, unknown>
+  return {
+    voucherToken: String(body.voucher_token ?? body.voucherToken ?? ""),
+    token: String(body.token ?? ""),
+    sessionId: String(body.session_id ?? ""),
+    bookingId: String(body.booking_id ?? ""),
+  }
+}
+
+async function auditVoucherEvent(event: string, voucherToken: string): Promise<void> {
+  const tokenHash = voucherToken ? await voucherTokenFingerprint(voucherToken) : "missing"
+  console.info("deposit_voucher audit", { event, token_hash: tokenHash })
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors })
+  if (req.method !== "POST" && req.method !== "GET") {
+    return json({ ok: false, error: "method_not_allowed" }, 405)
+  }
+
+  let voucherToken = ""
   try {
-    const url = new URL(req.url)
-    let token = url.searchParams.get("token") ?? ""
-    let sessionId = url.searchParams.get("session_id") ?? ""
-    let bookingId = url.searchParams.get("booking_id") ?? ""
-    if (!token && !sessionId && !bookingId && req.method === "POST") {
-      const body = await req.json().catch(() => ({}))
-      token = String(body.token ?? "")
-      sessionId = String(body.session_id ?? "")
-      bookingId = String(body.booking_id ?? "")
+    const input = await readVoucherRequest(req)
+    const parsed = parseVoucherTokenInput(input)
+    if (!parsed.ok) return json({ ok: false, error: parsed.error }, parsed.status)
+    voucherToken = parsed.voucherToken
+
+    const tokenHash = await voucherTokenFingerprint(voucherToken)
+    const ipPrefix = String(req.headers.get("x-forwarded-for") ?? "local")
+      .split(",")[0]
+      .trim()
+      .slice(0, 48)
+    const rateLimit = checkVoucherRateLimit(`${tokenHash}:${ipPrefix}`)
+    if (!rateLimit.ok) {
+      await auditVoucherEvent("rate_limited", voucherToken)
+      return json({ ok: false, error: rateLimit.error }, rateLimit.status)
     }
 
-    const lookup = parseVoucherLookup({ token, sessionId, bookingId })
-    if (!lookup.ok) return json({ ok: false, error: lookup.error }, 400)
-
-    let lookupSessionId = lookup.value
-    if (lookup.kind === "token") {
-      const verified = await verifyVoucherToken(
-        lookup.value,
-        Deno.env.get("DEPOSIT_VOUCHER_TOKEN_SECRET") ?? "",
-      )
-      if (!verified.ok) return json({ ok: false, error: verified.error }, 400)
-      lookupSessionId = verified.sessionId
+    const verified = await verifyDepositVoucherToken(
+      voucherToken,
+      Deno.env.get("DEPOSIT_VOUCHER_SIGNING_SECRET") ?? "",
+    )
+    if (!verified.ok) {
+      await auditVoucherEvent(verified.error, voucherToken)
+      return json({ ok: false, error: verified.error }, verified.status)
     }
 
     const sb: any = createClient(
@@ -65,14 +99,20 @@ Deno.serve(async (req) => {
       .from("bookings")
       .select(
         "id, status, payment_status, booking_date, booking_time, deposit_amount, " +
-          "deposit_paid_cents, service_name, service_id, client_record_id",
+          "deposit_paid_cents, deposit_paid_at, service_name, service_id, client_record_id",
       )
-      .eq("stripe_session_id", lookupSessionId)
+      .eq("id", verified.payload.booking_id)
       .maybeSingle()
-    if (!bk) return json({ ok: false, error: "not_found" }, 404)
+    if (!bk) {
+      await auditVoucherEvent("not_found", voucherToken)
+      return json({ ok: false, error: "not_found" }, 404)
+    }
 
     const booking = bk as Record<string, unknown>
-    if (!isPaidBooking(booking)) return json({ ok: false, error: "payment_required" }, 409)
+    if (!isPaidBooking(booking)) {
+      await auditVoucherEvent("payment_required", voucherToken)
+      return json({ ok: false, error: "payment_required" }, 409)
+    }
 
     let serviceName = String(booking.service_name ?? "")
     if (!serviceName && booking.service_id) {
@@ -81,17 +121,19 @@ Deno.serve(async (req) => {
       serviceName = (svc as { name?: string } | null)?.name ?? "Servicio"
     }
 
-    let clientName = "Cliente"
+    let clientName = "Cliente Sahara"
     if (booking.client_record_id) {
       const { data: client } = await sb.from("clients").select("full_name").eq(
         "id",
         booking.client_record_id,
       ).maybeSingle()
-      clientName = (client as { full_name?: string } | null)?.full_name ?? "Cliente"
+      clientName = (client as { full_name?: string } | null)?.full_name ?? "Cliente Sahara"
     }
 
+    await auditVoucherEvent("success", voucherToken)
     return json(publicVoucherPayload({ booking, serviceName, clientName }))
   } catch (e) {
+    if (voucherToken) await auditVoucherEvent("internal_error", voucherToken)
     console.warn("deposit_voucher failed:", sanitizePublicError(e))
     return json({ ok: false, error: "receipt_unavailable" }, 500)
   }
