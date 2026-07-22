@@ -21,6 +21,7 @@ import '../features/reception_alerts/reception_alert.dart';
 import '../features/reception_alerts/reception_alerts_service.dart';
 import '../features/reception_alerts/reception_alerts_bell.dart';
 import '../features/reception_alerts/reception_alert_banner.dart';
+import '../features/receipts/deposit_receipt_actions.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
@@ -7028,7 +7029,7 @@ class _BookingDetailDialog extends StatelessWidget {
                       label: 'Comprobante',
                       color: const Color(0xFFC6A76A),
                       textColor: Colors.black87,
-                      onTap: () => _showDepositReceiptDeferred(context),
+                      onTap: () => showDepositReceiptDialog(context, b.id),
                     ),
                   _DialogBtn(
                     // Abre el formulario completo de la cita (prellenado):
@@ -7208,17 +7209,6 @@ class _BookingDetailDialog extends StatelessWidget {
         );
       }
     }
-  }
-
-  void _showDepositReceiptDeferred(BuildContext ctx) {
-    ScaffoldMessenger.of(ctx).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Comprobantes de anticipo quedan para la siguiente fase. No se envio nada.',
-        ),
-        duration: Duration(seconds: 5),
-      ),
-    );
   }
 
   void _showClientHistory(BuildContext context, _Booking booking) {

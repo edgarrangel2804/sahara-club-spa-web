@@ -16,6 +16,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { PDFDocument, rgb, StandardFonts } from "https://esm.sh/pdf-lib@1.17.1?target=deno"
+import { isPaidBooking, isUuid, sanitizePublicError } from "../_shared/deposit_receipts.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -361,6 +362,7 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({}))
     const bookingId = String(body.booking_id ?? "").trim()
     if (!bookingId) return json({ ok: false, error: "booking_id_required" }, 400)
+    if (!isUuid(bookingId)) return json({ ok: false, error: "invalid_booking_id" }, 400)
 
     const supabase = createAdminClient()
 
@@ -368,13 +370,16 @@ serve(async (req) => {
     const { data: booking, error: bErr } = await supabase
       .from("bookings")
       .select(
-        "id, status, booking_date, booking_time, service_name, service_id, " +
-          "deposit_amount, stripe_payment_intent_id, client_record_id",
+        "id, status, payment_status, booking_date, booking_time, service_name, service_id, " +
+          "deposit_amount, deposit_paid_cents, stripe_payment_intent_id, client_record_id",
       )
       .eq("id", bookingId)
       .maybeSingle()
     if (bErr) throw bErr
     if (!booking) return json({ ok: false, error: "booking_not_found" }, 404)
+    if (!isPaidBooking(booking as Record<string, unknown>)) {
+      return json({ ok: false, error: "deposit_not_paid" }, 409)
+    }
 
     const { data: client } = await supabase
       .from("clients")
@@ -476,7 +481,7 @@ serve(async (req) => {
       whatsapp_sent: whatsappSent,
     })
   } catch (e) {
-    console.error("send_deposit_receipt error:", (e as Error).message)
-    return json({ ok: false, error: (e as Error).message }, 500)
+    console.error("send_deposit_receipt error:", sanitizePublicError(e))
+    return json({ ok: false, error: "receipt_unavailable" }, 500)
   }
 })

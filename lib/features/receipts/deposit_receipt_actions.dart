@@ -4,80 +4,339 @@ import 'package:url_launcher/url_launcher.dart';
 
 const _gold = Color(0xFFC6A76A);
 
-String _folio(String id) =>
-    'SAHARA-${id.replaceAll('-', '').substring(0, 8).toUpperCase()}';
+String depositReceiptFolio(String bookingId) {
+  final compact = bookingId.replaceAll('-', '');
+  if (compact.length < 8) return 'SAHARA';
+  return 'SAHARA-${compact.substring(0, 8).toUpperCase()}';
+}
 
-/// Muestra el comprobante PDF del anticipo de una cita para que recepción lo
-/// abra/descargue y se lo reenvíe al cliente por WhatsApp.
-///
-/// Lee el PDF directamente del bucket privado `receipts` (lo generó el webhook
-/// de Stripe al confirmarse el pago) mediante una URL firmada. Evita llamar a
-/// la edge function desde el navegador (que fallaba en el build web).
-Future<void> showDepositReceiptDialog(BuildContext context, String bookingId) async {
-  showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (_) => const Center(child: CircularProgressIndicator(color: _gold)),
-  );
+bool isValidBookingId(String value) {
+  return RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+  ).hasMatch(value.trim());
+}
 
-  String? url;
-  try {
-    url = await Supabase.instance.client.storage
-        .from('receipts')
-        .createSignedUrl('$bookingId.pdf', 60 * 60 * 24 * 7);
-  } catch (_) {
-    url = null;
+bool isSafeReceiptUrl(String? value) {
+  final uri = Uri.tryParse((value ?? '').trim());
+  if (uri == null || !uri.hasAbsolutePath) return false;
+  if (uri.scheme != 'https') return false;
+  if (uri.host.isEmpty) return false;
+  if (uri.userInfo.isNotEmpty) return false;
+  return true;
+}
+
+bool isValidStripeSessionId(String? value) {
+  return RegExp(
+    r'^cs_(test|live)_[A-Za-z0-9_]{8,220}$',
+  ).hasMatch((value ?? '').trim());
+}
+
+Map<String, String> sendDepositReceiptPayload(String bookingId) {
+  if (!isValidBookingId(bookingId)) {
+    throw ArgumentError('invalid_booking_id');
   }
+  return {'booking_id': bookingId};
+}
 
-  if (!context.mounted) return;
-  Navigator.of(context).pop(); // cierra el loading
-
-  if (url == null) {
-    await showDialog<void>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Comprobante'),
-        content: const Text(
-          'Aún no hay comprobante generado para esta cita.\n\n'
-          'El comprobante se crea automáticamente cuando el cliente paga el '
-          'anticipo. Si la cita se confirmó sin anticipo (cliente frecuente, '
-          'gift card o membresía), no genera comprobante.',
-        ),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
-      ),
+Uri? buildDepositVoucherUri({
+  required Uri functionsBaseUri,
+  String? token,
+  String? sessionId,
+}) {
+  final cleanToken = (token ?? '').trim();
+  final cleanSessionId = (sessionId ?? '').trim();
+  if (cleanToken.isNotEmpty) {
+    if (!RegExp(r'^[A-Za-z0-9_.-]{24,320}$').hasMatch(cleanToken)) {
+      return null;
+    }
+    return functionsBaseUri.replace(
+      path: '${functionsBaseUri.path}/deposit_voucher',
+      queryParameters: {'token': cleanToken},
     );
-    return;
+  }
+  if (!isValidStripeSessionId(cleanSessionId)) {
+    return null;
+  }
+  return functionsBaseUri.replace(
+    path: '${functionsBaseUri.path}/deposit_voucher',
+    queryParameters: {'session_id': cleanSessionId},
+  );
+}
+
+String sanitizeReceiptError(Object? error) {
+  final raw = error?.toString().toLowerCase() ?? '';
+  if (raw.contains('booking') && raw.contains('required')) {
+    return 'Falta identificar la cita.';
+  }
+  if (raw.contains('invalid_booking')) {
+    return 'La cita no tiene un identificador valido.';
+  }
+  if (raw.contains('not_paid') ||
+      raw.contains('payment_required') ||
+      raw.contains('deposit_not_paid')) {
+    return 'El anticipo aun no esta confirmado como pagado.';
+  }
+  if (raw.contains('not_found')) {
+    return 'No encontramos comprobante para esta cita.';
+  }
+  if (raw.contains('network') || raw.contains('fetch')) {
+    return 'No se pudo conectar con Supabase. Intenta de nuevo.';
+  }
+  return 'No se pudo completar la accion del comprobante.';
+}
+
+class DepositReceiptResponse {
+  const DepositReceiptResponse({
+    required this.ok,
+    this.folio,
+    this.signedUrl,
+    this.whatsappSent = false,
+    this.error,
+  });
+
+  final bool ok;
+  final String? folio;
+  final String? signedUrl;
+  final bool whatsappSent;
+  final String? error;
+
+  factory DepositReceiptResponse.fromMap(Map<String, dynamic> map) {
+    return DepositReceiptResponse(
+      ok: map['ok'] == true,
+      folio: map['folio']?.toString(),
+      signedUrl: map['signed_url']?.toString(),
+      whatsappSent: map['whatsapp_sent'] == true,
+      error: map['error']?.toString(),
+    );
   }
 
-  await showDialog<void>(
+  factory DepositReceiptResponse.fromFunctionData(dynamic data) {
+    if (data is Map<String, dynamic>) {
+      return DepositReceiptResponse.fromMap(data);
+    }
+    if (data is Map) {
+      return DepositReceiptResponse.fromMap(
+        data.map((key, value) => MapEntry(key.toString(), value)),
+      );
+    }
+    return const DepositReceiptResponse(ok: false, error: 'invalid_response');
+  }
+}
+
+class DepositReceiptActionGate {
+  bool _busy = false;
+  bool _disposed = false;
+
+  bool get busy => _busy;
+  bool get disposed => _disposed;
+
+  void dispose() {
+    _disposed = true;
+    _busy = false;
+  }
+
+  Future<T?> run<T>(Future<T> Function() action) async {
+    if (_busy || _disposed) return null;
+    _busy = true;
+    try {
+      final result = await action();
+      return _disposed ? null : result;
+    } finally {
+      if (!_disposed) _busy = false;
+    }
+  }
+}
+
+Future<String?> loadSignedDepositReceiptUrl(
+  SupabaseClient client,
+  String bookingId,
+) async {
+  if (!isValidBookingId(bookingId)) {
+    throw ArgumentError('invalid_booking_id');
+  }
+  final url = await client.storage
+      .from('receipts')
+      .createSignedUrl('$bookingId.pdf', 60 * 60 * 24 * 7);
+  return isSafeReceiptUrl(url) ? url : null;
+}
+
+Future<DepositReceiptResponse> sendDepositReceipt(
+  SupabaseClient client,
+  String bookingId,
+) async {
+  if (!isValidBookingId(bookingId)) {
+    return const DepositReceiptResponse(ok: false, error: 'invalid_booking_id');
+  }
+  final dynamic response = await client.functions.invoke(
+    'send_deposit_receipt',
+    body: sendDepositReceiptPayload(bookingId),
+  );
+  return DepositReceiptResponse.fromFunctionData(response.data);
+}
+
+Future<void> showDepositReceiptDialog(BuildContext context, String bookingId) {
+  return showDialog<void>(
     context: context,
-    builder: (_) => AlertDialog(
+    builder: (_) => _DepositReceiptDialog(bookingId: bookingId),
+  );
+}
+
+class _DepositReceiptDialog extends StatefulWidget {
+  const _DepositReceiptDialog({required this.bookingId});
+
+  final String bookingId;
+
+  @override
+  State<_DepositReceiptDialog> createState() => _DepositReceiptDialogState();
+}
+
+class _DepositReceiptDialogState extends State<_DepositReceiptDialog> {
+  final DepositReceiptActionGate _gate = DepositReceiptActionGate();
+  bool _loading = true;
+  bool _sending = false;
+  String? _signedUrl;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadExisting();
+  }
+
+  @override
+  void dispose() {
+    _gate.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadExisting() async {
+    try {
+      final url = await loadSignedDepositReceiptUrl(
+        Supabase.instance.client,
+        widget.bookingId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _signedUrl = url;
+        _loading = false;
+        _error = url == null
+            ? 'No encontramos comprobante para esta cita.'
+            : null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = sanitizeReceiptError(error);
+      });
+    }
+  }
+
+  Future<void> _openReceipt() async {
+    final url = _signedUrl;
+    if (!isSafeReceiptUrl(url)) {
+      _showMessage('El enlace del comprobante no es valido.');
+      return;
+    }
+    final opened = await launchUrl(
+      Uri.parse(url!),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!opened && mounted) {
+      _showMessage('No se pudo abrir el comprobante.');
+    }
+  }
+
+  Future<void> _sendExplicitly() async {
+    setState(() => _sending = true);
+    final result = await _gate.run(
+      () => sendDepositReceipt(Supabase.instance.client, widget.bookingId),
+    );
+    if (!mounted) return;
+    setState(() => _sending = false);
+    if (result == null) return;
+    if (!result.ok) {
+      _showMessage(sanitizeReceiptError(result.error));
+      return;
+    }
+    final signedUrl = result.signedUrl;
+    setState(() {
+      if (isSafeReceiptUrl(signedUrl)) {
+        _signedUrl = signedUrl;
+        _error = null;
+      }
+    });
+    _showMessage(
+      result.whatsappSent
+          ? 'Comprobante enviado por WhatsApp.'
+          : 'Comprobante generado. WhatsApp no confirmado; puedes descargarlo.',
+    );
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
       title: const Text('Comprobante de anticipo'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Folio: ${_folio(bookingId)}',
-              style: const TextStyle(fontWeight: FontWeight.w600)),
-          const SizedBox(height: 12),
-          const Text(
-            'Para enviárselo al cliente:\n'
-            '1) Toca "Ver / Descargar PDF" (se abre/descarga).\n'
-            '2) Abre el chat del cliente (botón "Abrir chat") y adjunta el PDF.\n\n'
-            'Nota: al pagar, el comprobante ya se le envió automáticamente por '
-            'WhatsApp; esto es por si necesitas reenviárselo.',
-            style: TextStyle(fontSize: 13, height: 1.4),
-          ),
-        ],
+      content: SizedBox(
+        width: 380,
+        child: _loading
+            ? const Padding(
+                padding: EdgeInsets.all(24),
+                child: Center(child: CircularProgressIndicator(color: _gold)),
+              )
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Folio: ${depositReceiptFolio(widget.bookingId)}',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 12),
+                  if (_signedUrl != null)
+                    const Text(
+                      'El comprobante existe y puede abrirse de forma segura. '
+                      'Para reenviarlo por WhatsApp usa la accion explicita.',
+                      style: TextStyle(fontSize: 13, height: 1.4),
+                    )
+                  else
+                    Text(
+                      _error ??
+                          'Aun no hay comprobante generado para esta cita.',
+                      style: const TextStyle(fontSize: 13, height: 1.4),
+                    ),
+                ],
+              ),
       ),
       actions: [
-        TextButton.icon(
-          icon: const Icon(Icons.picture_as_pdf, color: _gold),
-          label: const Text('Ver / Descargar PDF'),
-          onPressed: () => launchUrl(Uri.parse(url!), mode: LaunchMode.externalApplication),
+        TextButton(
+          onPressed: _sending ? null : () => Navigator.pop(context),
+          child: const Text('Cerrar'),
         ),
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
+        if (_signedUrl != null)
+          TextButton.icon(
+            icon: const Icon(Icons.picture_as_pdf, color: _gold),
+            label: const Text('Ver / Descargar'),
+            onPressed: _sending ? null : _openReceipt,
+          ),
+        TextButton.icon(
+          icon: _sending
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.send_outlined, color: _gold),
+          label: Text(_sending ? 'Procesando...' : 'Reenviar WhatsApp'),
+          onPressed: _sending ? null : _sendExplicitly,
+        ),
       ],
-    ),
-  );
+    );
+  }
 }

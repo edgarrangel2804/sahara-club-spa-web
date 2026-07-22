@@ -3,13 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Comprobante de anticipo · Sahara Club Spa</title>
+  <meta http-equiv="Cache-Control" content="no-store" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <title>Comprobante de anticipo - Sahara Club Spa</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;600&display=swap" rel="stylesheet">
   <style>
     :root{
-      --bg:#0F0F0F; --card:#16161A; --gold:#C6A76A; --goldSoft:#E8DCC8;
-      --line:#2A2A2E; --muted:#9A9388; --text:#ECE7DF;
+      --bg:#0F0F0F; --card:#16161A; --gold:#C6A76A; --line:#2A2A2E;
+      --muted:#9A9388; --text:#ECE7DF;
     }
     *{box-sizing:border-box;margin:0;padding:0}
     body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;
@@ -45,7 +47,7 @@
 </head>
 <body>
   <div class="voucher" id="voucher">
-    <div class="loading">Cargando tu comprobante…</div>
+    <div class="loading">Cargando tu comprobante...</div>
   </div>
 
   <script>
@@ -66,45 +68,84 @@
     function money(n){ return '$'+Number(n).toLocaleString('es-MX',{minimumFractionDigits:2}); }
 
     const params = new URLSearchParams(location.search);
-    const sid = params.get('session_id');
-    const bid = params.get('booking_id');
-    const qs = sid ? 'session_id='+encodeURIComponent(sid) : 'booking_id='+encodeURIComponent(bid||'');
+    const token = (params.get('token') || '').trim();
+    const sid = (params.get('session_id') || '').trim();
+    const validToken = /^[A-Za-z0-9_.-]{24,320}$/.test(token);
+    const validSession = /^cs_(test|live)_[A-Za-z0-9_]{8,220}$/.test(sid);
+    const qs = validToken
+      ? 'token='+encodeURIComponent(token)
+      : validSession
+        ? 'session_id='+encodeURIComponent(sid)
+        : '';
 
-    fetch(SUPA+'/functions/v1/deposit_voucher?'+qs, {
-      headers: { apikey: ANON, Authorization: 'Bearer '+ANON }
-    })
-      .then(r=>r.json())
-      .then(d=>{ if(d && d.ok){ render(d); } else { fail(); } })
-      .catch(fail);
+    if(!qs){
+      fail();
+    }else{
+      fetch(SUPA+'/functions/v1/deposit_voucher?'+qs, {
+        headers: { apikey: ANON, Authorization: 'Bearer '+ANON },
+        cache: 'no-store'
+      })
+        .then(r=>r.ok ? r.json() : Promise.reject(new Error('voucher_unavailable')))
+        .then(d=>{ if(d && d.ok && d.pagado === true){ render(d); } else { fail(); } })
+        .catch(fail);
+    }
 
     function fail(){
-      document.getElementById('voucher').innerHTML =
-        '<div class="loading">No pudimos cargar el comprobante.<br>Tu pago está seguro; recepción te confirmará tu cita.</div>'+
-        '<div class="actions"><button class="home" onclick="location.href=\'https://saharaclubspa.com\'">Volver a Sahara</button></div>';
+      const root = document.getElementById('voucher');
+      root.replaceChildren();
+      const msg = el('div', 'loading');
+      msg.append('No pudimos cargar el comprobante.');
+      msg.appendChild(document.createElement('br'));
+      msg.append('Tu pago esta seguro; recepcion te confirmara tu cita.');
+      const actions = el('div', 'actions');
+      actions.append(button('home', 'Volver a Sahara', () => { location.href = 'https://saharaclubspa.com'; }));
+      root.append(msg, actions);
     }
 
     function render(d){
-      const estado = d.pagado ? 'PAGADO' : 'EN PROCESO';
-      document.getElementById('voucher').innerHTML = `
-        <div class="top">
-          <div class="brand">SAHARA CLUB SPA</div>
-          <div class="sub">Comprobante de anticipo</div>
-          <div class="badge">${estado}</div>
-        </div>
-        <div class="body">
-          <div class="row"><span class="label">Folio</span><span class="value">${d.folio}</span></div>
-          <div class="row"><span class="label">Cliente</span><span class="value">${d.cliente}</span></div>
-          <div class="row"><span class="label">Servicio</span><span class="value">${d.servicio}</span></div>
-          <div class="row"><span class="label">Fecha</span><span class="value">${fmtDate(d.fecha)}</span></div>
-          <div class="row"><span class="label">Hora</span><span class="value">${fmtTime(d.hora)}</span></div>
-          <div class="row"><span class="label">Anticipo pagado</span><span class="value amount">${money(d.monto)} MXN</span></div>
-        </div>
-        <div class="note">Tu anticipo se aplica al costo total del servicio. Recepción confirma tu cita y te esperamos. Conserva este comprobante.</div>
-        <div class="actions">
-          <button class="print" onclick="window.print()">Descargar / Imprimir</button>
-          <button class="home" onclick="location.href='https://saharaclubspa.com'">Volver a Sahara</button>
-        </div>
-        <div class="foot">Calle Segunda 2226, Ensenada B.C. · saharaclubspa.com</div>`;
+      const root = document.getElementById('voucher');
+      root.replaceChildren();
+
+      const top = el('div', 'top');
+      top.append(el('div', 'brand', 'SAHARA CLUB SPA'));
+      top.append(el('div', 'sub', 'Comprobante de anticipo'));
+      top.append(el('div', 'badge', 'PAGADO'));
+
+      const body = el('div', 'body');
+      body.append(row('Folio', d.folio));
+      body.append(row('Cliente', d.cliente || 'Cliente Sahara'));
+      body.append(row('Servicio', d.servicio || 'Servicio'));
+      body.append(row('Fecha', fmtDate(String(d.fecha || ''))));
+      body.append(row('Hora', fmtTime(String(d.hora || ''))));
+      body.append(row('Anticipo pagado', money(d.monto)+' MXN', 'amount'));
+
+      const note = el('div', 'note', 'Tu anticipo se aplica al costo total del servicio. Recepcion confirma tu cita y te esperamos. Conserva este comprobante.');
+      const actions = el('div', 'actions');
+      actions.append(button('print', 'Descargar / Imprimir', () => window.print()));
+      actions.append(button('home', 'Volver a Sahara', () => { location.href = 'https://saharaclubspa.com'; }));
+      const foot = el('div', 'foot', 'Calle Segunda 2226, Ensenada B.C. - saharaclubspa.com');
+      root.append(top, body, note, actions, foot);
+    }
+
+    function el(tag, className, text){
+      const node = document.createElement(tag);
+      node.className = className;
+      if(text !== undefined) node.textContent = String(text);
+      return node;
+    }
+    function button(className, text, onClick){
+      const node = document.createElement('button');
+      node.className = className;
+      node.type = 'button';
+      node.textContent = text;
+      node.addEventListener('click', onClick);
+      return node;
+    }
+    function row(label, value, extraClass){
+      const r = el('div', 'row');
+      r.append(el('span', 'label', label));
+      r.append(el('span', extraClass ? 'value '+extraClass : 'value', value || ''));
+      return r;
     }
   </script>
 </body>
