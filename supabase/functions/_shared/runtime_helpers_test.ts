@@ -7,6 +7,14 @@ import {
   toMinorUnits,
   verifyStripeSignature,
 } from "./stripe_checkout.ts"
+import {
+  isPaidBooking,
+  maskClientName,
+  parseVoucherLookup,
+  publicVoucherPayload,
+  signVoucherToken,
+  verifyVoucherToken,
+} from "./deposit_receipts.ts"
 
 Deno.test("normalizePhone keeps WhatsApp Cloud API dialing rules stable", () => {
   assertEquals(normalizePhone("646 151 9597"), "5216461519597")
@@ -98,4 +106,67 @@ Deno.test("verifyStripeSignature accepts valid v1 signatures only", async () => 
     false,
   )
   assertEquals(await verifyStripeSignature(payload, null, secret), false)
+})
+
+Deno.test("deposit voucher lookup rejects public booking ids and validates Stripe sessions", () => {
+  assertEquals(parseVoucherLookup({ bookingId: "00000000-0000-4000-8000-000000000000" }), {
+    ok: false,
+    error: "public_booking_id_not_allowed",
+  })
+  assertEquals(parseVoucherLookup({ sessionId: "bad" }), {
+    ok: false,
+    error: "invalid_session_id",
+  })
+  assertEquals(parseVoucherLookup({ sessionId: "cs_test_1234567890abcdef" }), {
+    ok: true,
+    kind: "session_id",
+    value: "cs_test_1234567890abcdef",
+  })
+})
+
+Deno.test("deposit voucher tokens are signed and tamper resistant", async () => {
+  const secret = "voucher-secret"
+  const sessionId = "cs_test_1234567890abcdef"
+  const token = await signVoucherToken(sessionId, secret)
+  assertEquals(await verifyVoucherToken(token, secret), { ok: true, sessionId })
+  assertEquals(await verifyVoucherToken(token + "x", secret), {
+    ok: false,
+    error: "invalid_token",
+  })
+  assertEquals(await verifyVoucherToken(token, ""), {
+    ok: false,
+    error: "token_unavailable",
+  })
+})
+
+Deno.test("deposit receipt helpers expose only paid minimal public voucher data", () => {
+  assertEquals(isPaidBooking({ status: "pending", payment_status: "unpaid" }), false)
+  assertEquals(isPaidBooking({ status: "payment_received" }), true)
+  assertEquals(isPaidBooking({ deposit_paid_cents: 25000 }), true)
+  assertEquals(maskClientName("Ana Maria Lopez Perez"), "Ana P.")
+
+  assertEquals(
+    publicVoucherPayload({
+      booking: {
+        id: "00000000-0000-4000-8000-000000000000",
+        booking_date: "2026-07-22",
+        booking_time: "10:30:00",
+        deposit_paid_cents: 25000,
+      },
+      serviceName: "Masaje relajante",
+      clientName: "Ana Maria Lopez Perez",
+    }),
+    {
+      ok: true,
+      folio: "SAHARA-00000000",
+      cliente: "Ana P.",
+      servicio: "Masaje relajante",
+      fecha: "2026-07-22",
+      hora: "10:30",
+      monto: 250,
+      moneda: "MXN",
+      pagado: true,
+      comercio: "Sahara Club Spa",
+    },
+  )
 })
