@@ -41,6 +41,8 @@ This file records productive Sahara behavior that may be real and useful, but sh
 - Do not let optional domain FKs expand every migration into the whole schema. Define explicit domain ownership and migration order.
 - Do not treat `profiles.role`, `staff.role`, and dynamic permissions as interchangeable. Normalize the role model before reuse.
 - Do not copy duplicate names like `reception` and `receptionist` without a compatibility strategy.
+- Do not copy `AgendaPage` as an application template. It is productive Sahara runtime, but it mixes calendar UI, booking writes, sales navigation, WhatsApp actions, and alert routing in one widget.
+- Do not copy appointment status labels/colors/actions as separate switch statements. Extract one state machine first.
 
 ## Notifications And Idempotency
 
@@ -48,6 +50,7 @@ This file records productive Sahara behavior that may be real and useful, but sh
 - Do not rely on status-only checks when a unique delivery ledger is needed.
 - Do not couple reception UI alerts, WhatsApp provider logs, and Stripe fulfillment without explicit replay safety.
 - Do not allow webhook replay to create duplicate Gift Cards, alerts, or admin notifications.
+- Do not merge Gift Card Alerts by replacing regularized reception alert files wholesale. Model fields, banner rows, bell UI, and Agenda navigation need a manual fusion after receipt/client regularization.
 
 ## Developer Experience
 

@@ -42,6 +42,49 @@ Status values:
 | Rituales | PARCIAL | Service/product metadata can represent rituals, but there is no dedicated ritual domain model. |
 | Seguimiento | PARCIAL | WhatsApp, reminders, AI handoff, and client notes support follow-up; coverage is fragmented. |
 
+## Reception And Agenda Regularization
+
+Fase 2 classifies the recovered reception and agenda runtime without moving it to NEXORA.
+
+### Universal NEXORA Candidates
+
+| Capability | Status | Notes |
+|---|---:|---|
+| Agenda engine | FOUNDATION | Bookings, calendar ranges, staff assignment, availability checks, realtime refresh, and state transitions are real, but UI/domain logic is still monolithic. |
+| Appointment states | FOUNDATION | The operational states are known and documented; they need one canonical state machine before reuse. |
+| Internal alerts | FOUNDATION | `reception_alerts` plus Realtime and bell/banner UI are a reusable pattern after model/schema hardening. |
+| Realtime refresh | FOUNDATION | Bookings, payments, messages, schedule blocks, and alerts use live subscriptions with debounce/reload behavior. |
+| Reception roles | FOUNDATION | Staff login and configurable module permissions are reusable concepts; role names require normalization. |
+| Booking sync | FOUNDATION | `BookingSyncService` centralizes fetch/validate/upsert and availability RPC calls, but still depends on Sahara schema. |
+| Timezone helper | FOUNDATION | Tijuana commercial date helpers are now testable; NEXORA needs provider-backed timezone support before broad reuse. |
+| Audit warnings | FOUNDATION | UI warns before status changes that trigger customer WhatsApp messages; a generic audit contract should live outside widgets. |
+
+### Vertical Spa & Wellness
+
+| Capability | Status | Notes |
+|---|---:|---|
+| Therapists | PRODUCTIVO | Agenda assigns staff, validates availability, and displays therapist live state. |
+| Rooms/cabins | PARCIAL | Availability checks include room capacity, but UI/modeling is not fully normalized. |
+| Services | PRODUCTIVO | Service catalog, price, duration, and booking linkage are active. |
+| Treatment duration | PRODUCTIVO | Duration drives grid placement, validation, and sales draft creation. |
+| Deposits | PRODUCTIVO | Deposit-required/paid states exist; receipt UI is deferred to a later Flutter receipt phase. |
+| Packages | PARCIAL | Package waiver/session usage exists in booking creation; package domain still needs separate certification. |
+| Sessions | PARCIAL | Service session start/end flow exists through `in_progress -> completed -> awaiting_payment`. |
+| Future contraindications | NO EXISTE | No certified intake/contraindication workflow in this phase. |
+| Spa reception operation | PRODUCTIVO | Staff login, agenda, clients, sales, messages, alerts, and booking status actions are operational. |
+
+### Legacy
+
+| Item | Classification | Notes |
+|---|---|---|
+| AgendaPage monolith | LEGACY DO NOT COPY | The file is productive but mixes UI, domain rules, Supabase calls, WhatsApp actions, and sales navigation. |
+| Coupled navigation | LEGACY DO NOT COPY | Alert, sales, chat, clients, and agenda navigation are stateful callbacks inside the page. |
+| Duplicated states | LEGACY DO NOT COPY | Status labels/colors/actions exist in Flutter and SQL/Edge paths. |
+| Domain logic in widgets | LEGACY DO NOT COPY | Availability, sales draft, message emission, package selection, and history logic live in widget state. |
+| Sahara hardcodes | LEGACY DO NOT COPY | Branch names, role assumptions, copy, and phone/WhatsApp flows remain Sahara-specific. |
+| WhatsApp actions in UI | LEGACY DO NOT COPY | Message center and status changes can trigger real provider side effects through RPC/triggers. |
+| Historical lack of tests | LEGACY DO NOT COPY | Fase 2 adds focused tests, but the broader agenda surface remains untested. |
+
 ## Baseline Object Classification
 
 | Object | Classification | Source |
