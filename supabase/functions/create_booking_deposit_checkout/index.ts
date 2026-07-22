@@ -20,7 +20,8 @@ import {
 
 const DEFAULT_AMOUNT_MXN = 200
 const DEFAULT_CURRENCY = "mxn"
-const SUCCESS_URL = "https://saharaclubspa.com/anticipo-ok"
+// Tras pagar, Stripe redirige al comprobante (voucher) con el id de la sesión.
+const SUCCESS_URL = "https://saharaclubspa.com/comprobante-anticipo.html?session_id={CHECKOUT_SESSION_ID}"
 const CANCEL_URL = "https://saharaclubspa.com/anticipo-cancelado"
 
 type StripeSession = {

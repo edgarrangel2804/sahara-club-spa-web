@@ -304,15 +304,14 @@ async function notifyReceptionReschedule(
 ): Promise<number> {
   const brief = await loadBookingBrief(bookingId)
   const alert = [
-    "🔄 *Reagenda IA (revalidar)*",
+    "🔄 *Solicitud de reagendado · vía WhatsApp*",
     "",
     `*Cliente:* ${customerName ?? "Cliente WhatsApp"}`,
     `*Teléfono:* ${customerPhone}`,
     `*Servicio:* ${brief.service}`,
-    `*Nueva fecha:* ${newDate}`,
-    `*Nueva hora:* ${newTime}`,
+    `*Nueva fecha/hora deseada:* ${newDate} ${newTime}`,
     "",
-    "La cita quedó en revisión (pending_reception). Validar en agenda Sahara.",
+    "⚠️ El cliente DESEA reagendar su cita a ese horario. La cita NO se movió: por favor atiende esta solicitud en la agenda de Sahara.",
   ].join("\n")
   return await notifyReceptionRaw(alert)
 }
@@ -323,7 +322,7 @@ async function notifyReceptionCancel(
 ): Promise<number> {
   const brief = await loadBookingBrief(bookingId)
   const alert = [
-    "❌ *Cancelación IA*",
+    "🔔 *Solicitud de cancelación · vía WhatsApp*",
     "",
     `*Cliente:* ${customerName ?? "Cliente WhatsApp"}`,
     `*Teléfono:* ${customerPhone}`,
@@ -331,9 +330,35 @@ async function notifyReceptionCancel(
     brief.date ? `*Fecha:* ${brief.date}${brief.time ? ` ${brief.time}` : ""}` : "",
     reason ? `*Motivo:* ${reason}` : "",
     "",
-    "El cliente canceló su cita desde WhatsApp.",
+    "⚠️ El cliente DESEA cancelar esta cita. La cita NO está cancelada todavía: por favor atiende esta solicitud en la agenda de Sahara.",
   ].filter(Boolean).join("\n")
   return await notifyReceptionRaw(alert)
+}
+
+// Nombres genéricos que NUNCA deben quedar guardados como el nombre del cliente
+// (el viejo placeholder "Cliente WhatsApp" y variantes). Si llega uno de estos,
+// se considera que AÚN NO tenemos el nombre real y la cita no se cierra.
+const GENERIC_NAME_RX =
+  /^(cliente(\s+whats?app|\s+web)?|whats?app|sin\s+nombre|invitad[oa]|test|prueba|na|n\/a)$/i
+
+// ¿Es un nombre real y completo? Exige nombre + apellido (2 palabras de >=2
+// letras) y descarta los genéricos. Evita guardar "Cliente WhatsApp".
+function isRealClientName(name: unknown): boolean {
+  const n = String(name ?? "").trim().replace(/\s+/g, " ")
+  if (n.length < 3) return false
+  if (GENERIC_NAME_RX.test(n)) return false
+  const words = n.split(" ").filter((w) => /[a-zA-ZÀ-ÿ]{2,}/.test(w))
+  return words.length >= 2
+}
+
+// Devuelve el primer nombre REAL de una lista de candidatos (input del modelo,
+// nombre en BD), ya normalizado. null si ninguno sirve → hay que pedirlo.
+function firstRealName(cands: unknown[]): string | null {
+  for (const c of cands) {
+    const n = String(c ?? "").trim().replace(/\s+/g, " ")
+    if (isRealClientName(n)) return n
+  }
+  return null
 }
 
 // Inserta una alerta visible para recepción en el panel (tabla reception_alerts).
@@ -547,6 +572,8 @@ const TOOLS = [
         duration_min: { type: "number", description: "Duración minutos (opcional, default servicio)" },
         staff_id: { type: "string", description: "UUID del terapeuta si el cliente pidio uno especifico" },
         staff_name: { type: "string", description: "Nombre del terapeuta si el cliente pidio uno especifico" },
+        client_name: { type: "string", description: "Nombre COMPLETO del cliente (nombre y apellido). Pídelo antes de cerrar la reserva." },
+        client_email: { type: "string", description: "Email del cliente para enviarle el comprobante del anticipo. Pídelo antes de cerrar la reserva." },
       },
       required: ["service_id", "requested_date", "requested_time"],
     },
@@ -573,7 +600,8 @@ const TOOLS = [
         booking_date: { type: "string", description: "YYYY-MM-DD en zona Tijuana" },
         booking_time: { type: "string", description: "HH:MM 24h (ej. 14:00)" },
         duration_min: { type: "number", description: "Duración en minutos (opcional, default 60)" },
-        client_name: { type: "string", description: "Nombre del cliente si lo conoces; opcional" },
+        client_name: { type: "string", description: "Nombre COMPLETO del cliente (nombre y apellido)" },
+        client_email: { type: "string", description: "Email del cliente para el comprobante del anticipo" },
         notes: { type: "string", description: "Notas opcionales (preferencias, contexto)" },
         confidence: { type: "number", description: "Confianza 0-1 en que la intención es real" },
       },
@@ -583,13 +611,13 @@ const TOOLS = [
   {
     name: "consult_my_appointments",
     description:
-      "Devuelve las próximas citas del cliente que escribe (se identifica por su propio teléfono, no pidas el número). Úsala cuando pregunte '¿qué citas tengo?', '¿cuándo es mi cita?', '¿a qué hora quedé?', '¿ya tengo algo agendado?'. Solo lectura. Cada cita trae booking_id, service_name, date, time, status_label y ai_manageable (true si tú puedes reagendarla/cancelarla, false si la maneja recepción).",
+      "Devuelve las próximas citas del cliente que escribe (se identifica por su propio teléfono, no pidas el número). Úsala cuando pregunte '¿qué citas tengo?', '¿cuándo es mi cita?', '¿a qué hora quedé?', '¿ya tengo algo agendado?'. Solo lectura. Cada cita trae booking_id, service_name, date, time y status_label. IGNORA el campo ai_manageable para decidir si actúas: TÚ NUNCA cancelas ni reagendas, pero cuando el cliente pida cancelar/reagendar SIEMPRE debes llamar cancel_my_booking / reschedule_my_booking (con cualquier estado) para registrar la solicitud y avisar a recepción/administradores.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "reschedule_my_booking",
     description:
-      "Mueve una cita EXISTENTE del cliente a nueva fecha/hora. Úsala solo cuando el cliente pida cambiar/mover una cita suya. PRIMERO obtén el booking_id con consult_my_appointments y confirma cuál cita quiere mover. Solo funciona si ai_manageable=true (citas no confirmadas). Valida disponibilidad: si available=false devuelve suggested_slots para ofrecer. Si available=true, deja la cita en revisión de recepción con la nueva fecha/hora.",
+      "Registra la solicitud del cliente de mover una cita a nueva fecha/hora y AVISA a recepción/administradores. Úsala SIEMPRE que el cliente pida cambiar/mover una cita suya, SIN IMPORTAR el estado ni ai_manageable. PRIMERO obtén el booking_id con consult_my_appointments y confirma cuál cita. TÚ NO mueves la cita: solo registras la solicitud. Devolverá error='requires_reception' — eso es lo ESPERADO (no es un fallo): significa que recepción la gestionará. Responde cálido al cliente diciendo que le avisas a recepción.",
     input_schema: {
       type: "object",
       properties: {
@@ -603,7 +631,7 @@ const TOOLS = [
   {
     name: "cancel_my_booking",
     description:
-      "Cancela una cita EXISTENTE del cliente. Úsala solo cuando el cliente pida explícitamente cancelar una cita suya, y DESPUÉS de confirmar con él cuál (obtén el booking_id con consult_my_appointments). Solo funciona si ai_manageable=true. Si devuelve error 'requires_reception', informa que recepción le ayudará con esa cita.",
+      "Registra la solicitud del cliente de cancelar una cita y AVISA a recepción/administradores. Úsala SIEMPRE que el cliente pida cancelar una cita suya, SIN IMPORTAR el estado ni ai_manageable (confirmada o no), y DESPUÉS de confirmar con él cuál (obtén el booking_id con consult_my_appointments). TÚ NO cancelas la cita: solo registras la solicitud. Devolverá error='requires_reception' — eso es lo ESPERADO (no es un fallo): recepción la gestionará. Responde cálido diciendo que le avisas a recepción; NUNCA digas que hubo un problema técnico.",
     input_schema: {
       type: "object",
       properties: {
@@ -837,11 +865,26 @@ async function execTool(
       // se crea sí o sí, aunque el modelo olvide llamar create_pending_booking.
       // La idempotencia del RPC evita duplicados.
       const phone = String(ctx.phone ?? "").trim()
-      if (result.available === true && phone) {
+      // 🪪 NOMBRE OBLIGATORIO: no cerramos la cita con un genérico ("Cliente
+      // WhatsApp"). Si todavía no tenemos nombre real (ni del modelo ni de la
+      // BD), devolvemos available=true + need_client_info para que el modelo lo
+      // pida ANTES de crear. Así el voucher y la agenda salen con el nombre real.
+      const resolvedName = firstRealName([input.client_name, ctx.clientName])
+      if (result.available === true && phone && !resolvedName) {
+        result.need_client_info = true
+        result.booking_created = false
+        result.missing_client_name = true
+        result.note =
+          "Hay disponibilidad, PERO falta el NOMBRE COMPLETO (nombre y apellido) del cliente. " +
+          "Pídelo en un solo mensaje (y un correo para el comprobante) y vuelve a llamar " +
+          "check_availability_for_booking con client_name y client_email. " +
+          "NO digas que la solicitud quedó registrada todavía."
+      } else if (result.available === true && phone && resolvedName) {
         try {
           const { data: created, error: createErr } = await supabase.rpc("create_pending_booking_from_ai", {
             p_phone: phone,
-            p_client_name: String(ctx.clientName ?? ""),
+            p_client_name: resolvedName,
+            p_email: input.client_email ? String(input.client_email) : null,
             p_service_id: serviceId,
             p_booking_date: date,
             p_booking_time: timeNorm,
@@ -862,6 +905,7 @@ async function execTool(
             result.booking_created = createdResult.created
             result.duplicate_prevented = createdResult.duplicate_prevented
             result.status = createdResult.status
+            result.client_is_new = createdResult.client_is_new
 
             // Si el booking fue creado por primera vez:
             //  0) Consultar check_booking_payment_requirement (gift_card / membresía)
@@ -935,10 +979,11 @@ async function execTool(
                         : waiverReason === "package"
                           ? "Paquete activo con sesiones"
                           : "Override admin"
+                    const isNew = createdResult.client_is_new === true
                     const alert = [
                       "📅 *Nueva solicitud IA (sin anticipo)*",
                       "",
-                      `*Cliente:* ${ctx.clientName ?? "Cliente WhatsApp"}`,
+                      `*Cliente:* ${resolvedName}${isNew ? " 🆕 (cliente nuevo — crear expediente)" : ""}`,
                       `*Teléfono:* ${phone}`,
                       `*Servicio:* ${serviceName}`,
                       `*Fecha:* ${date}`,
@@ -985,7 +1030,25 @@ async function execTool(
                       payment_status: "pending",
                     })
                     .eq("id", bookingId)
-                  result.checkout_url = `https://saharaclubspa.com/pagar-anticipo/${bookingId}`
+                  // La página /pagar-anticipo no existe en el front (regresaba a
+                  // la home). Generamos la sesión de Stripe Checkout y damos el
+                  // link DIRECTO a la pasarela. Al pagar, el webhook confirma la
+                  // cita y manda el comprobante.
+                  try {
+                    const { data: co } = await supabase.functions.invoke(
+                      "create_booking_deposit_checkout",
+                      { body: { booking_id: bookingId, amount: depositAmount } },
+                    )
+                    const url = (co as { checkout_url?: string } | null)?.checkout_url ?? ""
+                    if (url) {
+                      result.checkout_url = url
+                    } else {
+                      result.checkout_error = true
+                    }
+                  } catch (e) {
+                    console.warn("checkout link failed:", (e as Error).message)
+                    result.checkout_error = true
+                  }
                   result.deposit_amount = depositAmount
                   result.status = "pending_payment"
                   result.payment_requirement = "deposit_required"
@@ -1067,9 +1130,22 @@ async function execTool(
           note: "Slot ocupado o fuera de horario. Sugiere las alternativas al cliente.",
         }
       }
+      // 🪪 NOMBRE OBLIGATORIO: no creamos la cita con un genérico. Si no hay
+      // nombre real (ni del modelo ni de la BD), pedimos al modelo capturarlo.
+      const resolvedName = firstRealName([input.client_name, ctx.clientName])
+      if (!resolvedName) {
+        return {
+          ok: false,
+          error: "client_name_required",
+          note:
+            "Falta el NOMBRE COMPLETO (nombre y apellido) del cliente. Pídelo (y un " +
+            "correo para el comprobante) antes de crear la cita. NO digas que quedó registrada.",
+        }
+      }
       const { data, error } = await supabase.rpc("create_pending_booking_from_ai", {
         p_phone: phone,
-        p_client_name: String(input.client_name ?? ctx.clientName ?? ""),
+        p_client_name: resolvedName,
+        p_email: input.client_email ? String(input.client_email) : null,
         p_service_id: serviceId,
         p_booking_date: date,
         p_booking_time: timeNorm,
@@ -1098,7 +1174,8 @@ async function execTool(
             .eq("id", serviceId)
             .maybeSingle()
           const serviceName = (svc as { name?: string } | null)?.name ?? "Servicio"
-          const customerName = String(input.client_name ?? ctx.clientName ?? "Cliente WhatsApp")
+          const isNew = (result as Record<string, unknown>).client_is_new === true
+          const customerName = `${resolvedName}${isNew ? " 🆕 (cliente nuevo — crear expediente)" : ""}`
           const alert = [
             "📅 *Nueva solicitud IA*",
             "",
@@ -1170,10 +1247,17 @@ async function execTool(
           message: `Nueva fecha solicitada: ${newDate} ${newTime}`,
         })
       } else if (result.error === "requires_reception") {
-        // El cliente quiso reagendar una cita confirmada → recepción debe actuar.
-        await logReceptionAlert("requires_reception", {
+        // REGLA DE ORO: el bot NUNCA reagenda (ninguna cita, ningún origen).
+        // Avisa a los administradores por WhatsApp (nombre/servicio/fecha/hora) y
+        // deja alerta en el panel. Recepción autoriza y ejecuta.
+        try {
+          await notifyReceptionReschedule(phone, ctx.clientName ?? null, bookingId, newDate, newTime)
+        } catch (e) {
+          console.warn("reschedule reception alert failed:", (e as Error).message)
+        }
+        await logReceptionAlert("reschedule_requested", {
           bookingId, phone, clientName: ctx.clientName ?? null,
-          message: `El cliente pidió reagendar a ${newDate} ${newTime}, pero la cita ya está confirmada.`,
+          message: `El cliente pidió reagendar a ${newDate} ${newTime}. Recepción debe autorizar y ejecutar.`,
         })
       }
       return result
@@ -1201,13 +1285,19 @@ async function execTool(
           message: input.reason ? String(input.reason) : undefined,
         })
       } else if (result.error === "requires_reception") {
-        // El cliente quiso cancelar una cita confirmada → recepción debe actuar
-        // (puede haber anticipo / política 24h). No se canceló automáticamente.
-        await logReceptionAlert("requires_reception", {
+        // REGLA DE ORO: el bot NUNCA cancela (ninguna cita, ningún origen).
+        // Avisa a los administradores por WhatsApp (nombre/servicio/fecha/hora) y
+        // deja alerta en el panel. Recepción autoriza y ejecuta (anticipo / 24h).
+        try {
+          await notifyReceptionCancel(phone, ctx.clientName ?? null, bookingId, String(input.reason ?? ""))
+        } catch (e) {
+          console.warn("cancel reception alert failed:", (e as Error).message)
+        }
+        await logReceptionAlert("booking_cancelled", {
           bookingId, phone, clientName: ctx.clientName ?? null,
           message: input.reason
-            ? `Quiere cancelar (cita confirmada). Motivo: ${String(input.reason)}`
-            : "El cliente quiere cancelar una cita ya confirmada.",
+            ? `Solicitud de cancelación. Motivo: ${String(input.reason)}`
+            : "El cliente solicita cancelar. Recepción debe autorizar.",
         })
       }
       return result
@@ -1770,17 +1860,19 @@ function buildSystemPrompt(clientKnown: string | null, serviceCatalog: string = 
   const tjTomorrowDate = new Date(tjNow.getTime() + 86400000).toISOString().slice(0, 10)
   const tjTomorrowName = days[(tjNow.getDay() + 1) % 7]
 
-  // Tabla autoritativa de los próximos 14 días: nombre + fecha exacta.
+  // Tabla autoritativa de los próximos 45 días: nombre + fecha exacta.
   // El modelo NUNCA debe calcular; solo hacer lookup en esta tabla.
   const upcomingLines: string[] = []
-  for (let i = 0; i < 14; i++) {
+  for (let i = 0; i < 45; i++) {
     const d = new Date(tjNow.getTime() + i * 86400000)
     const dateStr = d.toISOString().slice(0, 10)
     const wname = days[d.getDay()]
     const dd = d.getDate()
     const mname = monthsEs[d.getMonth()]
     const tag = i === 0 ? " (HOY)" : i === 1 ? " (mañana)" : ""
-    upcomingLines.push(`  ${wname} ${dd} de ${mname} → ${dateStr}${tag}`)
+    // Sahara CIERRA los domingos: márcalos para que el modelo nunca los ofrezca.
+    const closedTag = d.getDay() === 0 ? "  ❌ CERRADO (domingo, no se trabaja)" : ""
+    upcomingLines.push(`  ${wname} ${dd} de ${mname} → ${dateStr}${tag}${closedTag}`)
   }
   const upcomingTable = upcomingLines.join("\n")
 
@@ -1866,16 +1958,38 @@ PASO 2 — Cliente elige día/hora específico (ej. "jueves 4pm") O elige
   - Decir "déjame verificar con recepción" sin antes haber llamado la tool.
     Narrar la verificación NO ES verificar. La verificación es llamar la tool.
 
+  📋 DATOS OBLIGATORIOS DEL CLIENTE (esto SÍ se pide, no es trivia):
+    Para cerrar la reserva necesitas el NOMBRE COMPLETO (nombre y apellido) y el
+    EMAIL del cliente. El email sirve para enviarle su comprobante del anticipo.
+    - Si aún no los tienes, pídelos en UN solo mensaje breve antes de agendar:
+      "Para dejar lista tu reserva, ¿me confirmas tu nombre completo y un correo
+       para enviarte el comprobante?"
+    - El teléfono NO lo pidas: ya es este mismo WhatsApp.
+    - Cuando los tengas, pásalos a check_availability_for_booking como
+      client_name y client_email.
+
   OBLIGATORIO: llama check_availability_for_booking con:
     service_id = UUID del servicio elegido (de list_services)
     requested_date = YYYY-MM-DD (zona Tijuana, usa server_today/tomorrow)
     requested_time = HH:MM 24h (ej. 16:00 para 4pm)
     duration_min = duración del servicio si la conoces
+    client_name = nombre completo del cliente (ya pedido arriba)
+    client_email = email del cliente (ya pedido arriba)
 
   ESTA TOOL: si available=true, AUTOMÁTICAMENTE crea el booking y manda
   alerta a recepción. NO necesitas llamar create_pending_booking aparte
   (la tool ya lo hace internamente). Verás en el output: booking_created=true,
   booking_id=<uuid>, status='pending_reception'.
+
+  🪪 CASO N — need_client_info=true (falta el nombre del cliente):
+    Si el output trae need_client_info=true / missing_client_name=true, significa
+    que el horario SÍ está libre pero todavía NO tenemos el nombre completo del
+    cliente, así que la cita NO se creó (booking_created NO es true). NO digas que
+    quedó registrada. Pide en UN solo mensaje breve:
+    "¡Con gusto! Para dejar lista tu reserva, ¿me confirmas tu *nombre completo*
+     (nombre y apellido) y un *correo* para enviarte el comprobante? 🌿"
+    Cuando el cliente responda, vuelve a llamar check_availability_for_booking con
+    client_name y client_email; ahí sí se creará la cita y pasarás a CASO A.
 
   🚨 ANTES DE CASO A — verifica que el booking SÍ se creó:
     Si el output trae booking_failed=true (o booking_created NO es true aunque
@@ -1968,6 +2082,9 @@ PASO 2 — Cliente elige día/hora específico (ej. "jueves 4pm") O elige
   que cambió entre check y create), trata el suggested_slots devuelto como
   CASO B y sugiere alternativas.
 
+  Si create_pending_booking devuelve error="client_name_required", NO está
+  creada: pide el nombre completo (y correo) como en CASO N y reintenta.
+
   Si cualquier tool devuelve error inesperado: "Tuvimos un problema
   registrando tu solicitud. Recepción se pondrá en contacto contigo en breve."
 
@@ -1988,31 +2105,35 @@ CONSULTAR — cliente pregunta "¿qué citas tengo?", "¿cuándo es mi cita?",
     Ej: "Tienes: • Masaje relajante · jueves 5 jun · 16:00 · En revisión por recepción"
 
 REAGENDAR — cliente pide cambiar/mover una cita:
-  PASO A: si no sabes cuál cita, llama consult_my_appointments y pregunta
-    cuál quiere mover (o cuál es si solo tiene una).
+  🚫 REGLA DE ORO: TÚ NUNCA reagendas una cita, sin importar su estado ni su
+     origen (concierge, WhatsApp, recepción). Toda reagenda la autoriza y
+     ejecuta RECEPCIÓN. Tu papel es tomar la solicitud y avisarles.
+  PASO A: si no sabes cuál cita, llama consult_my_appointments y confirma cuál
+    quiere mover (o cuál es si solo tiene una).
   PASO B: cuando tengas el booking_id y la nueva fecha/hora, llama
-    reschedule_my_booking con booking_id, new_date (YYYY-MM-DD de la tabla
-    autoritativa), new_time (HH:MM 24h).
-  RESULTADOS:
-    • rescheduled=true → "Listo, movimos tu solicitud a [día] [hora].
-      Recepción la validará y te confirmará por aquí ✨"
-    • available=false → ofrece los suggested_slots como en CASO B de reservas.
-    • error='requires_reception' → "Esa cita ya está confirmada, así que
-      recepción te ayudará a moverla. Les aviso 🌿" (NO la muevas tú).
-    • error='not_your_booking' / 'booking_not_found' → "No encuentro esa cita
-      a tu nombre. ¿Te muestro tus citas?" + consult_my_appointments.
+    reschedule_my_booking con booking_id, new_date (YYYY-MM-DD), new_time (HH:MM).
+    Esto NO mueve la cita: solo AVISA a recepción y registra la solicitud.
+  RESPUESTA (siempre, cálida): "¡Claro, con gusto! 🌿 No hay ningún problema.
+    Le paso tu solicitud de reagendar a [día] [hora] a recepción para que la
+    confirme y te avise por aquí en breve ✨"
+    (reschedule_my_booking devolverá error='requires_reception' — es lo
+    esperado; NO significa fallo, significa que se derivó a recepción.)
+  • error='not_your_booking' / 'booking_not_found' → "No encuentro esa cita a tu
+    nombre. ¿Te muestro tus citas?" + consult_my_appointments.
 
 CANCELAR — cliente pide cancelar una cita:
-  • SIEMPRE confirma primero CUÁL cita (usa consult_my_appointments si hay
-    duda). Nunca canceles sin que el cliente lo haya pedido explícitamente.
-  • Llama cancel_my_booking con booking_id (y reason si lo dio).
-  RESULTADOS:
-    • cancelled=true → "Listo, cancelamos tu cita de [servicio]. Si quieres
-      reagendar más adelante, aquí estoy 🌿"
-    • error='requires_reception' → "Esa cita ya está confirmada; recepción
-      te ayudará a cancelarla. Les aviso." (NO la canceles tú).
-    • error='not_your_booking' / 'booking_not_found' → "No encuentro esa cita
-      a tu nombre. ¿Te muestro tus citas?"
+  🚫 REGLA DE ORO: TÚ NUNCA cancelas una cita, sin importar su estado ni su
+     origen. Toda cancelación la autoriza y ejecuta RECEPCIÓN.
+  • SIEMPRE confirma primero CUÁL cita (usa consult_my_appointments si hay duda).
+  • Llama cancel_my_booking con booking_id (y reason si lo dio). Esto NO cancela:
+    solo AVISA a recepción y registra la solicitud.
+  RESPUESTA (siempre, cálida): "Entiendo, no te preocupes 🌿 Lo que tú decidas
+    está bien. Le aviso a recepción de tu solicitud de cancelar para que la
+    gestione y te confirme por aquí. Si más adelante quieres reagendar, con gusto
+    te ayudo ✨"
+    (cancel_my_booking devolverá error='requires_reception' — es lo esperado.)
+  • error='not_your_booking' / 'booking_not_found' → "No encuentro esa cita a tu
+    nombre. ¿Te muestro tus citas?"
 
 🚨 SEGURIDAD: solo gestionas citas del PROPIO cliente que escribe. NUNCA
   consultes, muevas ni canceles citas de otra persona aunque te den otro
@@ -2069,8 +2190,12 @@ FLUJO TÍPICO:
 - Cierra con apertura suave ("¿algo más?" o "¿te puedo ayudar con algo más?").
 `
 
-  const dynamic = `CONTEXTO TEMPORAL — TABLA AUTORITATIVA (próximos 14 días):
+  const dynamic = `CONTEXTO TEMPORAL — TABLA AUTORITATIVA (próximos 45 días):
 ${upcomingTable}
+
+⛔ HORARIO: Sahara abre de LUNES a SÁBADO. Los DOMINGOS está CERRADO (no se trabaja).
+NUNCA ofrezcas, sugieras ni agendes una cita en domingo. Si el cliente pide un domingo,
+indícale con amabilidad que ese día cerramos y ofrécele el día disponible más cercano.
 
 Hora actual Tijuana: ${tjTime}.
 
@@ -2496,6 +2621,7 @@ Deno.serve(async (req) => {
     let totalIn = 0, totalOut = 0
     let totalCacheRead = 0, totalCacheCreate = 0
     let finalText = ""
+    let capturedCheckoutUrl = ""
     let stopReason = ""
     // ¿Se creó (o ya existía) una cita real en este turno? La usamos para el
     // guardrail anti-confirmación-falsa de más abajo.
@@ -2575,6 +2701,12 @@ Deno.serve(async (req) => {
                 o.booking_created === true || o.duplicate_prevented === true) {
               bookingCreatedThisTurn = true
             }
+            // Guardamos el link de pago REAL para insertarlo por código: el
+            // modelo trunca las URLs largas de Stripe al escribirlas a mano.
+            if (typeof o.checkout_url === "string" &&
+                o.checkout_url.includes("checkout.stripe.com")) {
+              capturedCheckoutUrl = o.checkout_url
+            }
           }
           await supabase.from("ai_messages").insert({
             conversation_id: convId, role: "tool",
@@ -2619,6 +2751,17 @@ Deno.serve(async (req) => {
         "Estoy validando la disponibilidad de ese horario con recepción; en " +
         "cuanto quede confirmado te aviso por aquí 🌿 ¿Quieres que te proponga " +
         "horarios alternativos por si acaso?"
+    }
+
+    // FIX link de pago: el modelo (LLM) trunca las URLs largas de Stripe al
+    // escribirlas dentro de su respuesta, así el link llegaba cortado y Stripe
+    // mostraba "could not be found". Aquí el CÓDIGO reemplaza el marcador
+    // [checkout_url] —o cualquier URL de checkout.stripe.com que el modelo haya
+    // escrito (posiblemente truncada)— por el link REAL e íntegro.
+    if (capturedCheckoutUrl) {
+      finalText = finalText
+        .replace(/\[checkout_url\]/gi, capturedCheckoutUrl)
+        .replace(/https?:\/\/checkout\.stripe\.com\/[^\s)\]]*/gi, capturedCheckoutUrl)
     }
 
     const elapsed = Date.now() - startedAt

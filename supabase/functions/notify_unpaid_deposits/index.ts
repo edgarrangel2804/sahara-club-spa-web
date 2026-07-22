@@ -17,6 +17,29 @@ function corsHeaders() {
   }
 }
 
+// Trazabilidad (auditoría): registra en whatsapp_logs cada mensaje saliente.
+// Best-effort: nunca lanza.
+async function logOutbound(
+  sb: ReturnType<typeof createClient>,
+  opts: { phone: string; body: string; eventType: string; status?: string; reservationId?: string | null },
+): Promise<void> {
+  try {
+    await sb.from("whatsapp_logs").insert({
+      phone: String(opts.phone ?? "").replace(/\D/g, ""),
+      message_rendered: opts.body,
+      event_type: opts.eventType,
+      type: opts.eventType,
+      status: opts.status ?? "sent",
+      reservation_id: opts.reservationId ?? null,
+      window_type: "free_text",
+      provider: "meta",
+      sent_at: new Date().toISOString(),
+    })
+  } catch (e) {
+    console.warn("logOutbound failed:", (e as Error).message)
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders() })
 
@@ -94,7 +117,7 @@ serve(async (req) => {
     let alertedThisRow = false
     for (const t of targets) {
       try {
-        await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+        const res = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
           method: "POST",
           headers: { "content-type": "application/json", Authorization: `Bearer ${accessToken}` },
           body: JSON.stringify({
@@ -103,6 +126,13 @@ serve(async (req) => {
             type: "text",
             text: { body: msg },
           }),
+        })
+        await logOutbound(supabase, {
+          phone: String(t),
+          body: msg,
+          eventType: "unpaid_deposit_admin",
+          reservationId: r.booking_id ?? null,
+          status: res.ok ? "sent" : "failed",
         })
         alertedThisRow = true
       } catch (e) {
