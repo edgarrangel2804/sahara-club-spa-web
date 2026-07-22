@@ -43,6 +43,8 @@ This file records productive Sahara behavior that may be real and useful, but sh
 - Do not copy duplicate names like `reception` and `receptionist` without a compatibility strategy.
 - Do not copy `AgendaPage` as an application template. It is productive Sahara runtime, but it mixes calendar UI, booking writes, sales navigation, WhatsApp actions, and alert routing in one widget.
 - Do not copy appointment status labels/colors/actions as separate switch statements. Extract one state machine first.
+- Do not copy `ClientsModule` as a client-management template. It is productive Sahara runtime, but it mixes PII, histories, packages, memberships, Gift Cards, sales, Supabase calls, and receipt actions in one widget tree.
+- Do not implement automatic client merges from phone/email heuristics without an audited review workflow.
 
 ## Notifications And Idempotency
 
@@ -51,6 +53,8 @@ This file records productive Sahara behavior that may be real and useful, but sh
 - Do not couple reception UI alerts, WhatsApp provider logs, and Stripe fulfillment without explicit replay safety.
 - Do not allow webhook replay to create duplicate Gift Cards, alerts, or admin notifications.
 - Do not merge Gift Card Alerts by replacing regularized reception alert files wholesale. Model fields, banner rows, bell UI, and Agenda navigation need a manual fusion after receipt/client regularization.
+- Do not expose receipt resend actions without caller authentication, rate limiting, and a delivery ledger.
+- Do not make public voucher lookup depend on raw `booking_id`; use a scoped signed token and return only minimal paid voucher data.
 
 ## Developer Experience
 

@@ -85,6 +85,38 @@ Fase 2 classifies the recovered reception and agenda runtime without moving it t
 | WhatsApp actions in UI | LEGACY DO NOT COPY | Message center and status changes can trigger real provider side effects through RPC/triggers. |
 | Historical lack of tests | LEGACY DO NOT COPY | Fase 2 adds focused tests, but the broader agenda surface remains untested. |
 
+## Clients And Receipts Regularization
+
+Fase 3 classifies recovered client/contact and deposit receipt surfaces without
+moving them to NEXORA.
+
+### Universal NEXORA Candidates
+
+| Capability | Status | Notes |
+|---|---:|---|
+| Client contact identity | FOUNDATION | Pure helpers now normalize phone/email and identify probable duplicates, but no merge workflow is implemented. |
+| Public payment voucher | FOUNDATION | `deposit_voucher` now rejects public `booking_id`, supports signed token/session lookup, masks client name, and returns minimal paid-only data. |
+| Receipt action gate | FOUNDATION | Flutter helper prevents duplicate explicit receipt actions and sanitizes UI errors. |
+| Private receipt retrieval | FOUNDATION | Reception can open signed Storage URLs after UUID validation; bucket/RLS ownership still belongs to Sahara runtime. |
+
+### Vertical Spa & Wellness
+
+| Capability | Status | Notes |
+|---|---:|---|
+| Client profiles | PRODUCTIVO | `ClientsModule` is operational for spa clients, histories, benefits, packages, memberships, and Gift Cards. |
+| Deposit PDF receipts | PRODUCTIVO | `send_deposit_receipt` generates PDF receipts for paid bookings and uploads them to private Storage. |
+| Reception receipt resend | PRODUCTIVO | Agenda can open the real receipt dialog and request WhatsApp resend explicitly. |
+| Public deposit voucher page | PARCIAL | HTML is sanitized and reduced, but still contains Sahara project URL/anon key and temporary `session_id` compatibility. |
+
+### Legacy
+
+| Item | Classification | Notes |
+|---|---|---|
+| `ClientsModule` monolith | LEGACY DO NOT COPY | Productive but mixes UI, Supabase queries, histories, benefits, packages, memberships, Gift Cards, sales, and receipt actions. |
+| Public voucher by raw identifier | LEGACY DO NOT COPY | `booking_id` lookup is explicitly blocked; `session_id` is temporary compatibility until signed token flow is complete. |
+| Hardcoded public HTML config | LEGACY DO NOT COPY | Sahara Supabase URL and anon key should move to build/runtime config before reuse. |
+| Automatic WhatsApp resend from UI | LEGACY DO NOT COPY | Receipt resend must remain an explicit operator action with idempotency/rate-limit before reuse. |
+
 ## Baseline Object Classification
 
 | Object | Classification | Source |
