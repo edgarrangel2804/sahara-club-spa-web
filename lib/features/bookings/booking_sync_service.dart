@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'booking_time_utils.dart';
+
 class BookingSyncException implements Exception {
   const BookingSyncException(this.message);
 
@@ -189,7 +191,8 @@ class BookingSyncService {
         (data.clientProfileId ?? '').trim().isEmpty) {
       return const BookingValidationResult(
         isValid: false,
-        errorMessage: 'Selecciona o crea un cliente antes de guardar la reserva.',
+        errorMessage:
+            'Selecciona o crea un cliente antes de guardar la reserva.',
       );
     }
     if (data.therapistId.trim().isEmpty) {
@@ -289,10 +292,7 @@ class BookingSyncService {
       );
     }
 
-    return BookingValidationResult(
-      isValid: true,
-      warningMessage: warning,
-    );
+    return BookingValidationResult(isValid: true, warningMessage: warning);
   }
 
   Future<Map<String, dynamic>?> upsertBooking(BookingUpsertData data) async {
@@ -320,7 +320,9 @@ class BookingSyncService {
     );
     final validation = await validateBookingDraft(normalizedData);
     if (!validation.isValid) {
-      throw BookingSyncException(validation.errorMessage ?? 'Reserva invalida.');
+      throw BookingSyncException(
+        validation.errorMessage ?? 'Reserva invalida.',
+      );
     }
 
     final currentUserId = _client.auth.currentUser?.id;
@@ -341,7 +343,8 @@ class BookingSyncService {
     };
 
     try {
-      if (normalizedData.bookingId != null && normalizedData.bookingId!.isNotEmpty) {
+      if (normalizedData.bookingId != null &&
+          normalizedData.bookingId!.isNotEmpty) {
         return await _client
             .from('bookings')
             .update(payload)
@@ -446,32 +449,10 @@ class BookingSyncService {
   }
 
   static String _tijuanaDateTimeIso(DateTime date, String time) {
-    final parts = time.split(':');
-    final hour = int.tryParse(parts.isNotEmpty ? parts[0] : '0') ?? 0;
-    final minute = int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0;
-    final local = DateTime(date.year, date.month, date.day, hour, minute);
-    final offsetHours = _likelyTijuanaUtcOffsetHours(local);
-    final sign = offsetHours >= 0 ? '+' : '-';
-    final absHours = offsetHours.abs().toString().padLeft(2, '0');
-    return '${_yyyyMMdd(local)}T${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}:00$sign$absHours:00';
+    return BookingTimeUtils.tijuanaDateTimeIso(date, time);
   }
-
-  static int _likelyTijuanaUtcOffsetHours(DateTime local) {
-    final dstStart = _secondSunday(local.year, 3);
-    final dstEnd = _firstSunday(local.year, 11);
-    final inDst = !local.isBefore(DateTime(local.year, 3, dstStart, 2)) &&
-        local.isBefore(DateTime(local.year, 11, dstEnd, 2));
-    return inDst ? -7 : -8;
-  }
-
-  static int _firstSunday(int year, int month) {
-    final first = DateTime(year, month);
-    return 1 + ((DateTime.sunday - first.weekday) % 7);
-  }
-
-  static int _secondSunday(int year, int month) => _firstSunday(year, month) + 7;
 
   static String _yyyyMMdd(DateTime date) {
-    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    return BookingTimeUtils.yyyyMmDd(date);
   }
 }

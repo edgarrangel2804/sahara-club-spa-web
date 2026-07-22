@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../bookings/booking_time_utils.dart';
 import 'reception_alert.dart';
 
 /// Acceso a la tabla `reception_alerts`: lectura, realtime y marcado de estado.
@@ -11,13 +12,44 @@ class ReceptionAlertsService {
 
   SupabaseClient get _client => Supabase.instance.client;
 
-  /// Fecha de hoy (YYYY-MM-DD) en horario de la península (Tijuana/Ensenada, UTC-7).
+  /// Fecha de hoy (YYYY-MM-DD) en horario comercial de Tijuana/Ensenada.
   /// Sirve para ocultar alertas de citas que ya pasaron.
-  static String _todayPeninsula() {
-    final d = DateTime.now().toUtc().subtract(const Duration(hours: 7));
-    return '${d.year.toString().padLeft(4, '0')}-'
-        '${d.month.toString().padLeft(2, '0')}-'
-        '${d.day.toString().padLeft(2, '0')}';
+  static String todayPeninsula({DateTime? nowUtc}) {
+    return BookingTimeUtils.tijuanaDateStringFromUtc(
+      nowUtc ?? DateTime.now().toUtc(),
+    );
+  }
+
+  static bool shouldKeepAlert(ReceptionAlert alert, {required DateTime today}) {
+    if (alert.isResolved) {
+      return false;
+    }
+    final bookingDate = alert.bookingDate;
+    if (bookingDate == null) {
+      return true;
+    }
+    return !BookingTimeUtils.dateOnly(
+      bookingDate,
+    ).isBefore(BookingTimeUtils.dateOnly(today));
+  }
+
+  static List<ReceptionAlert> normalizeAlertList(
+    Iterable<ReceptionAlert> alerts, {
+    required DateTime today,
+  }) {
+    final byId = <String, ReceptionAlert>{};
+    for (final alert in alerts) {
+      if (!shouldKeepAlert(alert, today: today)) {
+        continue;
+      }
+      final existing = byId[alert.id];
+      if (existing == null || existing.createdAt.isBefore(alert.createdAt)) {
+        byId[alert.id] = alert;
+      }
+    }
+    final list = byId.values.toList();
+    list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return list;
   }
 
   /// Solo alertas vigentes para el widget de recepción:
@@ -25,7 +57,7 @@ class ReceptionAlertsService {
   /// - se excluyen las de citas pasadas (`booking_date` anterior a hoy);
   ///   las alertas sin `booking_date` se conservan (no se puede saber si caducaron).
   Future<List<ReceptionAlert>> fetchRecent({int limit = 50}) async {
-    final today = _todayPeninsula();
+    final today = todayPeninsula();
     final rows = await _client
         .from('reception_alerts')
         .select()
@@ -33,14 +65,18 @@ class ReceptionAlertsService {
         .or('booking_date.gte.$today,booking_date.is.null')
         .order('created_at', ascending: false)
         .limit(limit);
-    return (rows as List)
+    final alerts = (rows as List)
         .cast<Map<String, dynamic>>()
         .map(ReceptionAlert.fromMap)
         .toList();
+    return normalizeAlertList(
+      alerts,
+      today: DateTime.parse(today),
+    ).take(limit).toList();
   }
 
   Future<int> fetchUnseenCount() async {
-    final today = _todayPeninsula();
+    final today = todayPeninsula();
     final rows = await _client
         .from('reception_alerts')
         .select('id')
@@ -64,7 +100,13 @@ class ReceptionAlertsService {
             onChanged();
             if (onInserted != null) {
               try {
-                onInserted(ReceptionAlert.fromMap(payload.newRecord));
+                final alert = ReceptionAlert.fromMap(payload.newRecord);
+                if (shouldKeepAlert(
+                  alert,
+                  today: DateTime.parse(todayPeninsula()),
+                )) {
+                  onInserted(alert);
+                }
               } catch (_) {}
             }
           },
