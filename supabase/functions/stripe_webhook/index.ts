@@ -62,8 +62,8 @@ async function handleBookingDepositPayment(
   const amountTotal = typeof object.amount_total === "number"
     ? object.amount_total / 100
     : (typeof (object as { amount?: number }).amount === "number"
-        ? ((object as { amount?: number }).amount as number) / 100
-        : null)
+      ? ((object as { amount?: number }).amount as number) / 100
+      : null)
 
   if (
     event.type === "checkout.session.completed" ||
@@ -162,9 +162,13 @@ async function handleBookingDepositPayment(
         .select("human_backup_numbers, human_backup_enabled, ai_admin_numbers")
         .eq("id", 1)
         .maybeSingle()
-      const enabled = (settings as { human_backup_enabled?: boolean } | null)?.human_backup_enabled === true
-      const backups = ((settings as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
-      const admins = ((settings as { ai_admin_numbers?: string[] } | null)?.ai_admin_numbers ?? []) as string[]
+      const enabled =
+        (settings as { human_backup_enabled?: boolean } | null)?.human_backup_enabled === true
+      const backups =
+        ((settings as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ??
+          []) as string[]
+      const admins =
+        ((settings as { ai_admin_numbers?: string[] } | null)?.ai_admin_numbers ?? []) as string[]
       // Dedup por últimos 10 dígitos
       const seen = new Set<string>()
       const targets: string[] = []
@@ -181,15 +185,19 @@ async function handleBookingDepositPayment(
         // Cargar detalles completos del booking + cliente
         const { data: full } = await supabase
           .from("bookings")
-          .select("id, booking_date, booking_time, therapist_id, client_record_id, " +
-            "service:services(name), client:clients(full_name, phone, email)")
+          .select(
+            "id, booking_date, booking_time, therapist_id, client_record_id, " +
+              "service:services(name), client:clients(full_name, phone, email)",
+          )
           .eq("id", bookingId)
           .maybeSingle()
         const f = full as {
-          booking_date: string; booking_time: string;
-          therapist_id: string | null; client_record_id: string | null;
-          service: { name?: string } | null;
-          client: { full_name?: string; phone?: string; email?: string } | null;
+          booking_date: string
+          booking_time: string
+          therapist_id: string | null
+          client_record_id: string | null
+          service: { name?: string } | null
+          client: { full_name?: string; phone?: string; email?: string } | null
         } | null
         const customerName = f?.client?.full_name ?? "Cliente"
         const phone = f?.client?.phone ?? "(sin teléfono)"
@@ -266,8 +274,18 @@ function fmtDateLong(dateStr: string): string {
   try {
     const [y, m, d] = dateStr.split("-").map((n) => parseInt(n, 10))
     const meses = [
-      "enero", "febrero", "marzo", "abril", "mayo", "junio",
-      "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+      "enero",
+      "febrero",
+      "marzo",
+      "abril",
+      "mayo",
+      "junio",
+      "julio",
+      "agosto",
+      "septiembre",
+      "octubre",
+      "noviembre",
+      "diciembre",
     ]
     return `${d} de ${meses[(m - 1) % 12]} de ${y}`
   } catch {
@@ -366,8 +384,8 @@ serve(async (req) => {
     if (paymentType === "appointment_deposit") {
       const bookingId = String(
         object.metadata?.booking_id ??
-        object.client_reference_id ??
-        "",
+          object.client_reference_id ??
+          "",
       ).trim()
       if (!bookingId) {
         console.warn("appointment_deposit webhook without booking_id")
@@ -380,8 +398,8 @@ serve(async (req) => {
     // FLUJO LEGACY de orders (tienda virtual, productos físicos/digitales) — sin cambios.
     const orderId = String(
       object.metadata?.order_id ??
-      object.client_reference_id ??
-      "",
+        object.client_reference_id ??
+        "",
     ).trim()
 
     if (!orderId) {
@@ -451,15 +469,15 @@ async function deliverGiftCardsWhatsApp(
 
   for (
     const c of (cards ?? []) as Array<{
-      code?: string; service_name?: string
-      recipient_name?: string; expires_at?: string
+      code?: string
+      service_name?: string
+      recipient_name?: string
+      expires_at?: string
     }>
   ) {
     if (!c.code) continue
     const link = `https://saharaclubspa.com/tarjeta-regalo?code=${encodeURIComponent(c.code)}`
-    const exp = c.expires_at
-      ? new Date(c.expires_at).toLocaleDateString("es-MX")
-      : ""
+    const exp = c.expires_at ? new Date(c.expires_at).toLocaleDateString("es-MX") : ""
     const msg = [
       "🎁 *Tu tarjeta de regalo Sahara Club Spa*",
       "",

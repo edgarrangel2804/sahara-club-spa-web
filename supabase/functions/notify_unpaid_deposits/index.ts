@@ -20,8 +20,14 @@ function corsHeaders() {
 // Trazabilidad (auditoría): registra en whatsapp_logs cada mensaje saliente.
 // Best-effort: nunca lanza.
 async function logOutbound(
-  sb: ReturnType<typeof createClient>,
-  opts: { phone: string; body: string; eventType: string; status?: string; reservationId?: string | null },
+  sb: any,
+  opts: {
+    phone: string
+    body: string
+    eventType: string
+    status?: string
+    reservationId?: string | null
+  },
 ): Promise<void> {
   try {
     await sb.from("whatsapp_logs").insert({
@@ -43,7 +49,7 @@ async function logOutbound(
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders() })
 
-  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE)
+  const supabase: any = createClient(SUPABASE_URL, SERVICE_ROLE)
 
   // 1. Obtener candidatos
   const { data: candidates, error } = await supabase.rpc(
@@ -77,8 +83,10 @@ serve(async (req) => {
     .select("human_backup_numbers, human_backup_enabled")
     .eq("id", 1)
     .maybeSingle()
-  const enabled = (settings as { human_backup_enabled?: boolean } | null)?.human_backup_enabled === true
-  const targets = ((settings as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
+  const enabled =
+    (settings as { human_backup_enabled?: boolean } | null)?.human_backup_enabled === true
+  const targets = ((settings as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ??
+    []) as string[]
 
   if (!enabled || targets.length === 0) {
     return new Response(JSON.stringify({ ok: true, alerted: 0, reason: "backup_disabled" }), {

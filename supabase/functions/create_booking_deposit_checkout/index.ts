@@ -21,15 +21,16 @@ import {
 const DEFAULT_AMOUNT_MXN = 200
 const DEFAULT_CURRENCY = "mxn"
 // Tras pagar, Stripe redirige al comprobante (voucher) con el id de la sesión.
-const SUCCESS_URL = "https://saharaclubspa.com/comprobante-anticipo.html?session_id={CHECKOUT_SESSION_ID}"
+const SUCCESS_URL =
+  "https://saharaclubspa.com/comprobante-anticipo.html?session_id={CHECKOUT_SESSION_ID}"
 const CANCEL_URL = "https://saharaclubspa.com/anticipo-cancelado"
 
 type StripeSession = {
   id: string
   url: string
   payment_intent?: string | null
-  status?: string  // open, complete, expired
-  payment_status?: string  // unpaid, paid
+  status?: string // open, complete, expired
+  payment_status?: string // unpaid, paid
 }
 
 serve(async (req) => {
@@ -50,8 +51,10 @@ serve(async (req) => {
     // 1. Cargar booking y validar que esté en pending_payment
     const { data: booking, error: bErr } = await supabase
       .from("bookings")
-      .select("id, status, stripe_session_id, checkout_url, deposit_amount, " +
-        "booking_date, booking_time, service_id, client_record_id")
+      .select(
+        "id, status, stripe_session_id, checkout_url, deposit_amount, " +
+          "booking_date, booking_time, service_id, client_record_id",
+      )
       .eq("id", bookingId)
       .maybeSingle()
     if (bErr) throw bErr
@@ -100,11 +103,11 @@ serve(async (req) => {
       .maybeSingle()
 
     const serviceName = (service as { name?: string } | null)?.name ?? "Servicio Sahara"
-    const customerName = (client as { full_name?: string } | null)?.full_name ?? "Cliente Sahara"
     const customerPhone = (client as { phone?: string } | null)?.phone ?? ""
 
     // 4. Crear nueva sesión Stripe
-    const description = `Anticipo cita: ${serviceName} · ${booking.booking_date} ${booking.booking_time}`
+    const description =
+      `Anticipo cita: ${serviceName} · ${booking.booking_date} ${booking.booking_time}`
     const form: Record<string, string> = {
       mode: "payment",
       success_url: SUCCESS_URL,

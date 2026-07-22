@@ -8,6 +8,8 @@ No se copiaron fuentes directamente desde el working tree original. Antes de rec
 
 La comparación remota se hizo en modo lectura con `supabase functions list` usando el `project-ref` existente del worktree de comparación. La CLI confirmó existencia, estado, versión y fecha de actualización, pero no expuso `verify_jwt`.
 
+La regularizacion tecnica posterior esta documentada en `docs/operations/runtime-technical-regularization.md`.
+
 ## Fuentes Recuperadas
 
 | Función | Fuente | Hash SHA-256 | Estado remoto | Fecha remota | Confianza |

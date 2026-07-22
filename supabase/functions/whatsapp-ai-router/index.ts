@@ -4,11 +4,11 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import {
+  callMetaApi,
   corsHeaders,
   DEFAULT_BRANCH_ID,
   loadBusinessSettings,
   normalizePhone,
-  callMetaApi,
 } from "../_shared/whatsapp_business.ts"
 
 type Settings = {
@@ -57,8 +57,10 @@ async function resolveRequestedStaffId(
   messageText: string | null | undefined,
 ): Promise<string | null> {
   const explicit = String(input.staff_id ?? "").trim()
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-    .test(explicit)) return explicit
+  if (
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      .test(explicit)
+  ) return explicit
 
   const haystack = normalizeSearchText(
     `${explicit} ${String(input.staff_name ?? "")} ${messageText ?? ""}`,
@@ -95,7 +97,7 @@ function classifyShortMessage(rawText: string): "soft_closing" | "ignore" | "nor
   const text = (rawText || "")
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "") // sin acentos
-    .replace(/[¿¡!?.,;:]/g, "")      // sin signos
+    .replace(/[¿¡!?.,;:]/g, "") // sin signos
     .trim()
     .toLowerCase()
 
@@ -103,18 +105,39 @@ function classifyShortMessage(rawText: string): "soft_closing" | "ignore" | "nor
 
   // Soft closings: agradecimientos / aceptaciones explícitas
   const softClosings = new Set([
-    "gracias", "gracias!", "muchas gracias", "mil gracias",
-    "ok gracias", "okay gracias", "sale gracias",
-    "ok muchas gracias", "okay muchas gracias", "ok mil gracias", "okay mil gracias",
-    "perfecto", "perfecto gracias", "excelente",
-    "perfecto muchas gracias", "excelente gracias", "excelente muchas gracias",
-    "muy bien", "muy bien gracias", "buenisimo", "buenisimo gracias",
-    "entendido", "entendido gracias",
-    "listo", "listo gracias",
-    "sale", "ok sale",
-    "genial", "genial gracias",
-    "a la orden", "de nada",
-    "todo bien", "todo bien gracias",
+    "gracias",
+    "gracias!",
+    "muchas gracias",
+    "mil gracias",
+    "ok gracias",
+    "okay gracias",
+    "sale gracias",
+    "ok muchas gracias",
+    "okay muchas gracias",
+    "ok mil gracias",
+    "okay mil gracias",
+    "perfecto",
+    "perfecto gracias",
+    "excelente",
+    "perfecto muchas gracias",
+    "excelente gracias",
+    "excelente muchas gracias",
+    "muy bien",
+    "muy bien gracias",
+    "buenisimo",
+    "buenisimo gracias",
+    "entendido",
+    "entendido gracias",
+    "listo",
+    "listo gracias",
+    "sale",
+    "ok sale",
+    "genial",
+    "genial gracias",
+    "a la orden",
+    "de nada",
+    "todo bien",
+    "todo bien gracias",
   ])
 
   // Quita emojis y trims múltiples espacios para matchear
@@ -130,8 +153,9 @@ function classifyShortMessage(rawText: string): "soft_closing" | "ignore" | "nor
   // - "ok" o "okay" pelado (sin gracias)
   // - jajaja / hahaha / lol
   // - Hasta 2 chars
-  const onlyEmojis = /^[\s\u{1F300}-\u{1FAFF}\u{1F000}-\u{1F02F}\u{2600}-\u{27BF}✨🌿💆‍♀️👍👌🙏❤️♥️💕😊😀😁]+$/u
-    .test(rawText.trim())
+  const onlyEmojis =
+    /^[\s\u{1F300}-\u{1FAFF}\u{1F000}-\u{1F02F}\u{2600}-\u{27BF}✨🌿💆‍♀️👍👌🙏❤️♥️💕😊😀😁]+$/u
+      .test(rawText.trim())
   if (onlyEmojis) return "ignore"
 
   if (cleaned === "ok" || cleaned === "okay" || cleaned === "k") return "ignore"
@@ -174,8 +198,10 @@ async function notifyHumanBackup(
     .select("human_backup_enabled, human_backup_numbers, human_backup_dedup_minutes")
     .eq("id", 1).maybeSingle()
   const enabled = (s as { human_backup_enabled?: boolean })?.human_backup_enabled === true
-  const numbers = ((s as { human_backup_numbers?: string[] })?.human_backup_numbers ?? []) as string[]
-  const dedupMinutes = (s as { human_backup_dedup_minutes?: number })?.human_backup_dedup_minutes ?? 15
+  const numbers =
+    ((s as { human_backup_numbers?: string[] })?.human_backup_numbers ?? []) as string[]
+  const dedupMinutes = (s as { human_backup_dedup_minutes?: number })?.human_backup_dedup_minutes ??
+    15
 
   if (!enabled || numbers.length === 0) {
     return { sent: false, reason: "disabled_or_no_recipients" }
@@ -197,8 +223,7 @@ async function notifyHumanBackup(
   const businessSettings = await loadBusinessSettings(supabase, DEFAULT_BRANCH_ID)
   if (!businessSettings) return { sent: false, reason: "no_business_settings" }
 
-  const alertText =
-    `🚨 Nuevo mensaje sin respuesta IA\n\n` +
+  const alertText = `🚨 Nuevo mensaje sin respuesta IA\n\n` +
     `Cliente: ${customerPhone}\n` +
     `Mensaje:\n"${customerMessage.slice(0, 500)}"\n\n` +
     `Motivo:\n${reason}\n\n` +
@@ -225,7 +250,10 @@ async function notifyHumanBackup(
       )
       const wamid = (res.data as { messages?: Array<{ id?: string }> })?.messages?.[0]?.id ?? null
       const metaErr = !res.ok
-        ? ((res.data as { error?: Record<string, unknown> })?.error ?? {}) as { message?: string; code?: number }
+        ? ((res.data as { error?: Record<string, unknown> })?.error ?? {}) as {
+          message?: string
+          code?: number
+        }
         : {}
 
       await supabase.from("whatsapp_logs").insert({
@@ -259,7 +287,8 @@ async function notifyReceptionRaw(alertText: string): Promise<number> {
     .eq("id", 1).maybeSingle()
   const enabled = (s as { human_backup_enabled?: boolean } | null)?.human_backup_enabled === true
   if (!enabled) return 0
-  const backups = ((s as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
+  const backups =
+    ((s as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
   const admins = ((s as { ai_admin_numbers?: string[] } | null)?.ai_admin_numbers ?? []) as string[]
   const seen = new Set<string>()
   let okCount = 0
@@ -279,7 +308,9 @@ async function notifyReceptionRaw(alertText: string): Promise<number> {
   return okCount
 }
 
-async function loadBookingBrief(bookingId: string): Promise<{ service: string; date?: string; time?: string }> {
+async function loadBookingBrief(
+  bookingId: string,
+): Promise<{ service: string; date?: string; time?: string }> {
   try {
     const { data } = await supabase
       .from("bookings")
@@ -299,8 +330,11 @@ async function loadBookingBrief(bookingId: string): Promise<{ service: string; d
 }
 
 async function notifyReceptionReschedule(
-  customerPhone: string, customerName: string | null,
-  bookingId: string, newDate: string, newTime: string,
+  customerPhone: string,
+  customerName: string | null,
+  bookingId: string,
+  newDate: string,
+  newTime: string,
 ): Promise<number> {
   const brief = await loadBookingBrief(bookingId)
   const alert = [
@@ -317,8 +351,10 @@ async function notifyReceptionReschedule(
 }
 
 async function notifyReceptionCancel(
-  customerPhone: string, customerName: string | null,
-  bookingId: string, reason: string,
+  customerPhone: string,
+  customerName: string | null,
+  bookingId: string,
+  reason: string,
 ): Promise<number> {
   const brief = await loadBookingBrief(bookingId)
   const alert = [
@@ -396,7 +432,9 @@ async function createGiftCardCheckout(opts: {
   buyerName?: string | null
   buyerEmail?: string | null
   buyerPhone: string
-}): Promise<{ ok: boolean; checkout_url?: string; service_name?: string; amount?: number; error?: string }> {
+}): Promise<
+  { ok: boolean; checkout_url?: string; service_name?: string; amount?: number; error?: string }
+> {
   try {
     const { data: svc, error: svcErr } = await supabase
       .from("services")
@@ -406,8 +444,11 @@ async function createGiftCardCheckout(opts: {
     if (svcErr) return { ok: false, error: svcErr.message }
     if (!svc) return { ok: false, error: "service_not_found" }
     const s = svc as {
-      name?: string; price?: number; is_active?: boolean
-      price_on_quote?: boolean; is_package?: boolean
+      name?: string
+      price?: number
+      is_active?: boolean
+      price_on_quote?: boolean
+      is_package?: boolean
     }
     if (s.is_active === false) return { ok: false, error: "service_inactive" }
     if (s.price_on_quote === true) return { ok: false, error: "service_price_on_quote" }
@@ -569,11 +610,28 @@ const TOOLS = [
         service_id: { type: "string", description: "UUID del servicio (de list_services)" },
         requested_date: { type: "string", description: "YYYY-MM-DD zona Tijuana" },
         requested_time: { type: "string", description: "HH:MM 24h" },
-        duration_min: { type: "number", description: "Duración minutos (opcional, default servicio)" },
-        staff_id: { type: "string", description: "UUID del terapeuta si el cliente pidio uno especifico" },
-        staff_name: { type: "string", description: "Nombre del terapeuta si el cliente pidio uno especifico" },
-        client_name: { type: "string", description: "Nombre COMPLETO del cliente (nombre y apellido). Pídelo antes de cerrar la reserva." },
-        client_email: { type: "string", description: "Email del cliente para enviarle el comprobante del anticipo. Pídelo antes de cerrar la reserva." },
+        duration_min: {
+          type: "number",
+          description: "Duración minutos (opcional, default servicio)",
+        },
+        staff_id: {
+          type: "string",
+          description: "UUID del terapeuta si el cliente pidio uno especifico",
+        },
+        staff_name: {
+          type: "string",
+          description: "Nombre del terapeuta si el cliente pidio uno especifico",
+        },
+        client_name: {
+          type: "string",
+          description:
+            "Nombre COMPLETO del cliente (nombre y apellido). Pídelo antes de cerrar la reserva.",
+        },
+        client_email: {
+          type: "string",
+          description:
+            "Email del cliente para enviarle el comprobante del anticipo. Pídelo antes de cerrar la reserva.",
+        },
       },
       required: ["service_id", "requested_date", "requested_time"],
     },
@@ -581,7 +639,7 @@ const TOOLS = [
   {
     name: "get_staff_day_status",
     description:
-      "Devuelve el estado de cada terapeuta para una fecha: working / off / time_off / lunch / busy / available. Úsalo SOLO si el cliente pregunta explícitamente por una terapeuta (\"¿está Victoria?\", \"¿quién atiende hoy?\", \"¿Anita trabaja mañana?\"). NO la uses para chequear si un slot está libre — para eso usa check_availability_for_booking. Solo lectura, no reserva nada. Devuelve también start_time/end_time/lunch_start/lunch_end por si necesitas narrar horarios.",
+      'Devuelve el estado de cada terapeuta para una fecha: working / off / time_off / lunch / busy / available. Úsalo SOLO si el cliente pregunta explícitamente por una terapeuta ("¿está Victoria?", "¿quién atiende hoy?", "¿Anita trabaja mañana?"). NO la uses para chequear si un slot está libre — para eso usa check_availability_for_booking. Solo lectura, no reserva nada. Devuelve también start_time/end_time/lunch_start/lunch_end por si necesitas narrar horarios.',
     input_schema: {
       type: "object",
       properties: {
@@ -600,8 +658,14 @@ const TOOLS = [
         booking_date: { type: "string", description: "YYYY-MM-DD en zona Tijuana" },
         booking_time: { type: "string", description: "HH:MM 24h (ej. 14:00)" },
         duration_min: { type: "number", description: "Duración en minutos (opcional, default 60)" },
-        client_name: { type: "string", description: "Nombre COMPLETO del cliente (nombre y apellido)" },
-        client_email: { type: "string", description: "Email del cliente para el comprobante del anticipo" },
+        client_name: {
+          type: "string",
+          description: "Nombre COMPLETO del cliente (nombre y apellido)",
+        },
+        client_email: {
+          type: "string",
+          description: "Email del cliente para el comprobante del anticipo",
+        },
         notes: { type: "string", description: "Notas opcionales (preferencias, contexto)" },
         confidence: { type: "number", description: "Confianza 0-1 en que la intención es real" },
       },
@@ -621,7 +685,10 @@ const TOOLS = [
     input_schema: {
       type: "object",
       properties: {
-        booking_id: { type: "string", description: "UUID de la cita a mover (de consult_my_appointments)" },
+        booking_id: {
+          type: "string",
+          description: "UUID de la cita a mover (de consult_my_appointments)",
+        },
         new_date: { type: "string", description: "YYYY-MM-DD zona Tijuana" },
         new_time: { type: "string", description: "HH:MM 24h (ej. 16:00)" },
       },
@@ -635,7 +702,10 @@ const TOOLS = [
     input_schema: {
       type: "object",
       properties: {
-        booking_id: { type: "string", description: "UUID de la cita a cancelar (de consult_my_appointments)" },
+        booking_id: {
+          type: "string",
+          description: "UUID de la cita a cancelar (de consult_my_appointments)",
+        },
         reason: { type: "string", description: "Motivo breve si el cliente lo da (opcional)" },
       },
       required: ["booking_id"],
@@ -648,11 +718,17 @@ const TOOLS = [
     input_schema: {
       type: "object",
       properties: {
-        service_id: { type: "string", description: "UUID del servicio a regalar (de list_services)" },
+        service_id: {
+          type: "string",
+          description: "UUID del servicio a regalar (de list_services)",
+        },
         recipient_name: { type: "string", description: "Nombre de quien recibe el regalo" },
         sender_name: { type: "string", description: "Nombre de quien regala (de parte de)" },
         message: { type: "string", description: "Mensaje opcional del regalo" },
-        buyer_email: { type: "string", description: "Email del comprador para el recibo (opcional)" },
+        buyer_email: {
+          type: "string",
+          description: "Email del comprador para el recibo (opcional)",
+        },
       },
       required: ["service_id", "recipient_name", "sender_name"],
     },
@@ -711,7 +787,9 @@ async function execTool(
     case "get_service_detail": {
       const { data, error } = await supabase
         .from("services")
-        .select("id, name, description, category, duration_min, price, tagline, benefits, contraindications, recommended_for")
+        .select(
+          "id, name, description, category, duration_min, price, tagline, benefits, contraindications, recommended_for",
+        )
         .eq("id", String(input.service_id))
         .maybeSingle()
       if (error) return { error: error.message }
@@ -719,7 +797,7 @@ async function execTool(
       return data
     }
     case "get_business_hours": {
-      const days = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"]
+      const days = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"]
       // Calculamos today/tomorrow SIEMPRE en America/Tijuana (timezone del negocio)
       const tjNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Tijuana" }))
       const tjToday = tjNow.toISOString().slice(0, 10)
@@ -730,7 +808,8 @@ async function execTool(
       if (input.date) {
         const at = `${input.date}T12:00:00-07:00`
         const { data, error } = await supabase.rpc("is_business_open", {
-          p_at: at, p_branch_id: DEFAULT_BRANCH_ID,
+          p_at: at,
+          p_branch_id: DEFAULT_BRANCH_ID,
         })
         if (error) return { error: error.message }
         return {
@@ -776,16 +855,19 @@ async function execTool(
       let rows = (data ?? []) as Array<Record<string, unknown>>
       if (input.query) {
         const term = String(input.query).toLowerCase()
-        rows = rows.filter((r) =>
-          `${r.question} ${r.answer}`.toLowerCase().includes(term),
-        )
+        rows = rows.filter((r) => `${r.question} ${r.answer}`.toLowerCase().includes(term))
       }
       // Defensa en profundidad: aunque vengan con scope='sahara', revalidamos
       // por si futuras filas tienen un valor inesperado.
       rows = rows.filter((r) => (r.scope_category ?? "sahara") === "sahara")
-      return { faqs: rows.slice(0, 6).map((r) => ({
-        question: r.question, answer: r.answer, category: r.category, tags: r.tags,
-      })) }
+      return {
+        faqs: rows.slice(0, 6).map((r) => ({
+          question: r.question,
+          answer: r.answer,
+          category: r.category,
+          tags: r.tags,
+        })),
+      }
     }
     case "identify_client": {
       const phone = normalizePhone(String(input.phone ?? ""))
@@ -809,7 +891,7 @@ async function execTool(
         .eq("service_id", sid)
         .gte("booking_date", from)
         .lte("booking_date", to)
-        .in("status", ["confirmed","rescheduled","checked_in","in_progress"])
+        .in("status", ["confirmed", "rescheduled", "checked_in", "in_progress"])
       if (error) return { error: error.message }
       const { data: hours } = await supabase
         .from("business_hours").select("weekday, opens_at, closes_at, is_closed")
@@ -846,7 +928,8 @@ async function execTool(
           requested_time: time,
           server_now_date: tjNow.date,
           server_now_time: tjNow.time,
-          note: "La fecha/hora solicitada ya pasó en zona Tijuana. Pide al cliente un día/hora futuros.",
+          note:
+            "La fecha/hora solicitada ya pasó en zona Tijuana. Pide al cliente un día/hora futuros.",
         }
       }
       const timeNorm = time.length === 5 ? `${time}:00` : time
@@ -881,24 +964,25 @@ async function execTool(
           "NO digas que la solicitud quedó registrada todavía."
       } else if (result.available === true && phone && resolvedName) {
         try {
-          const { data: created, error: createErr } = await supabase.rpc("create_pending_booking_from_ai", {
-            p_phone: phone,
-            p_client_name: resolvedName,
-            p_email: input.client_email ? String(input.client_email) : null,
-            p_service_id: serviceId,
-            p_booking_date: date,
-            p_booking_time: timeNorm,
-            p_duration_min: input.duration_min ? Number(input.duration_min) : null,
-            p_notes: "Solicitud creada por IA WhatsApp.",
-            p_ai_conversation_id: ctx.conversationId ?? null,
-            p_ai_confidence_score: 0.9,
-            // Política: solo asignamos terapeuta si el cliente lo pidió por
-            // nombre. Si la elección la hizo el RPC automáticamente,
-            // dejamos therapist_id=null para que recepción asigne.
-            p_therapist_id: requestedStaffId
-              ? String(requestedStaffId)
-              : null,
-          })
+          const { data: created, error: createErr } = await supabase.rpc(
+            "create_pending_booking_from_ai",
+            {
+              p_phone: phone,
+              p_client_name: resolvedName,
+              p_email: input.client_email ? String(input.client_email) : null,
+              p_service_id: serviceId,
+              p_booking_date: date,
+              p_booking_time: timeNorm,
+              p_duration_min: input.duration_min ? Number(input.duration_min) : null,
+              p_notes: "Solicitud creada por IA WhatsApp.",
+              p_ai_conversation_id: ctx.conversationId ?? null,
+              p_ai_confidence_score: 0.9,
+              // Política: solo asignamos terapeuta si el cliente lo pidió por
+              // nombre. Si la elección la hizo el RPC automáticamente,
+              // dejamos therapist_id=null para que recepción asigne.
+              p_therapist_id: requestedStaffId ? String(requestedStaffId) : null,
+            },
+          )
           if (!createErr && created) {
             const createdResult = created as Record<string, unknown>
             result.booking_id = createdResult.booking_id
@@ -945,8 +1029,9 @@ async function execTool(
                   const giftCardId = reqResult.gift_card_id as string | null
                   const membershipId = reqResult.membership_id as string | null
                   const clientPackageId = reqResult.client_package_id as string | null
-                  const clientPackageSessionId =
-                    reqResult.client_package_session_id as string | null
+                  const clientPackageSessionId = reqResult.client_package_session_id as
+                    | string
+                    | null
                   await supabase
                     .from("bookings")
                     .update({
@@ -975,15 +1060,17 @@ async function execTool(
                     const reasonLabel = waiverReason === "gift_card"
                       ? "Gift card activa con saldo"
                       : waiverReason === "membership"
-                        ? "Membresía activa con sesiones"
-                        : waiverReason === "package"
-                          ? "Paquete activo con sesiones"
-                          : "Override admin"
+                      ? "Membresía activa con sesiones"
+                      : waiverReason === "package"
+                      ? "Paquete activo con sesiones"
+                      : "Override admin"
                     const isNew = createdResult.client_is_new === true
                     const alert = [
                       "📅 *Nueva solicitud IA (sin anticipo)*",
                       "",
-                      `*Cliente:* ${resolvedName}${isNew ? " 🆕 (cliente nuevo — crear expediente)" : ""}`,
+                      `*Cliente:* ${resolvedName}${
+                        isNew ? " 🆕 (cliente nuevo — crear expediente)" : ""
+                      }`,
                       `*Teléfono:* ${phone}`,
                       `*Servicio:* ${serviceName}`,
                       `*Fecha:* ${date}`,
@@ -1008,7 +1095,9 @@ async function execTool(
                           const tail = String(t).replace(/\D/g, "").slice(-10)
                           if (tail.length === 10 && !seen.has(tail)) {
                             seen.add(tail)
-                            try { await sendTextToMeta(normalizePhone(String(t)), alert) } catch {
+                            try {
+                              await sendTextToMeta(normalizePhone(String(t)), alert)
+                            } catch {
                               /* swallow */
                             }
                           }
@@ -1072,7 +1161,11 @@ async function execTool(
             result.booking_created = false
             result.checkout_error = createErr?.message ?? "create_pending_booking_returned_null"
             try {
-              await notifyHumanBackup(phone, ctx.messageText ?? "(intento de reserva)", "ai_booking_create_failed")
+              await notifyHumanBackup(
+                phone,
+                ctx.messageText ?? "(intento de reserva)",
+                "ai_booking_create_failed",
+              )
             } catch { /* swallow */ }
           }
         } catch (e) {
@@ -1083,7 +1176,11 @@ async function execTool(
           result.booking_created = false
           result.checkout_error = (e as Error).message
           try {
-            await notifyHumanBackup(phone, ctx.messageText ?? "(intento de reserva)", "ai_booking_create_exception")
+            await notifyHumanBackup(
+              phone,
+              ctx.messageText ?? "(intento de reserva)",
+              "ai_booking_create_exception",
+            )
           } catch { /* swallow */ }
         }
       }
@@ -1106,7 +1203,8 @@ async function execTool(
           error: "past_datetime",
           server_now_date: tjNow.date,
           server_now_time: tjNow.time,
-          note: "La fecha/hora ya pasó en zona Tijuana. Pide al cliente un día/hora futuros antes de crear la cita.",
+          note:
+            "La fecha/hora ya pasó en zona Tijuana. Pide al cliente un día/hora futuros antes de crear la cita.",
         }
       }
       // Normalizar HH:MM → HH:MM:00 para tipo time
@@ -1137,8 +1235,7 @@ async function execTool(
         return {
           ok: false,
           error: "client_name_required",
-          note:
-            "Falta el NOMBRE COMPLETO (nombre y apellido) del cliente. Pídelo (y un " +
+          note: "Falta el NOMBRE COMPLETO (nombre y apellido) del cliente. Pídelo (y un " +
             "correo para el comprobante) antes de crear la cita. NO digas que quedó registrada.",
         }
       }
@@ -1155,9 +1252,7 @@ async function execTool(
         p_ai_confidence_score: input.confidence != null ? Number(input.confidence) : null,
         // Política: respetar terapeuta SOLO si el cliente lo nombró.
         // Si no, dejar NULL para que recepción asigne.
-        p_therapist_id: requestedStaffId
-          ? String(requestedStaffId)
-          : null,
+        p_therapist_id: requestedStaffId ? String(requestedStaffId) : null,
       })
       if (error) return { error: error.message }
       const result = data as Record<string, unknown> | null
@@ -1175,7 +1270,9 @@ async function execTool(
             .maybeSingle()
           const serviceName = (svc as { name?: string } | null)?.name ?? "Servicio"
           const isNew = (result as Record<string, unknown>).client_is_new === true
-          const customerName = `${resolvedName}${isNew ? " 🆕 (cliente nuevo — crear expediente)" : ""}`
+          const customerName = `${resolvedName}${
+            isNew ? " 🆕 (cliente nuevo — crear expediente)" : ""
+          }`
           const alert = [
             "📅 *Nueva solicitud IA*",
             "",
@@ -1193,8 +1290,12 @@ async function execTool(
             .select("human_backup_numbers, human_backup_enabled")
             .eq("id", 1)
             .maybeSingle()
-          const enabled = (settingsRow as { human_backup_enabled?: boolean } | null)?.human_backup_enabled === true
-          const targets = ((settingsRow as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
+          const enabled =
+            (settingsRow as { human_backup_enabled?: boolean } | null)?.human_backup_enabled ===
+              true
+          const targets =
+            ((settingsRow as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ??
+              []) as string[]
           if (enabled && Array.isArray(targets)) {
             for (const target of targets) {
               try {
@@ -1234,16 +1335,25 @@ async function execTool(
         p_new_time: timeNorm,
       })
       if (error) return { error: error.message }
-      const result = (data as Record<string, unknown> | null) ?? { ok: false, error: "rpc_returned_null" }
+      const result = (data as Record<string, unknown> | null) ??
+        { ok: false, error: "rpc_returned_null" }
       // Si se reagendó con éxito, alerta a recepción (re-validación de slot nuevo).
       if (result.ok === true && result.rescheduled === true) {
         try {
-          await notifyReceptionReschedule(phone, ctx.clientName ?? null, bookingId, newDate, newTime)
+          await notifyReceptionReschedule(
+            phone,
+            ctx.clientName ?? null,
+            bookingId,
+            newDate,
+            newTime,
+          )
         } catch (e) {
           console.warn("reschedule reception alert failed:", (e as Error).message)
         }
         await logReceptionAlert("reschedule_requested", {
-          bookingId, phone, clientName: ctx.clientName ?? null,
+          bookingId,
+          phone,
+          clientName: ctx.clientName ?? null,
           message: `Nueva fecha solicitada: ${newDate} ${newTime}`,
         })
       } else if (result.error === "requires_reception") {
@@ -1251,13 +1361,22 @@ async function execTool(
         // Avisa a los administradores por WhatsApp (nombre/servicio/fecha/hora) y
         // deja alerta en el panel. Recepción autoriza y ejecuta.
         try {
-          await notifyReceptionReschedule(phone, ctx.clientName ?? null, bookingId, newDate, newTime)
+          await notifyReceptionReschedule(
+            phone,
+            ctx.clientName ?? null,
+            bookingId,
+            newDate,
+            newTime,
+          )
         } catch (e) {
           console.warn("reschedule reception alert failed:", (e as Error).message)
         }
         await logReceptionAlert("reschedule_requested", {
-          bookingId, phone, clientName: ctx.clientName ?? null,
-          message: `El cliente pidió reagendar a ${newDate} ${newTime}. Recepción debe autorizar y ejecutar.`,
+          bookingId,
+          phone,
+          clientName: ctx.clientName ?? null,
+          message:
+            `El cliente pidió reagendar a ${newDate} ${newTime}. Recepción debe autorizar y ejecutar.`,
         })
       }
       return result
@@ -1273,15 +1392,23 @@ async function execTool(
         p_reason: input.reason ? String(input.reason) : null,
       })
       if (error) return { error: error.message }
-      const result = (data as Record<string, unknown> | null) ?? { ok: false, error: "rpc_returned_null" }
+      const result = (data as Record<string, unknown> | null) ??
+        { ok: false, error: "rpc_returned_null" }
       if (result.ok === true && result.cancelled === true) {
         try {
-          await notifyReceptionCancel(phone, ctx.clientName ?? null, bookingId, String(input.reason ?? ""))
+          await notifyReceptionCancel(
+            phone,
+            ctx.clientName ?? null,
+            bookingId,
+            String(input.reason ?? ""),
+          )
         } catch (e) {
           console.warn("cancel reception alert failed:", (e as Error).message)
         }
         await logReceptionAlert("booking_cancelled", {
-          bookingId, phone, clientName: ctx.clientName ?? null,
+          bookingId,
+          phone,
+          clientName: ctx.clientName ?? null,
           message: input.reason ? String(input.reason) : undefined,
         })
       } else if (result.error === "requires_reception") {
@@ -1289,12 +1416,19 @@ async function execTool(
         // Avisa a los administradores por WhatsApp (nombre/servicio/fecha/hora) y
         // deja alerta en el panel. Recepción autoriza y ejecuta (anticipo / 24h).
         try {
-          await notifyReceptionCancel(phone, ctx.clientName ?? null, bookingId, String(input.reason ?? ""))
+          await notifyReceptionCancel(
+            phone,
+            ctx.clientName ?? null,
+            bookingId,
+            String(input.reason ?? ""),
+          )
         } catch (e) {
           console.warn("cancel reception alert failed:", (e as Error).message)
         }
         await logReceptionAlert("booking_cancelled", {
-          bookingId, phone, clientName: ctx.clientName ?? null,
+          bookingId,
+          phone,
+          clientName: ctx.clientName ?? null,
           message: input.reason
             ? `Solicitud de cancelación. Motivo: ${String(input.reason)}`
             : "El cliente solicita cancelar. Recepción debe autorizar.",
@@ -1330,7 +1464,8 @@ async function execTool(
 const ADMIN_TOOLS = [
   {
     name: "get_today_summary",
-    description: "Resumen operativo de HOY (zona Tijuana): total citas, confirmadas, canceladas, pendientes, completadas, ingresos pagados.",
+    description:
+      "Resumen operativo de HOY (zona Tijuana): total citas, confirmadas, canceladas, pendientes, completadas, ingresos pagados.",
     input_schema: { type: "object", properties: {} },
   },
   {
@@ -1344,12 +1479,14 @@ const ADMIN_TOOLS = [
   },
   {
     name: "get_tomorrow_appointments",
-    description: "Lista compacta de las citas de MAÑANA (Tijuana): hora, servicio, terapeuta, status. NO devuelve nombre completo del cliente, solo inicial.",
+    description:
+      "Lista compacta de las citas de MAÑANA (Tijuana): hora, servicio, terapeuta, status. NO devuelve nombre completo del cliente, solo inicial.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "get_pending_confirmations",
-    description: "Lista citas próximas 7 días que están en estado pending, scheduled o pending_reception (creadas por IA), todas esperando confirmar.",
+    description:
+      "Lista citas próximas 7 días que están en estado pending, scheduled o pending_reception (creadas por IA), todas esperando confirmar.",
     input_schema: { type: "object", properties: {} },
   },
   {
@@ -1372,7 +1509,8 @@ const ADMIN_TOOLS = [
   },
   {
     name: "get_top_services",
-    description: "Top 5 servicios más reservados en un rango de fechas (date_from, date_to en YYYY-MM-DD).",
+    description:
+      "Top 5 servicios más reservados en un rango de fechas (date_from, date_to en YYYY-MM-DD).",
     input_schema: {
       type: "object",
       properties: {
@@ -1393,12 +1531,14 @@ const ADMIN_TOOLS = [
   },
   {
     name: "get_whatsapp_status_summary",
-    description: "Estado del canal WhatsApp últimas 24h: enviados, entregados, fallidos, en cola, dead-letter, latencia.",
+    description:
+      "Estado del canal WhatsApp últimas 24h: enviados, entregados, fallidos, en cola, dead-letter, latencia.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "get_ai_usage_summary",
-    description: "Métricas IA: conversaciones activas hoy, mensajes, costo USD, latencia promedio, escaladas a recepción.",
+    description:
+      "Métricas IA: conversaciones activas hoy, mensajes, costo USD, latencia promedio, escaladas a recepción.",
     input_schema: { type: "object", properties: {} },
   },
   {
@@ -1421,7 +1561,8 @@ const ADMIN_TOOLS = [
   },
   {
     name: "get_daily_operations_summary",
-    description: "Resumen extendido del día: citas + cancelaciones + ingresos + WhatsApp + IA en una sola llamada.",
+    description:
+      "Resumen extendido del día: citas + cancelaciones + ingresos + WhatsApp + IA en una sola llamada.",
     input_schema: {
       type: "object",
       properties: { date: { type: "string" } },
@@ -1430,7 +1571,8 @@ const ADMIN_TOOLS = [
   // --- Suite director: finanzas, nómina, clientes, prospectos ---
   {
     name: "get_financial_summary",
-    description: "Estado de resultados de un rango (default: mes en curso, Tijuana): ingresos pagados, gastos variables, gastos a proveedores, gastos fijos mensuales, nómina y UTILIDAD neta. Si una sección no tiene datos cargados lo indica con has_data=false. Úsalo para 'cómo vamos este mes', 'utilidad', 'ganancias', 'cuánto llevamos'.",
+    description:
+      "Estado de resultados de un rango (default: mes en curso, Tijuana): ingresos pagados, gastos variables, gastos a proveedores, gastos fijos mensuales, nómina y UTILIDAD neta. Si una sección no tiene datos cargados lo indica con has_data=false. Úsalo para 'cómo vamos este mes', 'utilidad', 'ganancias', 'cuánto llevamos'.",
     input_schema: {
       type: "object",
       properties: {
@@ -1441,12 +1583,14 @@ const ADMIN_TOOLS = [
   },
   {
     name: "get_fixed_expenses",
-    description: "Lista los gastos fijos del negocio (renta, servicios, etc.) con monto, frecuencia y día de pago, más el total mensual activo.",
+    description:
+      "Lista los gastos fijos del negocio (renta, servicios, etc.) con monto, frecuencia y día de pago, más el total mensual activo.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "get_payroll_summary",
-    description: "Nómina por periodo (default: mes en curso): detalle por empleado (sueldo base, comisiones, bonos, propinas, deducciones, total) y gran total. Para 'cuánto pagamos de nómina', 'sueldos'.",
+    description:
+      "Nómina por periodo (default: mes en curso): detalle por empleado (sueldo base, comisiones, bonos, propinas, deducciones, total) y gran total. Para 'cuánto pagamos de nómina', 'sueldos'.",
     input_schema: {
       type: "object",
       properties: {
@@ -1457,18 +1601,23 @@ const ADMIN_TOOLS = [
   },
   {
     name: "get_recurring_clients",
-    description: "Clientes recurrentes: quienes tienen 2+ citas. Devuelve nombre, teléfono, total de citas, visitas completadas y última visita. Para 'clientes recurrentes', 'clientes frecuentes', 'quiénes regresan'.",
+    description:
+      "Clientes recurrentes: quienes tienen 2+ citas. Devuelve nombre, teléfono, total de citas, visitas completadas y última visita. Para 'clientes recurrentes', 'clientes frecuentes', 'quiénes regresan'.",
     input_schema: {
       type: "object",
       properties: {
-        min_visits: { type: "integer", description: "mínimo de citas para contar como recurrente (default 2)" },
+        min_visits: {
+          type: "integer",
+          description: "mínimo de citas para contar como recurrente (default 2)",
+        },
         limit: { type: "integer", description: "máximo de clientes a devolver (default 20)" },
       },
     },
   },
   {
     name: "get_client_lookup",
-    description: "Busca un cliente por NOMBRE o TELÉFONO y devuelve su ficha completa: contacto, historial reciente de citas, próxima cita, total de visitas y membresía. Para 'dame los datos de X', 'historial de X', 'cuándo vino X'.",
+    description:
+      "Busca un cliente por NOMBRE o TELÉFONO y devuelve su ficha completa: contacto, historial reciente de citas, próxima cita, total de visitas y membresía. Para 'dame los datos de X', 'historial de X', 'cuándo vino X'.",
     input_schema: {
       type: "object",
       properties: { query: { type: "string", description: "nombre o teléfono" } },
@@ -1477,12 +1626,14 @@ const ADMIN_TOOLS = [
   },
   {
     name: "get_memberships_summary",
-    description: "Membresías activas: total, cuántas vencen en 30 días, cuántas con auto-renovación, y el detalle (cliente, vencimiento, sesiones usadas/totales). Para 'membresías', 'quién está por vencer'.",
+    description:
+      "Membresías activas: total, cuántas vencen en 30 días, cuántas con auto-renovación, y el detalle (cliente, vencimiento, sesiones usadas/totales). Para 'membresías', 'quién está por vencer'.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "get_prospects",
-    description: "Clientes nuevos / prospectos de un rango (default: mes en curso): total de altas, cuántos son leads sin cita aún, y el detalle. Para 'prospectos', 'clientes nuevos', 'leads'.",
+    description:
+      "Clientes nuevos / prospectos de un rango (default: mes en curso): total de altas, cuántos son leads sin cita aún, y el detalle. Para 'prospectos', 'clientes nuevos', 'leads'.",
     input_schema: {
       type: "object",
       properties: {
@@ -1516,8 +1667,7 @@ async function execAdminTool(name: string, input: Record<string, unknown>) {
         counts[r.status] = (counts[r.status] ?? 0) + 1
       }
       // Derivado: "pendientes por confirmar" = pending + scheduled + pending_reception (IA) + rescheduled
-      const pendingToConfirm =
-        (counts["pending"] ?? 0) +
+      const pendingToConfirm = (counts["pending"] ?? 0) +
         (counts["scheduled"] ?? 0) +
         (counts["pending_reception"] ?? 0) +
         (counts["rescheduled"] ?? 0)
@@ -1573,9 +1723,12 @@ async function execAdminTool(name: string, input: Record<string, unknown>) {
         .from("bookings").select("status").eq("booking_date", date)
       if (error) return { error: error.message }
       const total = data?.length ?? 0
-      const cancelled = (data ?? []).filter((r: { status: string }) => r.status === "cancelled").length
+      const cancelled =
+        (data ?? []).filter((r: { status: string }) => r.status === "cancelled").length
       return {
-        date, total, cancelled,
+        date,
+        total,
+        cancelled,
         cancellation_rate_pct: total > 0 ? Math.round((cancelled / total) * 1000) / 10 : 0,
       }
     }
@@ -1613,7 +1766,8 @@ async function execAdminTool(name: string, input: Record<string, unknown>) {
       const { data: staff } = await supabase
         .from("staff").select("id, full_name").in("id", ids)
       const result = (staff ?? []).map((s: { id: string; full_name: string }) => ({
-        therapist: s.full_name, count: counts[s.id] ?? 0,
+        therapist: s.full_name,
+        count: counts[s.id] ?? 0,
       })).sort((a, b) => b.count - a.count)
       return { date, by_therapist: result }
     }
@@ -1717,7 +1871,7 @@ async function execAdminTool(name: string, input: Record<string, unknown>) {
 }
 
 function buildAdminSystemPrompt(): { stable: string; dynamic: string } {
-  const days = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"]
+  const days = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"]
   const tjNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Tijuana" }))
   const tjDate = tjNow.toISOString().slice(0, 10)
   const tjTime = tjNow.toTimeString().slice(0, 5)
@@ -1725,7 +1879,8 @@ function buildAdminSystemPrompt(): { stable: string; dynamic: string } {
   const tjTomorrowDate = new Date(tjNow.getTime() + 86400000).toISOString().slice(0, 10)
   const tjTomorrowName = days[(tjNow.getDay() + 1) % 7]
 
-  const stable = `Eres Sahara, el ANALISTA DE NEGOCIO y mano derecha del dueño/administrador de Sahara Club Spa.
+  const stable =
+    `Eres Sahara, el ANALISTA DE NEGOCIO y mano derecha del dueño/administrador de Sahara Club Spa.
 Este usuario es admin autorizado (dueño/arquitecto). Tiene acceso TOTAL a la información del negocio por WhatsApp: operación, finanzas, nómina, gastos, clientes (con nombres y contacto), membresías y prospectos. Tu trabajo es darle datos REALES, claros y accionables, y ACONSEJARLO cuando lo pida o cuando los datos lo ameriten.
 
 REGLAS DURAS (admin):
@@ -1806,8 +1961,11 @@ async function buildServiceCatalog(): Promise<string> {
       return "(catálogo no disponible — usa list_services como fallback)"
     }
     const rows = (data ?? []) as Array<{
-      id: string; name: string; category: string | null;
-      duration_min: number | null; price: number | string | null;
+      id: string
+      name: string
+      category: string | null
+      duration_min: number | null
+      price: number | string | null
       tagline: string | null
     }>
     if (rows.length === 0) return "(sin servicios activos)"
@@ -1849,16 +2007,28 @@ function buildSystemBlocks(stable: string, dynamic: string): SystemBlock[] {
   ]
 }
 
-function buildSystemPrompt(clientKnown: string | null, serviceCatalog: string = ""): { stable: string; dynamic: string } {
+function buildSystemPrompt(
+  clientKnown: string | null,
+  serviceCatalog: string = "",
+): { stable: string; dynamic: string } {
   // SIEMPRE en zona horaria del negocio
-  const days = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"]
-  const monthsEs = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"]
+  const days = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"]
+  const monthsEs = [
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+  ]
   const tjNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Tijuana" }))
-  const tjDate = tjNow.toISOString().slice(0, 10)
   const tjTime = tjNow.toTimeString().slice(0, 5)
-  const tjWeekday = days[tjNow.getDay()]
-  const tjTomorrowDate = new Date(tjNow.getTime() + 86400000).toISOString().slice(0, 10)
-  const tjTomorrowName = days[(tjNow.getDay() + 1) % 7]
 
   // Tabla autoritativa de los próximos 45 días: nombre + fecha exacta.
   // El modelo NUNCA debe calcular; solo hacer lookup en esta tabla.
@@ -1876,7 +2046,8 @@ function buildSystemPrompt(clientKnown: string | null, serviceCatalog: string = 
   }
   const upcomingTable = upcomingLines.join("\n")
 
-  const stable = `Eres Sahara, asistente concierge de Sahara Club Spa (spa de bienestar en Ensenada, BC).
+  const stable =
+    `Eres Sahara, asistente concierge de Sahara Club Spa (spa de bienestar en Ensenada, BC).
 Tu rol: asesorar al cliente y CAPTAR su intención de reserva. Recepción confirma toda cita oficialmente.
 
 ROL EXACTO:
@@ -2241,14 +2412,22 @@ function withToolCache(tools: unknown[]): unknown[] {
 }
 
 async function callAnthropic(
-  apiKey: string, model: string, system: string | SystemBlock[],
-  messages: AnthropicMessage[], temperature: number, maxTokens: number,
+  apiKey: string,
+  model: string,
+  system: string | SystemBlock[],
+  messages: AnthropicMessage[],
+  temperature: number,
+  maxTokens: number,
   tools: unknown[],
   toolChoice?: Record<string, unknown>,
 ) {
   const payload: Record<string, unknown> = {
-    model, max_tokens: maxTokens, temperature, system,
-    tools, messages,
+    model,
+    max_tokens: maxTokens,
+    temperature,
+    system,
+    tools,
+    messages,
   }
   if (toolChoice) payload.tool_choice = toolChoice
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -2267,7 +2446,8 @@ async function callAnthropic(
     content: Array<Record<string, unknown>>
     stop_reason: string
     usage: {
-      input_tokens: number; output_tokens: number
+      input_tokens: number
+      output_tokens: number
       cache_creation_input_tokens?: number
       cache_read_input_tokens?: number
     }
@@ -2313,7 +2493,9 @@ Deno.serve(async (req) => {
     const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000
     let { data: existing } = await supabase
       .from("ai_conversations")
-      .select("id, total_tokens_in, total_tokens_out, message_count, total_cost_usd, last_message_at, created_at")
+      .select(
+        "id, total_tokens_in, total_tokens_out, message_count, total_cost_usd, last_message_at, created_at",
+      )
       .eq("customer_phone", phone)
       .eq("status", "active")
       .order("last_message_at", { ascending: false })
@@ -2322,15 +2504,14 @@ Deno.serve(async (req) => {
 
     if (existing) {
       const capMsgs = Number(
-        (settings as { max_messages_per_conversation?: number }).max_messages_per_conversation ?? 60,
+        (settings as { max_messages_per_conversation?: number }).max_messages_per_conversation ??
+          60,
       )
       const nowMs = Date.now()
       const lastMs = existing.last_message_at
         ? new Date(existing.last_message_at as string).getTime()
         : 0
-      const bornMs = existing.created_at
-        ? new Date(existing.created_at as string).getTime()
-        : nowMs
+      const bornMs = existing.created_at ? new Date(existing.created_at as string).getTime() : nowMs
       const ageRotate = nowMs - bornMs > SESSION_MAX_AGE_MS
       const idleRotate = nowMs - lastMs > SESSION_IDLE_MS
       const capRotate = Number(existing.message_count ?? 0) >= capMsgs
@@ -2359,8 +2540,8 @@ Deno.serve(async (req) => {
         .insert({
           customer_phone: phone,
           branch_id: DEFAULT_BRANCH_ID,
-          llm_model: (settings as { active_model?: string; llm_model: string }).active_model
-            ?? (settings.active_model || settings.llm_model),
+          llm_model: (settings as { active_model?: string; llm_model: string }).active_model ??
+            (settings.active_model || settings.llm_model),
         })
         .select("id").single()
       if (cErr) throw cErr
@@ -2388,8 +2569,10 @@ Deno.serve(async (req) => {
         .update({ last_message_at: new Date().toISOString() })
         .eq("id", convId)
       return jsonResponse({
-        ok: true, conversation_id: convId,
-        skipped_short: true, kind: "ignore",
+        ok: true,
+        conversation_id: convId,
+        skipped_short: true,
+        kind: "ignore",
         reason: "emoji_or_filler_no_reply",
       })
     }
@@ -2397,20 +2580,26 @@ Deno.serve(async (req) => {
     if (shortMsgKind === "soft_closing") {
       // Verifica que can_ai_respond no esté en pausa/disabled (admin bypass aplica igual)
       const { data: gateSc } = await supabase.rpc("can_ai_respond", {
-        p_phone: phone, p_conversation_id: convId,
+        p_phone: phone,
+        p_conversation_id: convId,
       })
       const allowedSc = (gateSc as { allowed?: boolean })?.allowed === true
       if (!allowedSc) {
         return jsonResponse({ skipped: true, reason: "soft_closing_gated", gate: gateSc })
       }
 
-      const reply = pickSoftClosing(`${phone}:${new Date().toISOString().slice(0,10)}:${messageText}`)
+      const reply = pickSoftClosing(
+        `${phone}:${new Date().toISOString().slice(0, 10)}:${messageText}`,
+      )
 
       // Insertar assistant directo, sin tokens LLM
       await supabase.from("ai_messages").insert({
-        conversation_id: convId, role: "assistant",
+        conversation_id: convId,
+        role: "assistant",
         content: reply,
-        tokens_in: 0, tokens_out: 0, latency_ms: 0,
+        tokens_in: 0,
+        tokens_out: 0,
+        latency_ms: 0,
         llm_model: null,
         stop_reason: "soft_closing",
         is_admin_query: isAdminUser,
@@ -2427,8 +2616,13 @@ Deno.serve(async (req) => {
       await sendTextToMeta(phone, reply)
 
       return jsonResponse({
-        ok: true, conversation_id: convId,
-        reply, soft_closing_sent: true, tokens_in: 0, tokens_out: 0, cost_usd: 0,
+        ok: true,
+        conversation_id: convId,
+        reply,
+        soft_closing_sent: true,
+        tokens_in: 0,
+        tokens_out: 0,
+        cost_usd: 0,
       })
     }
 
@@ -2455,8 +2649,12 @@ Deno.serve(async (req) => {
         try {
           await sendTextToMeta(phone, autoReply)
           await supabase.from("ai_messages").insert({
-            conversation_id: convId, role: "assistant", content: autoReply,
-            tokens_in: 0, tokens_out: 0, latency_ms: 0,
+            conversation_id: convId,
+            role: "assistant",
+            content: autoReply,
+            tokens_in: 0,
+            tokens_out: 0,
+            latency_ms: 0,
             llm_model: null,
             stop_reason: denyReason,
             is_admin_query: false,
@@ -2493,22 +2691,30 @@ Deno.serve(async (req) => {
       .gte("created_at", sinceIso)
       .in("conversation_id", [convId])
     if ((msg24h ?? 0) > settings.max_msgs_per_phone_24h) {
-      const overflow = "Recibimos tu mensaje. Para no saturarte, recepción te contactará directamente."
+      const overflow =
+        "Recibimos tu mensaje. Para no saturarte, recepción te contactará directamente."
       await sendTextToMeta(phone, overflow)
       await supabase.from("ai_messages").insert({
-        conversation_id: convId, role: "assistant", content: overflow,
+        conversation_id: convId,
+        role: "assistant",
+        content: overflow,
         stop_reason: "rate_limit_local",
       })
       return jsonResponse({ ok: true, rate_limited: true })
     }
 
     // Cap de tokens por conversación
-    if ((existing?.total_tokens_in ?? 0) + (existing?.total_tokens_out ?? 0)
-        > settings.max_tokens_per_conversation) {
-      const cap = "Recepción te dará seguimiento personal en breve ✨ Cualquier duda urgente, escríbenos directo. ¡Gracias por elegir Sahara! 🌿"
+    if (
+      (existing?.total_tokens_in ?? 0) + (existing?.total_tokens_out ?? 0) >
+        settings.max_tokens_per_conversation
+    ) {
+      const cap =
+        "Recepción te dará seguimiento personal en breve ✨ Cualquier duda urgente, escríbenos directo. ¡Gracias por elegir Sahara! 🌿"
       await sendTextToMeta(phone, cap)
       await supabase.from("ai_messages").insert({
-        conversation_id: convId, role: "assistant", content: cap,
+        conversation_id: convId,
+        role: "assistant",
+        content: cap,
         stop_reason: "tokens_cap_local",
       })
       await supabase.from("ai_conversations")
@@ -2529,7 +2735,7 @@ Deno.serve(async (req) => {
     const { data: client } = isAdmin
       ? { data: null }
       : await supabase.from("clients").select("full_name")
-          .ilike("phone", `%${last10}%`).limit(1).maybeSingle()
+        .ilike("phone", `%${last10}%`).limit(1).maybeSingle()
     // Cargar catálogo completo solo si NO es admin (admin tiene otro contexto)
     const serviceCatalog = isAdmin ? "" : await buildServiceCatalog()
     const { stable: sysStable, dynamic: sysDynamic } = isAdmin
@@ -2581,15 +2787,22 @@ Deno.serve(async (req) => {
     if (!isAdmin) {
       try {
         const lower = messageText.toLowerCase()
-        const dayWord = /\b(hoy|mañana|manana|lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)\b/.test(lower)
+        const dayWord =
+          /\b(hoy|mañana|manana|lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)\b/.test(
+            lower,
+          )
         const dayNum = /\b\d{1,2}\s+de\s+\w+\b/.test(lower) // "29 de mayo"
-        const timeWord = /\b(\d{1,2}(:\d{2})?\s*(am|pm|a\.?m\.?|p\.?m\.?|hrs?|horas?))\b|\b(a\s+las?\s+\d{1,2})/.test(lower)
+        const timeWord =
+          /\b(\d{1,2}(:\d{2})?\s*(am|pm|a\.?m\.?|p\.?m\.?|hrs?|horas?))\b|\b(a\s+las?\s+\d{1,2})/
+            .test(lower)
         const hasDateTime = (dayWord || dayNum) && timeWord
         // Intención de GESTIÓN (reagendar/cancelar/consultar) sobre cita existente.
         // Si aparece, NO forzamos check_availability_for_booking aunque haya
         // fecha+hora: forzarlo crearía una cita NUEVA en lugar de mover/cancelar
         // la existente. Dejamos que el modelo elija reschedule_my_booking, etc.
-        const manageIntent = /\b(reagend|reprogram|cambiar?|mover|recorrer|pasar|cancelar?|anular|elimina|quitar?\s+(mi|la)\s+cita|mis?\s+citas?|qu[eé]\s+citas|cu[aá]ndo\s+(es|tengo)\s+mi)\b/.test(lower)
+        const manageIntent =
+          /\b(reagend|reprogram|cambiar?|mover|recorrer|pasar|cancelar?|anular|elimina|quitar?\s+(mi|la)\s+cita|mis?\s+citas?|qu[eé]\s+citas|cu[aá]ndo\s+(es|tengo)\s+mi)\b/
+            .test(lower)
         if (hasDateTime && !manageIntent) {
           forceToolChoice = { type: "tool", name: "check_availability_for_booking" }
         }
@@ -2602,7 +2815,9 @@ Deno.serve(async (req) => {
             .eq("tool_name", "check_availability_for_booking")
             .order("created_at", { ascending: false })
             .limit(1)
-          const recent = (lastTool ?? []) as Array<{ tool_output: Record<string, unknown> | null; created_at: string }>
+          const recent = (lastTool ?? []) as Array<
+            { tool_output: Record<string, unknown> | null; created_at: string }
+          >
           if (recent.length > 0) {
             const out = recent[0].tool_output as Record<string, unknown> | null
             const slots = out && Array.isArray(out.suggested_slots) ? out.suggested_slots : []
@@ -2641,10 +2856,14 @@ Deno.serve(async (req) => {
         ? { type: "tool", name: "check_availability_for_booking" }
         : forceToolChoice
 
-      for (let i = 0; i < 5; i++) {  // máx 5 iteraciones tool_use
+      for (let i = 0; i < 5; i++) { // máx 5 iteraciones tool_use
         const resp = await callAnthropic(
-          apiKey, (settings.active_model || settings.llm_model), system, messages,
-          settings.temperature, settings.max_output_tokens,
+          apiKey,
+          settings.active_model || settings.llm_model,
+          system,
+          messages,
+          settings.temperature,
+          settings.max_output_tokens,
           cachedTools,
           // Solo forzamos en la PRIMERA iteración; después dejamos al modelo libre
           i === 0 ? passForce : undefined,
@@ -2662,7 +2881,8 @@ Deno.serve(async (req) => {
           if (part.type === "text") textParts.push(String(part.text ?? ""))
           if (part.type === "tool_use") {
             toolCalls.push({
-              id: String(part.id), name: String(part.name),
+              id: String(part.id),
+              name: String(part.name),
               input: (part.input ?? {}) as Record<string, unknown>,
             })
           }
@@ -2686,35 +2906,43 @@ Deno.serve(async (req) => {
           const out = isAdminCall && !isAdmin
             ? { error: "tool_restricted_to_admin" }
             : isAdminCall
-              ? await execAdminTool(t.name, t.input)
-              : await execTool(t.name, t.input, {
-                  phone,
-                  conversationId: convId,
-                  clientName: client?.full_name ?? null,
-                  messageText,
-                })
+            ? await execAdminTool(t.name, t.input)
+            : await execTool(t.name, t.input, {
+              phone,
+              conversationId: convId,
+              clientName: client?.full_name ?? null,
+              messageText,
+            })
           // Señal de cita real: booking_id presente, recién creada o duplicado
           // (duplicado ⇒ ya existe una cita para ese slot, confirmar es válido).
           if (out && typeof out === "object") {
             const o = out as Record<string, unknown>
-            if (o.booking_id || o.created === true ||
-                o.booking_created === true || o.duplicate_prevented === true) {
+            if (
+              o.booking_id || o.created === true ||
+              o.booking_created === true || o.duplicate_prevented === true
+            ) {
               bookingCreatedThisTurn = true
             }
             // Guardamos el link de pago REAL para insertarlo por código: el
             // modelo trunca las URLs largas de Stripe al escribirlas a mano.
-            if (typeof o.checkout_url === "string" &&
-                o.checkout_url.includes("checkout.stripe.com")) {
+            if (
+              typeof o.checkout_url === "string" &&
+              o.checkout_url.includes("checkout.stripe.com")
+            ) {
               capturedCheckoutUrl = o.checkout_url
             }
           }
           await supabase.from("ai_messages").insert({
-            conversation_id: convId, role: "tool",
-            tool_name: t.name, tool_input: t.input, tool_output: out,
+            conversation_id: convId,
+            role: "tool",
+            tool_name: t.name,
+            tool_input: t.input,
+            tool_output: out,
             is_admin_query: isAdmin,
           })
           results.push({
-            type: "tool_result", tool_use_id: t.id,
+            type: "tool_result",
+            tool_use_id: t.id,
             content: JSON.stringify(out).slice(0, 8000),
           })
         }
@@ -2722,15 +2950,16 @@ Deno.serve(async (req) => {
       }
 
       // Guardrail: el modelo confirmó una cita que NO creó → corregir una vez.
-      if (pass === 0 && !isAdmin &&
-          claimsBookingRegistered(finalText) && !bookingCreatedThisTurn) {
+      if (
+        pass === 0 && !isAdmin &&
+        claimsBookingRegistered(finalText) && !bookingCreatedThisTurn
+      ) {
         // NO enviamos la confirmación falsa. Registramos lo dicho + corrección
         // y dejamos que la pasada 1 (con tool forzada) cree la cita de verdad.
         messages.push({ role: "assistant", content: finalText })
         messages.push({
           role: "user",
-          content:
-            "[SISTEMA] ⚠️ NO has creado ninguna cita: en tu último turno no " +
+          content: "[SISTEMA] ⚠️ NO has creado ninguna cita: en tu último turno no " +
             "llamaste ninguna herramienta de reserva, así que NADA quedó en la " +
             "agenda. Es OBLIGATORIO que llames check_availability_for_booking " +
             "AHORA con el servicio, la fecha y la hora ya acordados en esta " +
@@ -2747,8 +2976,7 @@ Deno.serve(async (req) => {
     // Última red de seguridad: si tras la corrección el modelo SIGUE afirmando
     // que registró la cita sin que exista, no le mentimos al cliente.
     if (!isAdmin && claimsBookingRegistered(finalText) && !bookingCreatedThisTurn) {
-      finalText =
-        "Estoy validando la disponibilidad de ese horario con recepción; en " +
+      finalText = "Estoy validando la disponibilidad de ese horario con recepción; en " +
         "cuanto quede confirmado te aviso por aquí 🌿 ¿Quieres que te proponga " +
         "horarios alternativos por si acaso?"
     }
@@ -2767,8 +2995,7 @@ Deno.serve(async (req) => {
     const elapsed = Date.now() - startedAt
     // input_tokens NO incluye los tokens cacheados; se cobran aparte:
     // cache write ≈ 1.25x input, cache read ≈ 0.1x input.
-    const costUsd =
-      (totalIn / 1_000_000) * settings.cost_per_million_input_usd +
+    const costUsd = (totalIn / 1_000_000) * settings.cost_per_million_input_usd +
       (totalCacheCreate / 1_000_000) * settings.cost_per_million_input_usd * 1.25 +
       (totalCacheRead / 1_000_000) * settings.cost_per_million_input_usd * 0.1 +
       (totalOut / 1_000_000) * settings.cost_per_million_output_usd
@@ -2776,10 +3003,13 @@ Deno.serve(async (req) => {
     // Insertar respuesta del assistant + observabilidad fechas
     const tjNowIso = new Date().toLocaleString("en-US", { timeZone: "America/Tijuana" })
     await supabase.from("ai_messages").insert({
-      conversation_id: convId, role: "assistant",
+      conversation_id: convId,
+      role: "assistant",
       content: finalText || "(sin respuesta)",
-      tokens_in: totalIn, tokens_out: totalOut,
-      latency_ms: elapsed, llm_model: (settings.active_model || settings.llm_model),
+      tokens_in: totalIn,
+      tokens_out: totalOut,
+      latency_ms: elapsed,
+      llm_model: settings.active_model || settings.llm_model,
       stop_reason: stopReason,
       is_admin_query: isAdmin,
       tool_output: {
@@ -2807,10 +3037,15 @@ Deno.serve(async (req) => {
     }
 
     return jsonResponse({
-      ok: true, conversation_id: convId,
-      reply: finalText, tokens_in: totalIn, tokens_out: totalOut,
-      cache_read_tokens: totalCacheRead, cache_creation_tokens: totalCacheCreate,
-      cost_usd: Number(costUsd.toFixed(6)), elapsed_ms: elapsed,
+      ok: true,
+      conversation_id: convId,
+      reply: finalText,
+      tokens_in: totalIn,
+      tokens_out: totalOut,
+      cache_read_tokens: totalCacheRead,
+      cache_creation_tokens: totalCacheCreate,
+      cost_usd: Number(costUsd.toFixed(6)),
+      elapsed_ms: elapsed,
       stop_reason: stopReason,
     })
   } catch (e) {
@@ -2828,7 +3063,11 @@ Deno.serve(async (req) => {
         console.warn("fallback client message failed:", (sendErr as Error).message)
       }
       try {
-        await notifyHumanBackup(phoneForError, messageForError || "(sin texto)", "ai_router_hard_error")
+        await notifyHumanBackup(
+          phoneForError,
+          messageForError || "(sin texto)",
+          "ai_router_hard_error",
+        )
       } catch { /* swallow */ }
     }
     return jsonResponse({ error: (e as Error).message }, 500)

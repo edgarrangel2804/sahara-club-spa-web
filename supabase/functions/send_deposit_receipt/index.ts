@@ -15,7 +15,7 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
-import { PDFDocument, StandardFonts, rgb } from "https://esm.sh/pdf-lib@1.17.1?target=deno"
+import { PDFDocument, rgb, StandardFonts } from "https://esm.sh/pdf-lib@1.17.1?target=deno"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -29,7 +29,7 @@ function json(body: unknown, status = 200) {
   })
 }
 
-function createAdminClient() {
+function createAdminClient(): any {
   return createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
@@ -39,7 +39,7 @@ function createAdminClient() {
 // Trazabilidad (auditoría): registra en whatsapp_logs cada mensaje saliente.
 // Best-effort: nunca lanza, no debe romper el flujo si el log falla.
 async function logOutbound(
-  sb: ReturnType<typeof createAdminClient>,
+  sb: any,
   opts: {
     phone: string
     body: string
@@ -88,8 +88,18 @@ function fmtDateLong(dateStr: string): string {
   try {
     const [y, m, d] = dateStr.split("-").map((n) => parseInt(n, 10))
     const meses = [
-      "enero", "febrero", "marzo", "abril", "mayo", "junio",
-      "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+      "enero",
+      "febrero",
+      "marzo",
+      "abril",
+      "mayo",
+      "junio",
+      "julio",
+      "agosto",
+      "septiembre",
+      "octubre",
+      "noviembre",
+      "diciembre",
     ]
     return `${d} de ${meses[(m - 1) % 12]} de ${y}`
   } catch {
@@ -138,8 +148,13 @@ async function buildReceiptPdf(opts: {
   page.drawRectangle({ x: 0, y: 0, width, height, color: cream })
   // Marco dorado sutil
   page.drawRectangle({
-    x: 18, y: 18, width: width - 36, height: height - 36,
-    borderColor: gold, borderWidth: 1, color: undefined,
+    x: 18,
+    y: 18,
+    width: width - 36,
+    height: height - 36,
+    borderColor: gold,
+    borderWidth: 1,
+    color: undefined,
   })
 
   const cx = width / 2
@@ -149,7 +164,13 @@ async function buildReceiptPdf(opts: {
   // Encabezado
   let y = height - 70
   const brand = "SAHARA CLUB SPA"
-  page.drawText(brand, { x: center(brand, serifBold, 22), y, font: serifBold, size: 22, color: gold })
+  page.drawText(brand, {
+    x: center(brand, serifBold, 22),
+    y,
+    font: serifBold,
+    size: 22,
+    color: gold,
+  })
   y -= 22
   const sub = "Comprobante de anticipo"
   page.drawText(sub, { x: center(sub, serif, 12), y, font: serif, size: 12, color: dark })
@@ -157,8 +178,10 @@ async function buildReceiptPdf(opts: {
   // Línea dorada
   y -= 22
   page.drawLine({
-    start: { x: 40, y }, end: { x: width - 40, y },
-    thickness: 1, color: gold,
+    start: { x: 40, y },
+    end: { x: width - 40, y },
+    thickness: 1,
+    color: gold,
   })
 
   // Sello "PAGADO"
@@ -167,21 +190,32 @@ async function buildReceiptPdf(opts: {
   const badgeSize = 13
   const badgeW = sansBold.widthOfTextAtSize(badge, badgeSize) + 24
   page.drawRectangle({
-    x: cx - badgeW / 2, y: y - 6, width: badgeW, height: 24,
+    x: cx - badgeW / 2,
+    y: y - 6,
+    width: badgeW,
+    height: 24,
     color: gold,
   })
   page.drawText(badge, {
-    x: cx - sansBold.widthOfTextAtSize(badge, badgeSize) / 2, y,
-    font: sansBold, size: badgeSize, color: cream,
+    x: cx - sansBold.widthOfTextAtSize(badge, badgeSize) / 2,
+    y,
+    font: sansBold,
+    size: badgeSize,
+    color: cream,
   })
 
   // Campos (etiqueta + valor)
   y -= 44
   const rows: Array<[string, string]> = [
     ["Folio", opts.folio],
-    ["Fecha de emisión", fmtDateLong(
-      `${opts.emittedAt.getFullYear()}-${String(opts.emittedAt.getMonth() + 1).padStart(2, "0")}-${String(opts.emittedAt.getDate()).padStart(2, "0")}`,
-    )],
+    [
+      "Fecha de emisión",
+      fmtDateLong(
+        `${opts.emittedAt.getFullYear()}-${
+          String(opts.emittedAt.getMonth() + 1).padStart(2, "0")
+        }-${String(opts.emittedAt.getDate()).padStart(2, "0")}`,
+      ),
+    ],
     ["Cliente", opts.customerName],
     ["Servicio", opts.serviceName],
     ["Fecha de la cita", fmtDateLong(opts.bookingDate)],
@@ -193,16 +227,25 @@ async function buildReceiptPdf(opts: {
   const valueX = width - 44
   for (const [label, value] of rows) {
     page.drawText(label.toUpperCase(), {
-      x: labelX, y, font: sansBold, size: 8, color: grayText,
+      x: labelX,
+      y,
+      font: sansBold,
+      size: 8,
+      color: grayText,
     })
     page.drawText(value || "—", {
-      x: valueX - serif.widthOfTextAtSize(value || "—", 12), y: y - 1,
-      font: serif, size: 12, color: dark,
+      x: valueX - serif.widthOfTextAtSize(value || "—", 12),
+      y: y - 1,
+      font: serif,
+      size: 12,
+      color: dark,
     })
     y -= 14
     page.drawLine({
-      start: { x: labelX, y: y + 4 }, end: { x: valueX, y: y + 4 },
-      thickness: 0.4, color: rgb(0.85, 0.82, 0.77),
+      start: { x: labelX, y: y + 4 },
+      end: { x: valueX, y: y + 4 },
+      thickness: 0.4,
+      color: rgb(0.85, 0.82, 0.77),
     })
     y -= 14
   }
@@ -210,14 +253,22 @@ async function buildReceiptPdf(opts: {
   // Monto destacado
   y -= 10
   page.drawRectangle({
-    x: 40, y: y - 30, width: width - 80, height: 46,
+    x: 40,
+    y: y - 30,
+    width: width - 80,
+    height: 46,
     color: rgb(0.93, 0.90, 0.85),
   })
   page.drawText("ANTICIPO PAGADO", { x: 52, y: y - 2, font: sansBold, size: 9, color: grayText })
-  const amountStr = `$${opts.amount.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${opts.currency.toUpperCase()}`
+  const amountStr = `$${
+    opts.amount.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  } ${opts.currency.toUpperCase()}`
   page.drawText(amountStr, {
-    x: valueX - serifBold.widthOfTextAtSize(amountStr, 20), y: y - 14,
-    font: serifBold, size: 20, color: gold,
+    x: valueX - serifBold.widthOfTextAtSize(amountStr, 20),
+    y: y - 14,
+    font: serifBold,
+    size: 20,
+    color: gold,
   })
 
   // Nota
@@ -235,13 +286,27 @@ async function buildReceiptPdf(opts: {
   // Pie de página
   const footY = 40
   page.drawLine({
-    start: { x: 40, y: footY + 22 }, end: { x: width - 40, y: footY + 22 },
-    thickness: 0.5, color: gold,
+    start: { x: 40, y: footY + 22 },
+    end: { x: width - 40, y: footY + 22 },
+    thickness: 0.5,
+    color: gold,
   })
   const foot1 = "Calle Segunda 2226, 22880 Ensenada, B.C."
   const foot2 = "Tel. 646 151 9597  ·  saharaclubspa.com"
-  page.drawText(foot1, { x: center(foot1, sans, 8), y: footY + 8, font: sans, size: 8, color: grayText })
-  page.drawText(foot2, { x: center(foot2, sans, 8), y: footY - 4, font: sans, size: 8, color: grayText })
+  page.drawText(foot1, {
+    x: center(foot1, sans, 8),
+    y: footY + 8,
+    font: sans,
+    size: 8,
+    color: grayText,
+  })
+  page.drawText(foot2, {
+    x: center(foot2, sans, 8),
+    y: footY - 4,
+    font: sans,
+    size: 8,
+    color: grayText,
+  })
 
   return await doc.save()
 }
@@ -252,7 +317,7 @@ async function sendWhatsAppDocument(opts: {
   filename: string
   caption: string
 }): Promise<boolean> {
-  let token = Deno.env.get("META_ACCESS_TOKEN") ?? ""
+  const token = Deno.env.get("META_ACCESS_TOKEN") ?? ""
   let phoneNumberId = Deno.env.get("META_PHONE_NUMBER_ID") ?? ""
 
   // Fallback a la configuración en DB si no están en env.
@@ -302,8 +367,10 @@ serve(async (req) => {
     // 1. Cargar booking + cliente
     const { data: booking, error: bErr } = await supabase
       .from("bookings")
-      .select("id, status, booking_date, booking_time, service_name, service_id, " +
-        "deposit_amount, stripe_payment_intent_id, client_record_id")
+      .select(
+        "id, status, booking_date, booking_time, service_name, service_id, " +
+          "deposit_amount, stripe_payment_intent_id, client_record_id",
+      )
       .eq("id", bookingId)
       .maybeSingle()
     if (bErr) throw bErr
@@ -332,7 +399,8 @@ serve(async (req) => {
       .eq("id", 1)
       .maybeSingle()
     const currency = String(
-      (ai as { appointment_deposit_currency?: string } | null)?.appointment_deposit_currency ?? "MXN",
+      (ai as { appointment_deposit_currency?: string } | null)?.appointment_deposit_currency ??
+        "MXN",
     )
 
     const folio = folioFromBooking(bookingId)
@@ -372,7 +440,9 @@ serve(async (req) => {
       const caption = [
         "🌿 *Sahara Club Spa*",
         `Comprobante de tu anticipo · Folio ${folio}`,
-        `${serviceName || "Servicio"} · ${fmtDateLong(String(booking.booking_date ?? ""))} ${fmtTime(String(booking.booking_time ?? ""))}`,
+        `${serviceName || "Servicio"} · ${fmtDateLong(String(booking.booking_date ?? ""))} ${
+          fmtTime(String(booking.booking_time ?? ""))
+        }`,
         "",
         "¡Gracias! Te esperamos. Tu cita está pendiente de confirmación por recepción.",
       ].join("\n")

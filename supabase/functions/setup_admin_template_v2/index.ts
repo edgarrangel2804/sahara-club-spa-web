@@ -6,4 +6,4 @@ Deno.serve(() =>
     status: 410,
     headers: { "Content-Type": "application/json" },
   })
-);
+)

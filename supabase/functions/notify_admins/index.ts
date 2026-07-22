@@ -14,14 +14,17 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
-import { loadBusinessSettings, DEFAULT_BRANCH_ID } from "../_shared/whatsapp_business.ts"
+import { DEFAULT_BRANCH_ID, loadBusinessSettings } from "../_shared/whatsapp_business.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 }
 const json = (b: unknown, s = 200) =>
-  new Response(JSON.stringify(b), { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: s })
+  new Response(JSON.stringify(b), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    status: s,
+  })
 
 function createAdminClient() {
   return createClient(
@@ -41,16 +44,32 @@ function normalizePhone(raw: string): string {
 function fmtDateLong(dateStr: string): string {
   try {
     const [y, m, d] = dateStr.split("-").map((n) => parseInt(n, 10))
-    const meses = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"]
+    const meses = [
+      "enero",
+      "febrero",
+      "marzo",
+      "abril",
+      "mayo",
+      "junio",
+      "julio",
+      "agosto",
+      "septiembre",
+      "octubre",
+      "noviembre",
+      "diciembre",
+    ]
     return `${d} de ${meses[(m - 1) % 12]} de ${y}`
-  } catch { return dateStr }
+  } catch {
+    return dateStr
+  }
 }
 function fmtTime(t: string): string {
   if (!t) return ""
   const [h, min] = t.split(":")
   let hh = parseInt(h, 10)
   const ap = hh >= 12 ? "PM" : "AM"
-  hh = hh % 12; if (hh === 0) hh = 12
+  hh = hh % 12
+  if (hh === 0) hh = 12
   return `${hh}:${min} ${ap}`
 }
 
@@ -67,7 +86,9 @@ serve(async (req) => {
     // 1. Datos de la cita
     const { data: b } = await sb
       .from("bookings")
-      .select("booking_date, booking_time, service_name, service_id, client_record_id, therapist_id, payment_status")
+      .select(
+        "booking_date, booking_time, service_name, service_id, client_record_id, therapist_id, payment_status",
+      )
       .eq("id", bookingId)
       .maybeSingle()
     if (!b) return json({ ok: false, error: "booking_not_found" }, 404)
@@ -79,14 +100,20 @@ serve(async (req) => {
 
     let servicio = String(bk.service_name ?? "")
     if (!servicio && bk.service_id) {
-      const { data: sv } = await sb.from("services").select("name").eq("id", bk.service_id as string).maybeSingle()
+      const { data: sv } = await sb.from("services").select("name").eq(
+        "id",
+        bk.service_id as string,
+      ).maybeSingle()
       servicio = (sv as { name?: string } | null)?.name ?? "Servicio"
     }
     if (!servicio) servicio = "Servicio"
 
     let terapeuta = ""
     if (bk.therapist_id) {
-      const { data: st } = await sb.from("staff").select("full_name").eq("id", bk.therapist_id as string).maybeSingle()
+      const { data: st } = await sb.from("staff").select("full_name").eq(
+        "id",
+        bk.therapist_id as string,
+      ).maybeSingle()
       terapeuta = (st as { full_name?: string } | null)?.full_name ?? ""
     }
 
@@ -96,12 +123,15 @@ serve(async (req) => {
 
     // 2. Números de administradores + recepción
     const { data: s } = await sb.from("ai_settings")
-      .select("human_backup_enabled, human_backup_numbers, ai_admin_numbers").eq("id", 1).maybeSingle()
+      .select("human_backup_enabled, human_backup_numbers, ai_admin_numbers").eq("id", 1)
+      .maybeSingle()
     if ((s as { human_backup_enabled?: boolean } | null)?.human_backup_enabled !== true) {
       return json({ ok: true, sent: 0, reason: "admin_alerts_disabled" })
     }
-    const backups = ((s as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
-    const admins = ((s as { ai_admin_numbers?: string[] } | null)?.ai_admin_numbers ?? []) as string[]
+    const backups =
+      ((s as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
+    const admins =
+      ((s as { ai_admin_numbers?: string[] } | null)?.ai_admin_numbers ?? []) as string[]
 
     // 3. Credenciales Meta — mismo método que las funciones que SÍ envían.
     //    La tabla guarda el token ENCRIPTADO en access_token_encrypted y se
@@ -110,7 +140,9 @@ serve(async (req) => {
     const biz = await loadBusinessSettings(sb, DEFAULT_BRANCH_ID)
     const accessToken = Deno.env.get("META_ACCESS_TOKEN") || biz?.accessToken || ""
     const phoneNumberId = Deno.env.get("META_PHONE_NUMBER_ID") || biz?.row.phone_number_id || ""
-    if (!accessToken || !phoneNumberId) return json({ ok: false, error: "missing_meta_config" }, 500)
+    if (!accessToken || !phoneNumberId) {
+      return json({ ok: false, error: "missing_meta_config" }, 500)
+    }
 
     // 4. Texto según el evento (cambio YA ejecutado en la agenda)
     const datos = [
@@ -122,9 +154,7 @@ serve(async (req) => {
     ].filter(Boolean)
     let header = ""
     if (event === "confirmed") {
-      header = isPaid
-        ? "✅ *Cita CONFIRMADA (anticipo pagado)*"
-        : "✅ *Cita CONFIRMADA*"
+      header = isPaid ? "✅ *Cita CONFIRMADA (anticipo pagado)*" : "✅ *Cita CONFIRMADA*"
     } else if (event === "cancelled") {
       header = "🚫 *Cita CANCELADA*"
     } else if (event === "rescheduled") {
@@ -147,16 +177,28 @@ serve(async (req) => {
         const res = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
           method: "POST",
           headers: { "content-type": "application/json", Authorization: `Bearer ${accessToken}` },
-          body: JSON.stringify({ messaging_product: "whatsapp", to, type: "text", text: { body: text } }),
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            to,
+            type: "text",
+            text: { body: text },
+          }),
         })
         ok = res.ok
-      } catch (_) { ok = false }
+      } catch (_) {
+        ok = false
+      }
       try {
         await sb.from("whatsapp_logs").insert({
-          phone: to, message_rendered: text,
-          event_type: `admin_${event}`, type: `admin_${event}`,
-          status: ok ? "sent" : "failed", reservation_id: bookingId,
-          window_type: "free_text", provider: "meta", sent_at: new Date().toISOString(),
+          phone: to,
+          message_rendered: text,
+          event_type: `admin_${event}`,
+          type: `admin_${event}`,
+          status: ok ? "sent" : "failed",
+          reservation_id: bookingId,
+          window_type: "free_text",
+          provider: "meta",
+          sent_at: new Date().toISOString(),
         })
       } catch (_) { /* best-effort */ }
       if (ok) sent += 1

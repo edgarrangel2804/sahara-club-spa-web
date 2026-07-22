@@ -9,7 +9,10 @@ export const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 }
 
-export type AdminClient = ReturnType<typeof createClient>
+// The recovered runtime does not ship generated Supabase DB types. Keep this
+// client loose so Deno can type-check the Edge Functions without inventing a
+// partial schema that would drift from production.
+export type AdminClient = any
 
 export type BusinessWhatsAppRow = {
   id: string
@@ -37,7 +40,7 @@ export type BusinessWhatsAppRow = {
   webhook_last_error: string | null
 }
 
-export function createAdminClient() {
+export function createAdminClient(): AdminClient {
   return createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
@@ -389,7 +392,7 @@ export async function sendMetaTextMessage(
   phone: string,
   message: string,
 ) {
-  return callMetaApi<Record<string, unknown>>(
+  return await callMetaApi<Record<string, unknown>>(
     `${phoneNumberId}/messages`,
     accessToken,
     {

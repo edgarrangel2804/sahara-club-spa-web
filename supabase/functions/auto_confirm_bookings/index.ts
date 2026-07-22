@@ -9,13 +9,9 @@
 // cuando la hora local Tijuana es exactamente las 20. Idempotente.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
-import {
-  corsHeaders,
-  loadBusinessSettings,
-  normalizePhone,
-} from "../_shared/whatsapp_business.ts"
+import { corsHeaders, loadBusinessSettings, normalizePhone } from "../_shared/whatsapp_business.ts"
 
-function admin() {
+function admin(): any {
   return createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
@@ -58,7 +54,9 @@ Deno.serve(async (req: Request) => {
   const tomorrow = ymd(new Date(tjNow.getTime() + 86400000))
   const { data: rows, error } = await sb
     .from("bookings")
-    .select("id, booking_date, booking_time, status, service:services(name), client:clients(full_name, phone)")
+    .select(
+      "id, booking_date, booking_time, status, service:services(name), client:clients(full_name, phone)",
+    )
     .eq("status", "payment_received")
     .eq("booking_date", tomorrow)
   if (error) return jsonResponse({ ok: false, error: error.message }, 200)
@@ -72,7 +70,12 @@ Deno.serve(async (req: Request) => {
   }>
 
   if (bookings.length === 0) {
-    return jsonResponse({ ok: true, date: tomorrow, confirmed: 0, note: "sin citas pagadas pendientes" })
+    return jsonResponse({
+      ok: true,
+      date: tomorrow,
+      confirmed: 0,
+      note: "sin citas pagadas pendientes",
+    })
   }
 
   // Destinatarios del aviso de emergencia: respaldo + admins (dedup por últimos 10).
@@ -81,9 +84,12 @@ Deno.serve(async (req: Request) => {
     .select("human_backup_numbers, human_backup_enabled, ai_admin_numbers")
     .eq("id", 1)
     .maybeSingle()
-  const backupEnabled = (settings as { human_backup_enabled?: boolean } | null)?.human_backup_enabled === true
-  const backups = ((settings as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
-  const admins = ((settings as { ai_admin_numbers?: string[] } | null)?.ai_admin_numbers ?? []) as string[]
+  const backupEnabled =
+    (settings as { human_backup_enabled?: boolean } | null)?.human_backup_enabled === true
+  const backups = ((settings as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ??
+    []) as string[]
+  const admins =
+    ((settings as { ai_admin_numbers?: string[] } | null)?.ai_admin_numbers ?? []) as string[]
   const seen = new Set<string>()
   const emergencyTargets: string[] = []
   for (const list of [backups, admins]) {
