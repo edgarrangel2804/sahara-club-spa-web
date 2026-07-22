@@ -18,16 +18,39 @@ bool isValidBookingId(String value) {
 
 bool isSafeReceiptUrl(String? value) {
   final uri = Uri.tryParse((value ?? '').trim());
-  if (uri == null || !uri.hasAbsolutePath) return false;
-  if (uri.scheme != 'https') return false;
+  if (uri == null || !uri.hasAbsolutePath || value!.trim().length > 4096) {
+    return false;
+  }
+  final host = uri.host.toLowerCase();
+  final local = host == 'localhost' || host == '127.0.0.1';
+  if (local) {
+    if (uri.scheme != 'http' && uri.scheme != 'https') return false;
+  } else if (uri.scheme != 'https') {
+    return false;
+  }
   if (uri.host.isEmpty) return false;
   if (uri.userInfo.isNotEmpty) return false;
+  if (!isAllowedReceiptHost(host)) return false;
+  final voucherToken = uri.queryParameters['voucher_token'];
+  if (voucherToken != null && !isValidVoucherTokenString(voucherToken)) {
+    return false;
+  }
   return true;
 }
 
-bool isValidStripeSessionId(String? value) {
+bool isAllowedReceiptHost(String host) {
+  final normalized = host.toLowerCase();
+  return normalized == 'saharaclubspa.com' ||
+      normalized == 'www.saharaclubspa.com' ||
+      normalized == 'fkbyxhwdcsgrrixalzwf.supabase.co' ||
+      normalized.endsWith('.supabase.co') ||
+      normalized == 'localhost' ||
+      normalized == '127.0.0.1';
+}
+
+bool isValidVoucherTokenString(String? value) {
   return RegExp(
-    r'^cs_(test|live)_[A-Za-z0-9_]{8,220}$',
+    r'^[A-Za-z0-9_-]{40,1800}\.[A-Za-z0-9_-]{32,220}$',
   ).hasMatch((value ?? '').trim());
 }
 
@@ -38,29 +61,33 @@ Map<String, String> sendDepositReceiptPayload(String bookingId) {
   return {'booking_id': bookingId};
 }
 
-Uri? buildDepositVoucherUri({
-  required Uri functionsBaseUri,
-  String? token,
-  String? sessionId,
+String redactReceiptToken(String? value) {
+  final raw = (value ?? '').trim();
+  final uri = Uri.tryParse(raw);
+  if (uri == null) return '[invalid-url]';
+  final params = Map<String, String>.from(uri.queryParameters);
+  if (params.containsKey('voucher_token')) {
+    params['voucher_token'] = '[redacted]';
+  }
+  if (params.containsKey('token')) {
+    params['token'] = '[redacted]';
+  }
+  return uri
+      .replace(queryParameters: params.isEmpty ? null : params)
+      .toString();
+}
+
+Uri? buildAuthorizedReceiptPageUri({
+  required Uri pageBaseUri,
+  required String voucherToken,
 }) {
-  final cleanToken = (token ?? '').trim();
-  final cleanSessionId = (sessionId ?? '').trim();
-  if (cleanToken.isNotEmpty) {
-    if (!RegExp(r'^[A-Za-z0-9_.-]{24,320}$').hasMatch(cleanToken)) {
-      return null;
-    }
-    return functionsBaseUri.replace(
-      path: '${functionsBaseUri.path}/deposit_voucher',
-      queryParameters: {'token': cleanToken},
-    );
-  }
-  if (!isValidStripeSessionId(cleanSessionId)) {
-    return null;
-  }
-  return functionsBaseUri.replace(
-    path: '${functionsBaseUri.path}/deposit_voucher',
-    queryParameters: {'session_id': cleanSessionId},
+  final token = voucherToken.trim();
+  if (!isValidVoucherTokenString(token)) return null;
+  final uri = pageBaseUri.replace(
+    queryParameters: {'voucher_token': token},
+    fragment: null,
   );
+  return isSafeReceiptUrl(uri.toString()) ? uri : null;
 }
 
 String sanitizeReceiptError(Object? error) {
@@ -120,6 +147,43 @@ class DepositReceiptResponse {
       );
     }
     return const DepositReceiptResponse(ok: false, error: 'invalid_response');
+  }
+}
+
+class AuthorizedReceiptLinkResponse {
+  const AuthorizedReceiptLinkResponse({required this.ok, this.url, this.error});
+
+  final bool ok;
+  final String? url;
+  final String? error;
+
+  Uri? get safeUri {
+    final value = url;
+    if (!isSafeReceiptUrl(value)) return null;
+    return Uri.tryParse(value!);
+  }
+
+  factory AuthorizedReceiptLinkResponse.fromMap(Map<String, dynamic> map) {
+    return AuthorizedReceiptLinkResponse(
+      ok: map['ok'] == true,
+      url: map['url']?.toString() ?? map['receipt_url']?.toString(),
+      error: map['error']?.toString(),
+    );
+  }
+
+  factory AuthorizedReceiptLinkResponse.fromFunctionData(dynamic data) {
+    if (data is Map<String, dynamic>) {
+      return AuthorizedReceiptLinkResponse.fromMap(data);
+    }
+    if (data is Map) {
+      return AuthorizedReceiptLinkResponse.fromMap(
+        data.map((key, value) => MapEntry(key.toString(), value)),
+      );
+    }
+    return const AuthorizedReceiptLinkResponse(
+      ok: false,
+      error: 'invalid_response',
+    );
   }
 }
 
