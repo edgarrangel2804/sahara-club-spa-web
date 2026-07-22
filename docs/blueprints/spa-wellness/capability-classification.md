@@ -16,14 +16,14 @@ Status values:
 | Agenda | PRODUCTIVO | `bookings` drives appointments, state, deposits, source channels, and staff assignment. |
 | Órdenes | PRODUCTIVO | `orders` and `order_items` support ecommerce and Gift Card purchases. |
 | Pagos | PRODUCTIVO | `payments` is unified across ecommerce, bookings, memberships, and sales. |
-| Notificaciones | PARCIAL | `reception_alerts`, push tables, and WhatsApp logs exist, but history is outside migrations. |
-| WhatsApp | PRODUCTIVO | Meta settings, logs, templates, queue, router functions, and admin notifications exist with drift. |
+| Notificaciones | PARCIAL | `reception_alerts`, WhatsApp admin alerts, unpaid deposit alerts, and receipt dispatch exist, but idempotency and caller auth need hardening. |
+| WhatsApp | PRODUCTIVO | Meta settings, logs, templates, queue, router functions, admin notifications, and receipt delivery exist with drift. |
 | Realtime | PRODUCTIVO | `reception_alerts` is published for live reception UI updates. |
 | Roles | PARCIAL | `profiles.role`, helper functions, and role permissions exist, but naming and policies are inconsistent. |
 | Configuración | PARCIAL | Business, Stripe, WhatsApp, and AI settings exist, but config and code are mixed. |
 | Auditoría | PARCIAL | Some audit tables/functions exist; coverage is uneven. |
 | Workflows | FOUNDATION | Real operational flows exist, but orchestration is coupled to Sahara schema and Edge Functions. |
-| IA | PARCIAL | AI settings, conversations, routing, admin reporting, and support windows exist; certification is incomplete. |
+| IA | PARCIAL | AI settings, conversations, WhatsApp router, web concierge, admin reporting, and support windows exist; certification is incomplete. |
 
 ## Spa & Wellness
 
@@ -35,7 +35,7 @@ Status values:
 | Paquetes | PRODUCTIVO | Package schema and package consumption flows exist, but are not part of this baseline. |
 | Membresías | PRODUCTIVO | Membership plans and client memberships exist with payments and entitlements. |
 | Gift Cards | PRODUCTIVO | `gift_cards` exists with balances, client/service links, and ecommerce lineage. |
-| Anticipos | PRODUCTIVO | Booking deposit fields, Stripe fields, payment requirements, and AI deposit settings exist. |
+| Anticipos | PRODUCTIVO | Booking deposit fields, Stripe checkout, payment requirements, PDF receipts, voucher lookup, and AI deposit settings exist. |
 | Historial de spa | PARCIAL | Appointment status history and client stats exist, but the record is spread across multiple SQL files. |
 | Evaluaciones | NO COMPROBABLE | No certified schema for intake/evaluation records was identified in the baseline path. |
 | Consentimientos | NO EXISTE | No verified consent workflow was found in the regularized baseline. |

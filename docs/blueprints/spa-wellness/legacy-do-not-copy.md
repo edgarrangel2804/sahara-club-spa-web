@@ -18,6 +18,15 @@ This file records productive Sahara behavior that may be real and useful, but sh
 - Do not keep `verify_jwt = false` on Edge Functions without a written reason, compensating auth, and abuse tests.
 - Do not grant broad anon/auth access just because Supabase dumps include default grants.
 
+## Edge Functions And Public Runtime
+
+- Do not publish service-role Edge Functions just because the recovered source comment says `verify_jwt=false`.
+- Do not copy `auto_confirm_bookings` with a public `?force=1` path; it writes bookings and needs a cron-only trust boundary.
+- Do not expose `whatsapp-ai-router` without caller authentication, rate limiting, and abuse controls.
+- Do not reuse `deposit_voucher` as a public lookup by `booking_id` or `session_id` without a scoped signed token.
+- Do not embed a service-role web concierge without rate limits, prompt injection monitoring, and clear observability.
+- Do not keep one-shot setup functions deployed after their setup task is complete; remove or keep them neutralized.
+
 ## Secrets And Configuration
 
 - Do not place an anon key or other live project identifiers in standalone HTML files.
