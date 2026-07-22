@@ -7,6 +7,10 @@ import {
   markOrderWithStatus,
   stripeApiRequest,
 } from "../_shared/stripe_checkout.ts"
+import {
+  createGiftCardDownloadToken,
+  giftCardDownloadSigningSecret,
+} from "../_shared/gift_card_fulfillment.ts"
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -60,8 +64,7 @@ serve(async (req) => {
     )
 
     const paymentStatus = String(session.payment_status ?? "")
-    const paymentIntent =
-      (session.payment_intent as Record<string, unknown> | null | undefined) ??
+    const paymentIntent = (session.payment_intent as Record<string, unknown> | null | undefined) ??
       {}
     const paymentIntentId = String(paymentIntent.id ?? session.payment_intent ?? "")
 
@@ -73,10 +76,12 @@ serve(async (req) => {
         paymentPayload: session,
       })
       await fulfillOrder(supabase, resolvedOrderId)
+      const giftCards = await buildGiftCardDownloadTokens(supabase, resolvedOrderId)
       return jsonResponse({
         order_id: resolvedOrderId,
         status: "paid",
         payment_status: "paid",
+        gift_cards: giftCards,
       })
     }
 
@@ -93,6 +98,41 @@ serve(async (req) => {
     return jsonResponse({ error: "No se pudo confirmar el pago con Stripe." }, 400)
   }
 })
+
+async function buildGiftCardDownloadTokens(
+  supabase: ReturnType<typeof createAdminClient>,
+  orderId: string,
+) {
+  const { data, error } = await supabase
+    .from("gift_cards")
+    .select(
+      "id, order_item_id, recipient_name, service_name, package_name, valid_from, expires_on, " +
+        "digital_asset_status, delivery_status, status",
+    )
+    .eq("order_id", orderId)
+  if (error) throw error
+  const secret = giftCardDownloadSigningSecret()
+  const cards = []
+  for (const card of data ?? []) {
+    const token = await createGiftCardDownloadToken({
+      giftCardId: String(card.id),
+      orderItemId: card.order_item_id ? String(card.order_item_id) : null,
+      secret,
+    })
+    cards.push({
+      gift_card_id: String(card.id),
+      download_token: token.token,
+      recipient_name: String(card.recipient_name ?? ""),
+      service_name: String(card.service_name ?? card.package_name ?? ""),
+      valid_from: String(card.valid_from ?? ""),
+      expires_on: String(card.expires_on ?? ""),
+      digital_asset_status: String(card.digital_asset_status ?? "pending"),
+      delivery_status: String(card.delivery_status ?? "pending"),
+      status: String(card.status ?? "active"),
+    })
+  }
+  return cards
+}
 
 function serve(handler: (req: Request) => Promise<Response>) {
   return Deno.serve(handler)

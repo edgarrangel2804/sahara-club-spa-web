@@ -4,6 +4,7 @@ import {
   DEFAULT_BRANCH_ID,
   loadActiveStripeSettings,
 } from "./stripe_settings.ts"
+import { fulfillGiftCardItem } from "./gift_card_fulfillment.ts"
 
 export const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -326,7 +327,10 @@ export async function fulfillOrder(
 ) {
   const { data: order, error: orderError } = await supabase
     .from("orders")
-    .select("id, customer_id, metadata")
+    .select(
+      "id, customer_id, customer_name, customer_email, customer_phone, paid_at, created_at, " +
+        "total, currency, metadata, stripe_session_id, stripe_payment_intent_id",
+    )
     .eq("id", orderId)
     .single()
 
@@ -383,34 +387,12 @@ export async function fulfillOrder(
     }
 
     if (productType === "gift_card") {
-      // Gift card POR SERVICIO: entitula 1 sesión del servicio elegido.
-      // Mismo modelo que las que emite recepción (service_id + vigencia 12 meses).
-      const serviceId = metadata.service_id ? String(metadata.service_id) : null
-      const serviceName = String(metadata.service_name ?? "")
-      const now = new Date()
-      const expiresAt = new Date(now)
-      // Las gift cards de servicio vencen en 1 mes (vigencia típica del servicio).
-      expiresAt.setMonth(expiresAt.getMonth() + 1)
-      const { error } = await supabase
-        .from("gift_cards")
-        .upsert({
-          order_id: orderId,
-          order_item_id: item.id,
-          code: generateGiftCardCode(),
-          initial_balance: item.total_price,
-          current_balance: item.total_price,
-          currency: item.currency,
-          recipient_name: String(metadata.recipient_name ?? ""),
-          sender_name: String(metadata.sender_name ?? ""),
-          message: String(metadata.message ?? ""),
-          delivery_method: String(metadata.delivery_method ?? "digital"),
-          service_id: serviceId,
-          service_name: serviceName,
-          valid_from: now.toISOString(),
-          expires_at: expiresAt.toISOString(),
-          status: "active",
-        }, { onConflict: "order_item_id" })
-      if (error) throw error
+      await fulfillGiftCardItem(supabase, {
+        orderId,
+        order: order as Record<string, unknown>,
+        item: item as Record<string, unknown>,
+      })
+      continue
     }
 
     if (productType === "service") {

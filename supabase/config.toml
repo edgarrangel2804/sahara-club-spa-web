@@ -31,3 +31,11 @@ verify_jwt = false
 # (header x-setup-key / query ?k=). Se invoca server-to-server con la llave.
 [functions.create_meta_template]
 verify_jwt = false
+
+# Descarga publica autorizada por token firmado con proposito gift_card_download.
+[functions.gift_card_download]
+verify_jwt = false
+
+# Acciones internas de recepcion para Gift Cards; requiere JWT y rol operativo.
+[functions.gift_card_reception_actions]
+verify_jwt = true
