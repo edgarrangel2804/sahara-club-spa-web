@@ -427,8 +427,12 @@ async function logReceptionAlert(
 async function createGiftCardCheckout(opts: {
   serviceId: string
   recipientName: string
+  recipientPhone: string
   senderName: string
+  validFrom: string
   message?: string
+  sendCopyToBuyer?: boolean
+  termsAccepted?: boolean
   buyerName?: string | null
   buyerEmail?: string | null
   buyerPhone: string
@@ -455,6 +459,11 @@ async function createGiftCardCheckout(opts: {
     const price = Number(s.price ?? 0)
     if (!(price > 0)) return { ok: false, error: "service_no_price" }
     const serviceName = String(s.name ?? "Servicio")
+    if (!opts.recipientPhone.trim()) return { ok: false, error: "recipient_phone_required" }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(opts.validFrom.trim())) {
+      return { ok: false, error: "valid_from_required" }
+    }
+    if (opts.termsAccepted !== true) return { ok: false, error: "terms_required" }
 
     // Stripe exige customer_email; si no hay, placeholder derivado del teléfono.
     const phoneDigits = String(opts.buyerPhone ?? "").replace(/\D/g, "")
@@ -480,8 +489,14 @@ async function createGiftCardCheckout(opts: {
         service_id: opts.serviceId,
         service_name: serviceName,
         recipient_name: opts.recipientName,
+        recipient_phone: opts.recipientPhone,
         sender_name: opts.senderName,
+        dedication_message: opts.message ?? "",
         message: opts.message ?? "",
+        valid_from: opts.validFrom,
+        buyer_copy_requested: opts.sendCopyToBuyer === true,
+        purchase_channel: "whatsapp",
+        terms_accepted: opts.termsAccepted === true,
         delivery_method: "digital",
       },
     }
@@ -714,7 +729,7 @@ const TOOLS = [
   {
     name: "create_gift_card_checkout",
     description:
-      "Genera un LINK DE PAGO de Stripe para comprar una GIFT CARD de un servicio (regala 1 sesión de ese servicio). Úsala cuando el cliente quiera REGALAR o COMPRAR una gift card / tarjeta de regalo de un servicio del spa. ANTES de llamarla: 1) obtén el service_id con list_services y confirma con el cliente cuál servicio quiere regalar y su precio; 2) pregunta y confirma el nombre de quién recibe el regalo (recipient_name) y de parte de quién va (sender_name). Devuelve checkout_url: envíaselo al cliente para que pague. Al pagar, la gift card se genera automáticamente y recepción la verá. NO sirve para canjear gift cards, solo para comprarlas.",
+      "Genera un LINK DE PAGO de Stripe para comprar una GIFT CARD de un servicio (regala 1 sesión de ese servicio). Úsala cuando el cliente quiera REGALAR o COMPRAR una gift card / tarjeta de regalo de un servicio del spa. ANTES de llamarla: 1) obtén el service_id con list_services y confirma servicio/precio; 2) pregunta y confirma recipient_name, recipient_phone, sender_name, valid_from y aceptación de vigencia/cita previa; 3) opcionalmente captura dedicatoria, email y copia al comprador. Devuelve checkout_url. Al pagar, la tarjeta digital se genera y recepción la verá. NO sirve para canjear gift cards, solo para comprarlas.",
     input_schema: {
       type: "object",
       properties: {
@@ -723,14 +738,38 @@ const TOOLS = [
           description: "UUID del servicio a regalar (de list_services)",
         },
         recipient_name: { type: "string", description: "Nombre de quien recibe el regalo" },
+        recipient_phone: {
+          type: "string",
+          description: "WhatsApp de quien recibe el regalo, con lada",
+        },
         sender_name: { type: "string", description: "Nombre de quien regala (de parte de)" },
+        valid_from: {
+          type: "string",
+          description:
+            "Fecha local America/Tijuana en formato YYYY-MM-DD desde la que inicia la vigencia",
+        },
         message: { type: "string", description: "Mensaje opcional del regalo" },
+        send_copy_to_buyer: {
+          type: "boolean",
+          description: "true solo si el comprador pidio recibir copia",
+        },
+        terms_accepted: {
+          type: "boolean",
+          description: "true cuando el comprador acepta vigencia de 3 meses y cita previa",
+        },
         buyer_email: {
           type: "string",
           description: "Email del comprador para el recibo (opcional)",
         },
       },
-      required: ["service_id", "recipient_name", "sender_name"],
+      required: [
+        "service_id",
+        "recipient_name",
+        "recipient_phone",
+        "sender_name",
+        "valid_from",
+        "terms_accepted",
+      ],
     },
   },
 ]
@@ -1441,13 +1480,23 @@ async function execTool(
       if (!phone) return { error: "phone_missing_from_context" }
       const serviceId = String(input.service_id ?? "").trim()
       const recipientName = String(input.recipient_name ?? "").trim()
+      const recipientPhone = String(input.recipient_phone ?? "").trim()
       const senderName = String(input.sender_name ?? "").trim()
-      if (!serviceId || !recipientName || !senderName) return { error: "missing_params" }
+      const validFrom = String(input.valid_from ?? "").trim()
+      const termsAccepted = input.terms_accepted === true
+      if (!serviceId || !recipientName || !recipientPhone || !senderName || !validFrom) {
+        return { error: "missing_params" }
+      }
+      if (!termsAccepted) return { error: "terms_required" }
       return await createGiftCardCheckout({
         serviceId,
         recipientName,
+        recipientPhone,
         senderName,
+        validFrom,
         message: input.message ? String(input.message) : "",
+        sendCopyToBuyer: input.send_copy_to_buyer === true,
+        termsAccepted,
         buyerName: ctx.clientName ?? senderName,
         buyerEmail: input.buyer_email ? String(input.buyer_email) : null,
         buyerPhone: phone,
@@ -2313,17 +2362,21 @@ CANCELAR — cliente pide cancelar una cita:
 
 GIFT CARDS / TARJETAS DE REGALO (comprar para regalar):
   Las gift cards de Sahara son POR SERVICIO: regalas 1 sesión de un servicio
-  específico (no un monto en dinero). Valen 12 meses.
+  específico (no un monto en dinero). Valen 3 meses calendario desde la fecha
+  local America/Tijuana elegida por el comprador.
   Cuando el cliente quiera REGALAR o COMPRAR una gift card:
   1. Pregunta qué servicio quiere regalar y usa list_services para mostrar
      opciones reales con su precio. Confirma el servicio elegido.
-  2. Pregunta el nombre de quién recibe el regalo y de parte de quién va.
-     (Opcional: un mensaje para el regalo, y un email para el recibo.)
-  3. Llama create_gift_card_checkout con service_id + recipient_name +
-     sender_name (+ message/buyer_email si los dio).
+  2. Pregunta nombre y WhatsApp de quién recibe el regalo, de parte de quién va,
+     y desde qué fecha debe iniciar la vigencia (YYYY-MM-DD).
+     Opcional: dedicatoria, email para recibo y si quiere copia para el comprador.
+  3. Confirma que acepta vigencia de 3 meses y cita previa. Llama
+     create_gift_card_checkout con service_id + recipient_name + recipient_phone +
+     sender_name + valid_from + terms_accepted=true (+ message/buyer_email/
+     send_copy_to_buyer si los dio).
   4. Devuelve checkout_url: envíaselo así: "Aquí está tu link para pagar la
      gift card de [servicio] 🎁: [checkout_url]. Al confirmar el pago se genera
-     el código y recepción podrá aplicarla cuando [destinatario] agende."
+     la tarjeta digital y se enviará al WhatsApp indicado."
   • Si create_gift_card_checkout devuelve error (service_price_on_quote,
     service_no_price, etc.): "Ese servicio no se puede regalar en línea por su
     precio; recepción te ayuda a generarlo 🌿".

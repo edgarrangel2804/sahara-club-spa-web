@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -8,12 +9,10 @@ import '../../theme/sahara_theme.dart';
 import '../cart/cart_page.dart';
 import '../store/controllers/store_cart_controller.dart';
 import '../store/models/store_product.dart';
+import 'gift_card_form_helpers.dart';
 
 class GiftCardPage extends StatefulWidget {
-  const GiftCardPage({
-    super.key,
-    required this.product,
-  });
+  const GiftCardPage({super.key, required this.product});
 
   final StoreProduct product;
 
@@ -24,6 +23,8 @@ class GiftCardPage extends StatefulWidget {
 class _GiftCardPageState extends State<GiftCardPage> {
   final StoreCartController _cart = StoreCartController.instance;
   final TextEditingController _recipientController = TextEditingController();
+  final TextEditingController _recipientPhoneController =
+      TextEditingController();
   final TextEditingController _senderController = TextEditingController();
   final TextEditingController _messageController = TextEditingController();
 
@@ -32,10 +33,15 @@ class _GiftCardPageState extends State<GiftCardPage> {
   bool _loadingServices = true;
   String? _servicesError;
   bool _physicalDelivery = false;
+  bool _sendCopyToBuyer = false;
+  bool _termsAccepted = false;
+  bool _addingToCart = false;
+  late DateTime _validFromDate;
 
   @override
   void initState() {
     super.initState();
+    _validFromDate = dateOnly(DateTime.now());
     _loadServices();
   }
 
@@ -43,15 +49,16 @@ class _GiftCardPageState extends State<GiftCardPage> {
     try {
       // RPC security-definer: la tabla services no es legible por anon (RLS),
       // así que el catálogo regalable se expone vía list_giftable_services.
-      final data =
-          await Supabase.instance.client.rpc('list_giftable_services');
+      final data = await Supabase.instance.client.rpc('list_giftable_services');
       final list = (data as List)
           .cast<Map<String, dynamic>>()
-          .map((m) => _GiftService(
-                id: m['id'].toString(),
-                name: (m['name'] as String? ?? 'Servicio').trim(),
-                price: (m['price'] as num?)?.toDouble() ?? 0,
-              ))
+          .map(
+            (m) => _GiftService(
+              id: m['id'].toString(),
+              name: (m['name'] as String? ?? 'Servicio').trim(),
+              price: (m['price'] as num?)?.toDouble() ?? 0,
+            ),
+          )
           .toList();
       if (!mounted) return;
       setState(() {
@@ -78,6 +85,7 @@ class _GiftCardPageState extends State<GiftCardPage> {
   @override
   void dispose() {
     _recipientController.dispose();
+    _recipientPhoneController.dispose();
     _senderController.dispose();
     _messageController.dispose();
     super.dispose();
@@ -99,7 +107,10 @@ class _GiftCardPageState extends State<GiftCardPage> {
                 surfaceTintColor: Colors.transparent,
                 elevation: 0,
                 leading: IconButton(
-                  icon: const Icon(Icons.menu_rounded, color: _GiftPalette.primary),
+                  icon: const Icon(
+                    Icons.menu_rounded,
+                    color: _GiftPalette.primary,
+                  ),
                   onPressed: () => Navigator.maybePop(context),
                 ),
                 title: Text(
@@ -122,11 +133,16 @@ class _GiftCardPageState extends State<GiftCardPage> {
                           clipBehavior: Clip.none,
                           children: [
                             IconButton(
-                              icon: const Icon(Icons.shopping_bag_outlined, color: _GiftPalette.primary),
+                              icon: const Icon(
+                                Icons.shopping_bag_outlined,
+                                color: _GiftPalette.primary,
+                              ),
                               onPressed: () {
                                 Navigator.push(
                                   context,
-                                  MaterialPageRoute(builder: (_) => const CartPage()),
+                                  MaterialPageRoute(
+                                    builder: (_) => const CartPage(),
+                                  ),
                                 );
                               },
                             ),
@@ -143,7 +159,9 @@ class _GiftCardPageState extends State<GiftCardPage> {
                                   ),
                                   alignment: Alignment.center,
                                   child: Text(
-                                    _cart.totalItems > 9 ? '9+' : '${_cart.totalItems}',
+                                    _cart.totalItems > 9
+                                        ? '9+'
+                                        : '${_cart.totalItems}',
                                     style: GoogleFonts.inter(
                                       color: _GiftPalette.onPrimary,
                                       fontSize: 9,
@@ -170,14 +188,21 @@ class _GiftCardPageState extends State<GiftCardPage> {
                   children: [
                     const _GiftHero(),
                     Padding(
-                      padding: EdgeInsets.fromLTRB(isMobile ? 24 : 80, 120, isMobile ? 24 : 80, 0),
+                      padding: EdgeInsets.fromLTRB(
+                        isMobile ? 24 : 80,
+                        120,
+                        isMobile ? 24 : 80,
+                        0,
+                      ),
                       child: LayoutBuilder(
                         builder: (context, constraints) {
                           final stacked = constraints.maxWidth < 1000;
                           final left = Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _SectionTitle(title: 'Elige el servicio a regalar'),
+                              _SectionTitle(
+                                title: 'Elige el servicio a regalar',
+                              ),
                               const SizedBox(height: 32),
                               _ServiceDropdown(
                                 services: _services,
@@ -192,16 +217,32 @@ class _GiftCardPageState extends State<GiftCardPage> {
                               const SizedBox(height: 32),
                               _DeliverySelector(
                                 physicalDelivery: _physicalDelivery,
-                                onDigitalTap: () => setState(() => _physicalDelivery = false),
-                                onPhysicalTap: () => setState(() => _physicalDelivery = true),
+                                onDigitalTap: () =>
+                                    setState(() => _physicalDelivery = false),
+                                onPhysicalTap: () =>
+                                    setState(() => _physicalDelivery = true),
                               ),
                             ],
                           );
                           final right = _PersonalizationCard(
                             recipientController: _recipientController,
+                            recipientPhoneController: _recipientPhoneController,
                             senderController: _senderController,
                             messageController: _messageController,
+                            validFromDate: _validFromDate,
+                            expiresOnDate: addGiftCardCalendarMonths(
+                              _validFromDate,
+                              3,
+                            ),
+                            sendCopyToBuyer: _sendCopyToBuyer,
+                            termsAccepted: _termsAccepted,
                             totalLabel: _selectedPriceLabel,
+                            addingToCart: _addingToCart,
+                            onPickDate: _pickValidFromDate,
+                            onCopyChanged: (value) =>
+                                setState(() => _sendCopyToBuyer = value),
+                            onTermsChanged: (value) =>
+                                setState(() => _termsAccepted = value),
                             onPurchase: _handlePurchase,
                           );
 
@@ -253,9 +294,13 @@ class _GiftCardPageState extends State<GiftCardPage> {
     final deliveryLabel = _physicalDelivery
         ? 'Entrega fisica premium'
         : 'Entrega digital inmediata';
-    final message = _messageController.text.trim();
+    final message = sanitizeGiftCardDedication(_messageController.text);
     final recipient = _recipientController.text.trim();
+    final recipientPhone = normalizeGiftCardPhoneE164(
+      _recipientPhoneController.text,
+    );
     final sender = _senderController.text.trim();
+    final validFrom = giftCardDateParam(_validFromDate);
 
     return StoreProduct(
       id: '${base.id}-${service?.id ?? 'na'}-${_physicalDelivery ? 'physical' : 'digital'}',
@@ -266,7 +311,7 @@ class _GiftCardPageState extends State<GiftCardPage> {
         'Entrega: $deliveryLabel.',
         if (recipient.isNotEmpty) 'Destinatario: $recipient.',
         if (sender.isNotEmpty) 'Remitente: $sender.',
-        if (message.isNotEmpty) 'Mensaje: $message.',
+        if (message.isNotEmpty) 'Dedicatoria: $message.',
       ].join(' '),
       shortDescription: base.shortDescription,
       price: price,
@@ -290,15 +335,33 @@ class _GiftCardPageState extends State<GiftCardPage> {
         'service_name': serviceName,
         'delivery_method': _physicalDelivery ? 'physical' : 'digital',
         'recipient_name': recipient,
+        if (recipientPhone != null) 'recipient_phone': recipientPhone,
         'sender_name': sender,
+        'dedication_message': message,
         'message': message,
+        'valid_from': validFrom,
+        'buyer_copy_requested': _sendCopyToBuyer,
+        'purchase_channel': 'web',
+        'terms_accepted': _termsAccepted,
       },
     );
   }
 
+  Future<void> _pickValidFromDate() async {
+    final today = dateOnly(DateTime.now());
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: today,
+      lastDate: today.add(const Duration(days: 365)),
+      initialDate: _validFromDate.isBefore(today) ? today : _validFromDate,
+    );
+    if (picked != null && mounted) {
+      setState(() => _validFromDate = dateOnly(picked));
+    }
+  }
+
   void _handlePurchase() {
-    final recipient = _recipientController.text.trim();
-    final sender = _senderController.text.trim();
+    if (shouldIgnoreGiftCardTap(submitting: _addingToCart)) return;
 
     if (_selectedService == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -308,18 +371,42 @@ class _GiftCardPageState extends State<GiftCardPage> {
       );
       return;
     }
-    if (recipient.isEmpty || sender.isEmpty) {
+
+    final validation = validateGiftCardForm(
+      GiftCardFormInput(
+        recipientName: _recipientController.text,
+        recipientPhone: _recipientPhoneController.text,
+        senderName: _senderController.text,
+        validFrom: _validFromDate,
+        termsAccepted: _termsAccepted,
+        dedicationMessage: _messageController.text,
+        sendCopyToBuyer: _sendCopyToBuyer,
+      ),
+    );
+    if (!validation.ok) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Completa destinatario y remitente para continuar.')),
+        SnackBar(
+          content: Text(
+            validation.message ?? 'Completa la gift card para continuar.',
+          ),
+        ),
       );
       return;
     }
 
+    setState(() => _addingToCart = true);
     final product = _buildSelectedGiftCard();
     _cart.add(product);
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${product.name} agregada al carrito por ${product.priceLabel}.')),
+      SnackBar(
+        content: Text(
+          '${product.name} agregada al carrito por ${product.priceLabel}.',
+        ),
+      ),
     );
+    Future<void>.delayed(const Duration(milliseconds: 700), () {
+      if (mounted) setState(() => _addingToCart = false);
+    });
   }
 }
 
@@ -490,12 +577,16 @@ class _ServiceDropdown extends StatelessWidget {
           isExpanded: true,
           value: selectedServiceId,
           dropdownColor: _GiftPalette.surfaceLow,
-          icon: const Icon(Icons.keyboard_arrow_down_rounded,
-              color: _GiftPalette.primary),
+          icon: const Icon(
+            Icons.keyboard_arrow_down_rounded,
+            color: _GiftPalette.primary,
+          ),
           hint: Text(
             'Selecciona un servicio',
             style: GoogleFonts.inter(
-                color: _GiftPalette.textMuted, fontSize: 16),
+              color: _GiftPalette.textMuted,
+              fontSize: 16,
+            ),
           ),
           items: [
             for (final s in services)
@@ -557,11 +648,7 @@ class _DeliverySelector extends StatelessWidget {
 
         if (stacked) {
           return Column(
-            children: [
-              digital,
-              const SizedBox(height: 20),
-              physical,
-            ],
+            children: [digital, const SizedBox(height: 20), physical],
           );
         }
 
@@ -614,7 +701,11 @@ class _DeliveryCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(icon, color: selected ? _GiftPalette.primary : _GiftPalette.textMuted, size: 28),
+            Icon(
+              icon,
+              color: selected ? _GiftPalette.primary : _GiftPalette.textMuted,
+              size: 28,
+            ),
             const SizedBox(height: 20),
             Text(
               title,
@@ -652,16 +743,34 @@ class _DeliveryCard extends StatelessWidget {
 class _PersonalizationCard extends StatelessWidget {
   const _PersonalizationCard({
     required this.recipientController,
+    required this.recipientPhoneController,
     required this.senderController,
     required this.messageController,
+    required this.validFromDate,
+    required this.expiresOnDate,
+    required this.sendCopyToBuyer,
+    required this.termsAccepted,
     required this.totalLabel,
+    required this.addingToCart,
+    required this.onPickDate,
+    required this.onCopyChanged,
+    required this.onTermsChanged,
     required this.onPurchase,
   });
 
   final TextEditingController recipientController;
+  final TextEditingController recipientPhoneController;
   final TextEditingController senderController;
   final TextEditingController messageController;
+  final DateTime validFromDate;
+  final DateTime expiresOnDate;
+  final bool sendCopyToBuyer;
+  final bool termsAccepted;
   final String totalLabel;
+  final bool addingToCart;
+  final VoidCallback onPickDate;
+  final ValueChanged<bool> onCopyChanged;
+  final ValueChanged<bool> onTermsChanged;
   final VoidCallback onPurchase;
 
   @override
@@ -674,7 +783,9 @@ class _PersonalizationCard extends StatelessWidget {
           padding: const EdgeInsets.all(32),
           decoration: BoxDecoration(
             color: _GiftPalette.surfaceContainer.withValues(alpha: 0.30),
-            border: Border.all(color: _GiftPalette.primary.withValues(alpha: 0.05)),
+            border: Border.all(
+              color: _GiftPalette.primary.withValues(alpha: 0.05),
+            ),
           ),
           child: Stack(
             children: [
@@ -705,6 +816,13 @@ class _PersonalizationCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 28),
                   _GiftInput(
+                    label: 'WhatsApp del destinatario',
+                    hint: '+52 646 000 0000',
+                    controller: recipientPhoneController,
+                    keyboardType: TextInputType.phone,
+                  ),
+                  const SizedBox(height: 28),
+                  _GiftInput(
                     label: 'Nombre de quien regala',
                     hint: 'Tu nombre',
                     controller: senderController,
@@ -712,11 +830,30 @@ class _PersonalizationCard extends StatelessWidget {
                   const SizedBox(height: 28),
                   _GiftInput(
                     label: 'Mensaje de bienestar',
-                    hint: 'Escribe un mensaje con intencion...',
+                    hint:
+                        'Porque me acorde de ti, quiero regalarte un momento especial para consentirte.',
                     controller: messageController,
                     maxLines: 4,
+                    maxLength: kGiftCardDedicationMaxLength,
                   ),
-                  const SizedBox(height: 40),
+                  const SizedBox(height: 26),
+                  _GiftDateTile(
+                    validFromDate: validFromDate,
+                    expiresOnDate: expiresOnDate,
+                    onTap: onPickDate,
+                  ),
+                  const SizedBox(height: 18),
+                  _GiftCheckboxTile(
+                    value: sendCopyToBuyer,
+                    label: 'Enviar copia al comprador',
+                    onChanged: onCopyChanged,
+                  ),
+                  _GiftCheckboxTile(
+                    value: termsAccepted,
+                    label: 'Acepto vigencia de 3 meses y cita previa',
+                    onChanged: onTermsChanged,
+                  ),
+                  const SizedBox(height: 32),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -741,15 +878,22 @@ class _PersonalizationCard extends StatelessWidget {
                     style: FilledButton.styleFrom(
                       backgroundColor: _GiftPalette.primary,
                       foregroundColor: _GiftPalette.onPrimary,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 22),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 22,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(4),
+                      ),
                     ),
-                    onPressed: onPurchase,
+                    onPressed: addingToCart ? null : onPurchase,
                     child: Row(
                       children: [
                         Expanded(
                           child: Text(
-                            'COMPRAR REGALO RITUAL',
+                            addingToCart
+                                ? 'AGREGANDO...'
+                                : 'COMPRAR REGALO RITUAL',
                             style: GoogleFonts.inter(
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
@@ -790,12 +934,16 @@ class _GiftInput extends StatelessWidget {
     required this.hint,
     required this.controller,
     this.maxLines = 1,
+    this.maxLength,
+    this.keyboardType,
   });
 
   final String label;
   final String hint;
   final TextEditingController controller;
   final int maxLines;
+  final int? maxLength;
+  final TextInputType? keyboardType;
 
   @override
   Widget build(BuildContext context) {
@@ -814,7 +962,14 @@ class _GiftInput extends StatelessWidget {
         const SizedBox(height: 10),
         TextField(
           controller: controller,
+          keyboardType: keyboardType,
           maxLines: maxLines,
+          maxLength: maxLength,
+          inputFormatters: maxLength == null
+              ? null
+              : <TextInputFormatter>[
+                  LengthLimitingTextInputFormatter(maxLength),
+                ],
           style: GoogleFonts.inter(
             color: _GiftPalette.textStrong,
             fontSize: 18,
@@ -828,7 +983,9 @@ class _GiftInput extends StatelessWidget {
               fontWeight: FontWeight.w300,
             ),
             enabledBorder: UnderlineInputBorder(
-              borderSide: BorderSide(color: _GiftPalette.primary.withValues(alpha: 0.40)),
+              borderSide: BorderSide(
+                color: _GiftPalette.primary.withValues(alpha: 0.40),
+              ),
             ),
             focusedBorder: const UnderlineInputBorder(
               borderSide: BorderSide(color: _GiftPalette.primary),
@@ -837,6 +994,107 @@ class _GiftInput extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _GiftDateTile extends StatelessWidget {
+  const _GiftDateTile({
+    required this.validFromDate,
+    required this.expiresOnDate,
+    required this.onTap,
+  });
+
+  final DateTime validFromDate;
+  final DateTime expiresOnDate;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: _GiftPalette.primary.withValues(alpha: 0.40),
+            ),
+          ),
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.event_available_rounded,
+              color: _GiftPalette.primary,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'VIGENCIA',
+                    style: GoogleFonts.inter(
+                      color: _GiftPalette.primary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 2.4,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '${giftCardDateLabel(validFromDate)} - ${giftCardDateLabel(expiresOnDate)}',
+                    style: GoogleFonts.inter(
+                      color: _GiftPalette.textStrong,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w300,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.edit_calendar_rounded,
+              color: _GiftPalette.textMuted,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GiftCheckboxTile extends StatelessWidget {
+  const _GiftCheckboxTile({
+    required this.value,
+    required this.label,
+    required this.onChanged,
+  });
+
+  final bool value;
+  final String label;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return CheckboxListTile(
+      value: value,
+      onChanged: (next) => onChanged(next ?? false),
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      controlAffinity: ListTileControlAffinity.leading,
+      activeColor: _GiftPalette.primary,
+      checkColor: _GiftPalette.onPrimary,
+      title: Text(
+        label,
+        style: GoogleFonts.inter(
+          color: _GiftPalette.textSoft,
+          fontSize: 13,
+          fontWeight: FontWeight.w400,
+        ),
+      ),
     );
   }
 }
@@ -912,7 +1170,10 @@ class _GiftStorySection extends StatelessWidget {
               width: isMobile ? double.infinity : 560,
               height: isMobile ? 380 : 500,
               child: ColorFiltered(
-                colorFilter: const ColorFilter.mode(Colors.black38, BlendMode.darken),
+                colorFilter: const ColorFilter.mode(
+                  Colors.black38,
+                  BlendMode.darken,
+                ),
                 child: Image.network(
                   'https://images.unsplash.com/photo-1512290923902-8a9f81dc236c?auto=format&fit=crop&w=1400&q=80',
                   fit: BoxFit.cover,

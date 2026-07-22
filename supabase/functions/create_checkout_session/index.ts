@@ -10,6 +10,11 @@ import {
   stripeApiRequest,
   toMinorUnits,
 } from "../_shared/stripe_checkout.ts"
+import {
+  computeGiftCardValidity,
+  normalizeGiftCardPhone,
+  sanitizeDedicationMessage,
+} from "../_shared/gift_card_fulfillment.ts"
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -28,9 +33,7 @@ serve(async (req) => {
     const notes = String(body.notes ?? "").trim()
     const successUrl = String(body.success_url ?? "").trim()
     const cancelUrl = String(body.cancel_url ?? "").trim()
-    const items = Array.isArray(body.items)
-      ? body.items.map((item) => normalizeItem(item))
-      : []
+    let items = Array.isArray(body.items) ? body.items.map((item) => normalizeItem(item)) : []
 
     if (!customerName || !customerEmail || !customerPhone) {
       return jsonResponse({ error: "Faltan datos del cliente." }, 400)
@@ -48,8 +51,10 @@ serve(async (req) => {
       return jsonResponse({ error: "Hay productos invalidos en el carrito." }, 400)
     }
 
-    const pricing = buildPricing(items, body.pricing)
     const supabase = createAdminClient()
+    items = await validateCheckoutItems(supabase, items)
+    const hasGiftCard = items.some((item) => normalizeType(item.product_type) === "gift_card")
+    const pricing = hasGiftCard ? buildServerPricing(items) : buildPricing(items, body.pricing)
 
     const { data: authUser } = await supabase.auth.getUser(
       req.headers.get("Authorization")?.replace("Bearer ", "") ?? "",
@@ -197,6 +202,107 @@ function normalizeItem(raw: Record<string, unknown>): CheckoutItem {
       ? raw.metadata as Record<string, unknown>
       : {},
   }
+}
+
+function buildServerPricing(items: CheckoutItem[]) {
+  const subtotal = roundCurrency(
+    items.reduce(
+      (sum, item) => sum + roundCurrency(item.unit_price * item.quantity),
+      0,
+    ),
+  )
+  return {
+    subtotal,
+    memberCredit: 0,
+    serviceCharge: 0,
+    total: subtotal,
+  }
+}
+
+async function validateCheckoutItems(
+  supabase: ReturnType<typeof createAdminClient>,
+  items: CheckoutItem[],
+): Promise<CheckoutItem[]> {
+  const validated: CheckoutItem[] = []
+  for (const item of items) {
+    if (normalizeType(item.product_type) !== "gift_card") {
+      validated.push(item)
+      continue
+    }
+
+    const metadata = item.metadata ?? {}
+    const recipientName = String(metadata.recipient_name ?? "").trim()
+    const senderName = String(metadata.sender_name ?? "").trim()
+    const recipientPhone = normalizeGiftCardPhone(metadata.recipient_phone)
+    const termsAccepted = metadata.terms_accepted === true
+    if (!recipientName || !senderName || !recipientPhone) {
+      throw new Error("gift_card_required_fields")
+    }
+    if (!termsAccepted) {
+      throw new Error("gift_card_terms_required")
+    }
+
+    const validity = computeGiftCardValidity(String(metadata.valid_from ?? ""))
+    const serviceId = String(metadata.service_id ?? "").trim()
+    if (!serviceId) throw new Error("gift_card_service_required")
+
+    const { data: service, error } = await supabase
+      .from("services")
+      .select(
+        "id, name, description, price, is_active, active, price_on_quote, is_package, sessions_count",
+      )
+      .eq("id", serviceId)
+      .maybeSingle()
+    if (error) throw error
+    if (!service) throw new Error("gift_card_service_not_found")
+
+    const serviceRow = service as Record<string, unknown>
+    const serviceActive = serviceRow.is_active !== false && serviceRow.active !== false
+    if (!serviceActive) throw new Error("gift_card_service_inactive")
+    if (serviceRow.price_on_quote === true) throw new Error("gift_card_service_price_on_quote")
+    const price = Number(serviceRow.price ?? 0)
+    if (!(price > 0)) throw new Error("gift_card_service_no_price")
+
+    const serviceName = String(serviceRow.name ?? item.name).trim() || item.name
+    const dedicationMessage = sanitizeDedicationMessage(
+      metadata.dedication_message ?? metadata.message ?? "",
+    )
+
+    validated.push({
+      ...item,
+      name: `Gift card - ${serviceName}`,
+      description: `Gift card para 1 sesion de ${serviceName}`,
+      short_description: String(serviceRow.description ?? item.short_description ?? "").slice(
+        0,
+        240,
+      ),
+      unit_price: price,
+      quantity: 1,
+      product_type: "gift_card",
+      category_key: "gift_cards",
+      category_label: item.category_label || "Tarjetas de regalo",
+      metadata: {
+        base_product_id: metadata.base_product_id ?? item.base_product_id ?? null,
+        product_type: "gift_card",
+        gift_card_kind: "service",
+        service_id: serviceId,
+        service_name: serviceName,
+        sessions_count: Number(serviceRow.sessions_count ?? 1) || 1,
+        recipient_name: recipientName,
+        recipient_phone: recipientPhone,
+        sender_name: senderName,
+        dedication_message: dedicationMessage,
+        message: dedicationMessage,
+        valid_from: validity.validFrom,
+        buyer_copy_requested: metadata.buyer_copy_requested === true ||
+          metadata.send_copy_to_buyer === true,
+        delivery_method: String(metadata.delivery_method ?? "digital"),
+        purchase_channel: String(metadata.purchase_channel ?? "web"),
+        terms_accepted: true,
+      },
+    })
+  }
+  return validated
 }
 
 function serve(handler: (req: Request) => Promise<Response>) {
