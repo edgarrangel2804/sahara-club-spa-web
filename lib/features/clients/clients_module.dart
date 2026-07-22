@@ -225,14 +225,24 @@ class _ClientsModuleState extends State<ClientsModule> {
       // Gift cards activas con saldo (no sobreescriben membresía: ya tiene prioridad)
       final gcData = await Supabase.instance.client
           .from('gift_cards')
-          .select('client_id, current_balance, expires_at, status')
+          .select(
+            'client_id, current_balance, valid_from, expires_on, expires_at, status',
+          )
           .eq('status', 'active')
           .gt('current_balance', 0);
-      final nowIso = DateTime.now().toIso8601String();
       for (final r in (gcData as List)) {
         final m = r as Map;
-        final exp = m['expires_at']?.toString();
-        if (exp == null || exp.compareTo(nowIso) > 0) {
+        final startRaw = m['valid_from']?.toString();
+        final expRaw = (m['expires_on'] ?? m['expires_at'])?.toString();
+        final start = startRaw == null || startRaw.length <= 10
+            ? startRaw
+            : startRaw.substring(0, 10);
+        final exp = expRaw == null || expRaw.length <= 10
+            ? expRaw
+            : expRaw.substring(0, 10);
+        final startsOk = start == null || start.compareTo(today) <= 0;
+        final expOk = exp == null || exp.compareTo(today) >= 0;
+        if (startsOk && expOk) {
           final id = m['client_id']?.toString();
           if (id != null && !_benefitByClient.containsKey(id)) {
             _benefitByClient[id] = 'gift_card';
@@ -2802,6 +2812,16 @@ class _PackagePaymentDialogState extends State<_PackagePaymentDialog> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+DateTime _addGiftCardMonths(DateTime value, int months) {
+  final base = DateTime(value.year, value.month, value.day);
+  final monthIndex = base.month - 1 + months;
+  final year = base.year + (monthIndex ~/ 12);
+  final month = (monthIndex % 12) + 1;
+  final lastDay = DateTime(year, month + 1, 0).day;
+  final day = base.day.clamp(1, lastDay).toInt();
+  return DateTime(year, month, day);
+}
+
 // Gift Card form dialog
 // ─────────────────────────────────────────────────────────────────────────────
 class _GiftCardFormDialog extends StatefulWidget {
@@ -2814,7 +2834,7 @@ class _GiftCardFormDialog extends StatefulWidget {
 
 class _GiftCardFormDialogState extends State<_GiftCardFormDialog> {
   final _codeCtrl = TextEditingController();
-  DateTime _expires = DateTime.now().add(const Duration(days: 365));
+  DateTime _expires = _addGiftCardMonths(DateTime.now(), 3);
   bool _saving = false;
   String? _error;
 
@@ -2931,9 +2951,19 @@ class _GiftCardFormDialogState extends State<_GiftCardFormDialog> {
             'recipient_name': widget.client.fullName,
             'service_id': _serviceId,
             'service_name': serviceName,
-            'valid_from': DateTime.now().toIso8601String(),
+            'valid_from': DateTime.now().toIso8601String().substring(0, 10),
+            'expires_on': _expires.toIso8601String().substring(0, 10),
             'expires_at': _expires.toIso8601String(),
             'status': 'active',
+            'product_snapshot': {
+              'service_id': _serviceId,
+              'service_name': serviceName,
+              'sessions_count': 1,
+              'value_paid': amount,
+              'face_value': amount,
+              'currency': 'MXN',
+              'purchase_channel': 'reception',
+            },
             'notes': 'Venta registrada. Sale ID: $saleId',
           })
           .select('id')
