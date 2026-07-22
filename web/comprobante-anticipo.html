@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Comprobante de anticipo · Sahara Club Spa</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --bg:#0F0F0F; --card:#16161A; --gold:#C6A76A; --goldSoft:#E8DCC8;
+      --line:#2A2A2E; --muted:#9A9388; --text:#ECE7DF;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;
+      min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+    .voucher{width:100%;max-width:440px;background:var(--card);border:1px solid var(--line);
+      border-radius:18px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+    .top{padding:34px 32px 22px;text-align:center;border-bottom:1px solid var(--line)}
+    .brand{font-family:'Playfair Display',serif;color:var(--gold);font-size:26px;letter-spacing:2px}
+    .sub{color:var(--muted);font-size:12px;letter-spacing:3px;margin-top:6px;text-transform:uppercase}
+    .badge{display:inline-block;margin-top:18px;background:var(--gold);color:#1a1a1a;
+      font-weight:700;font-size:12px;letter-spacing:2px;padding:7px 18px;border-radius:999px}
+    .body{padding:26px 32px}
+    .row{display:flex;justify-content:space-between;align-items:baseline;gap:16px;
+      padding:13px 0;border-bottom:1px solid var(--line)}
+    .row:last-child{border-bottom:none}
+    .label{color:var(--muted);font-size:11px;letter-spacing:1.5px;text-transform:uppercase}
+    .value{color:var(--text);font-size:15px;font-weight:500;text-align:right}
+    .amount{font-family:'Playfair Display',serif;color:var(--gold);font-size:30px}
+    .note{color:var(--muted);font-size:12.5px;line-height:1.6;margin:22px 32px 0;text-align:center}
+    .actions{padding:24px 32px 32px;display:flex;gap:12px}
+    button{flex:1;cursor:pointer;border:none;border-radius:10px;padding:14px;font-family:inherit;
+      font-weight:600;font-size:13px;letter-spacing:1px}
+    .print{background:var(--gold);color:#1a1a1a}
+    .home{background:transparent;color:var(--muted);border:1px solid var(--line)}
+    .foot{text-align:center;color:var(--muted);font-size:11px;padding:0 32px 26px}
+    .loading{padding:60px 32px;text-align:center;color:var(--muted)}
+    @media print{
+      body{background:#fff;color:#111}
+      .voucher{box-shadow:none;border:1px solid #ddd}
+      .actions{display:none}
+    }
+  </style>
+</head>
+<body>
+  <div class="voucher" id="voucher">
+    <div class="loading">Cargando tu comprobante…</div>
+  </div>
+
+  <script>
+    const SUPA = 'https://fkbyxhwdcsgrrixalzwf.supabase.co';
+    const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrYnl4aHdkY3NncnJpeGFsendmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc1NzE3MjYsImV4cCI6MjA5MzE0NzcyNn0.IJ2nDtgBPkbY8CRDmGGJTvE6kELrY0sp3_F9yseZP9Q';
+    const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+
+    function fmtDate(iso){
+      try{ const [y,m,d]=iso.split('-').map(n=>parseInt(n,10)); return d+' de '+MESES[(m-1)%12]+' de '+y; }
+      catch(e){ return iso; }
+    }
+    function fmtTime(t){
+      if(!t) return '';
+      let [h,min]=t.split(':'); h=parseInt(h,10);
+      const ap=h>=12?'PM':'AM'; h=h%12; if(h===0)h=12;
+      return h+':'+min+' '+ap;
+    }
+    function money(n){ return '$'+Number(n).toLocaleString('es-MX',{minimumFractionDigits:2}); }
+
+    const params = new URLSearchParams(location.search);
+    const sid = params.get('session_id');
+    const bid = params.get('booking_id');
+    const qs = sid ? 'session_id='+encodeURIComponent(sid) : 'booking_id='+encodeURIComponent(bid||'');
+
+    fetch(SUPA+'/functions/v1/deposit_voucher?'+qs, {
+      headers: { apikey: ANON, Authorization: 'Bearer '+ANON }
+    })
+      .then(r=>r.json())
+      .then(d=>{ if(d && d.ok){ render(d); } else { fail(); } })
+      .catch(fail);
+
+    function fail(){
+      document.getElementById('voucher').innerHTML =
+        '<div class="loading">No pudimos cargar el comprobante.<br>Tu pago está seguro; recepción te confirmará tu cita.</div>'+
+        '<div class="actions"><button class="home" onclick="location.href=\'https://saharaclubspa.com\'">Volver a Sahara</button></div>';
+    }
+
+    function render(d){
+      const estado = d.pagado ? 'PAGADO' : 'EN PROCESO';
+      document.getElementById('voucher').innerHTML = `
+        <div class="top">
+          <div class="brand">SAHARA CLUB SPA</div>
+          <div class="sub">Comprobante de anticipo</div>
+          <div class="badge">${estado}</div>
+        </div>
+        <div class="body">
+          <div class="row"><span class="label">Folio</span><span class="value">${d.folio}</span></div>
+          <div class="row"><span class="label">Cliente</span><span class="value">${d.cliente}</span></div>
+          <div class="row"><span class="label">Servicio</span><span class="value">${d.servicio}</span></div>
+          <div class="row"><span class="label">Fecha</span><span class="value">${fmtDate(d.fecha)}</span></div>
+          <div class="row"><span class="label">Hora</span><span class="value">${fmtTime(d.hora)}</span></div>
+          <div class="row"><span class="label">Anticipo pagado</span><span class="value amount">${money(d.monto)} MXN</span></div>
+        </div>
+        <div class="note">Tu anticipo se aplica al costo total del servicio. Recepción confirma tu cita y te esperamos. Conserva este comprobante.</div>
+        <div class="actions">
+          <button class="print" onclick="window.print()">Descargar / Imprimir</button>
+          <button class="home" onclick="location.href='https://saharaclubspa.com'">Volver a Sahara</button>
+        </div>
+        <div class="foot">Calle Segunda 2226, Ensenada B.C. · saharaclubspa.com</div>`;
+    }
+  </script>
+</body>
+</html>

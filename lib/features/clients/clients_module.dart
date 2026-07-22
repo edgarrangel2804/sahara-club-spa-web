@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../theme/sahara_theme.dart';
+import '../receipts/deposit_receipt_actions.dart';
 import 'client_packages_panel.dart';
 
 // ── UUID helper (no external package needed) ──────────────────────────────────
@@ -556,6 +557,8 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
   Map<String, dynamic>? _benefits;
   List<Map<String, dynamic>> _packages = const [];
   bool _loadingBenefits = true;
+  bool _isFrequent = false;
+  bool _savingFrequent = false;
 
   @override
   void initState() {
@@ -581,15 +584,41 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
         params: {'p_client_id': widget.client.id},
       );
       final packages = await _loadPackages();
+      final freqRow = await Supabase.instance.client
+          .from('clients').select('is_frequent').eq('id', widget.client.id).maybeSingle();
       if (!mounted) return;
       setState(() {
         _benefits = res is Map ? Map<String, dynamic>.from(res) : null;
         _packages = packages;
+        _isFrequent = freqRow != null && freqRow['is_frequent'] == true;
         _loadingBenefits = false;
       });
     } catch (e) {
       debugPrint('loadBenefits: $e');
       if (mounted) setState(() => _loadingBenefits = false);
+    }
+  }
+
+  // Marca/desmarca al cliente como FRECUENTE (exento de anticipo). Solo staff
+  // con acceso al módulo de clientes (recepción/admin).
+  Future<void> _toggleFrequent(bool value) async {
+    setState(() => _savingFrequent = true);
+    try {
+      await Supabase.instance.client
+          .from('clients')
+          .update({'is_frequent': value})
+          .eq('id', widget.client.id);
+      if (mounted) setState(() => _isFrequent = value);
+    } catch (e) {
+      debugPrint('toggleFrequent: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo actualizar el estatus del cliente.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _savingFrequent = false);
+      await _loadBenefits();
     }
   }
 
@@ -836,6 +865,9 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
               loading: _loadingBenefits,
               benefits: _benefits,
               packages: _packages,
+              isFrequent: _isFrequent,
+              savingFrequent: _savingFrequent,
+              onToggleFrequent: _toggleFrequent,
               onAddGiftCard: () => _openAddGiftCardDialog(),
               onAddMembership: () => _openAddMembershipDialog(),
               onAddPackage: () => _openAddPackageDialog(),
@@ -1435,6 +1467,17 @@ class _HistoryRow extends StatelessWidget {
             ),
           ],
         ),
+        // Comprobante del anticipo (solo en citas que ya pagaron).
+        if (const [
+              'confirmed', 'payment_received', 'rescheduled',
+              'in_progress', 'completed', 'paid',
+            ].contains(status) &&
+            booking['id'] != null)
+          IconButton(
+            icon: const Icon(Icons.receipt_long, size: 18, color: Color(0xFFC6A76A)),
+            tooltip: 'Comprobante de anticipo',
+            onPressed: () => showDepositReceiptDialog(context, booking['id'] as String),
+          ),
       ]),
     );
   }
@@ -1601,6 +1644,9 @@ class _BenefitsCard extends StatelessWidget {
     required this.loading,
     required this.benefits,
     required this.packages,
+    required this.isFrequent,
+    required this.savingFrequent,
+    required this.onToggleFrequent,
     required this.onAddGiftCard,
     required this.onAddMembership,
     required this.onAddPackage,
@@ -1612,6 +1658,9 @@ class _BenefitsCard extends StatelessWidget {
   final bool loading;
   final Map<String, dynamic>? benefits;
   final List<Map<String, dynamic>> packages;
+  final bool isFrequent;
+  final bool savingFrequent;
+  final Future<void> Function(bool) onToggleFrequent;
   final VoidCallback onAddGiftCard;
   final VoidCallback onAddMembership;
   final VoidCallback onAddPackage;
@@ -1702,7 +1751,7 @@ class _BenefitsCard extends StatelessWidget {
     final memEnd = b['membership_end_date'];
     final used = (b['sessions_used'] as num?)?.toInt() ?? 0;
     final remaining = (b['sessions_remaining'] as num?)?.toInt() ?? 0;
-    final requiresDeposit = b['requires_deposit'] == true;
+    final requiresDeposit = (b['requires_deposit'] == true) && !isFrequent;
     final waiver = b['waiver_reason'] as String?;
 
     return Container(
@@ -1766,23 +1815,77 @@ class _BenefitsCard extends StatelessWidget {
                     ? const Color(0xFFB32D2D)
                     : const Color(0xFF2D8A4F),
               ),
-              if (!requiresDeposit && waiver != null) ...[
+              if (!requiresDeposit && (isFrequent || waiver != null)) ...[
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    waiver == 'active_gift_card_with_balance'
-                        ? '· cubierto por gift card'
-                        : waiver == 'active_membership_with_sessions'
-                            ? '· cubierto por membresía'
-                            : waiver == 'active_package_with_sessions'
-                                ? '· cubierto por paquete'
-                                : '· $waiver',
+                    isFrequent
+                        ? '· cliente frecuente'
+                        : waiver == 'active_gift_card_with_balance'
+                            ? '· cubierto por gift card'
+                            : waiver == 'active_membership_with_sessions'
+                                ? '· cubierto por membresía'
+                                : waiver == 'active_package_with_sessions'
+                                    ? '· cubierto por paquete'
+                                    : '· $waiver',
                     style: GoogleFonts.inter(fontSize: 11, color: Colors.black54),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
             ]),
+            const SizedBox(height: 12),
+
+            // Casilla: marcar cliente frecuente (exento de anticipo). Solo staff.
+            InkWell(
+              onTap: savingFrequent ? null : () => onToggleFrequent(!isFrequent),
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                decoration: BoxDecoration(
+                  color: isFrequent
+                      ? const Color(0xFF2D8A4F).withValues(alpha: 0.06)
+                      : const Color(0xFFF7F7F5),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: isFrequent
+                        ? const Color(0xFF2D8A4F).withValues(alpha: 0.4)
+                        : const Color(0xFFECECEC),
+                  ),
+                ),
+                child: Row(children: [
+                  SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: savingFrequent
+                        ? const Padding(
+                            padding: EdgeInsets.all(4),
+                            child: CircularProgressIndicator(strokeWidth: 2, color: SaharaTheme.gold))
+                        : Checkbox(
+                            value: isFrequent,
+                            onChanged: (v) => onToggleFrequent(v ?? false),
+                            activeColor: const Color(0xFF2D8A4F),
+                            visualDensity: VisualDensity.compact,
+                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Cliente frecuente · exento de anticipo',
+                            style: GoogleFonts.inter(
+                                fontSize: 12.5, fontWeight: FontWeight.w600, color: Colors.black87)),
+                        Text(
+                            'No se le pedirá el anticipo al reservar, aunque no tenga gift card, membresía ni paquete.',
+                            style: GoogleFonts.inter(fontSize: 11, color: Colors.black54)),
+                      ],
+                    ),
+                  ),
+                ]),
+              ),
+            ),
             const SizedBox(height: 14),
             const Divider(height: 1, color: Color(0xFFF0EEEA)),
             const SizedBox(height: 14),
