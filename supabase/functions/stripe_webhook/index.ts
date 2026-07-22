@@ -421,12 +421,6 @@ serve(async (req) => {
         paymentPayload: object,
       })
       await fulfillOrder(supabase, orderId)
-      // Entrega la(s) gift card(s) al comprador por WhatsApp (best-effort).
-      try {
-        await deliverGiftCardsWhatsApp(supabase, orderId)
-      } catch (e) {
-        console.warn("gift card whatsapp delivery failed:", (e as Error).message)
-      }
     }
 
     if (event.type === "checkout.session.expired") {
@@ -446,57 +440,6 @@ serve(async (req) => {
     return jsonResponse({ error: "No se pudo procesar el webhook de Stripe." }, 400)
   }
 })
-
-// Manda la tarjeta de regalo (código + link a la tarjeta con QR) al teléfono del
-// comprador por WhatsApp. Best-effort: si el comprador no tiene ventana de 24h
-// abierta, Meta puede rechazar el texto libre (futuro: plantilla aprobada).
-async function deliverGiftCardsWhatsApp(
-  supabase: ReturnType<typeof createAdminClient>,
-  orderId: string,
-) {
-  const { data: order } = await supabase
-    .from("orders")
-    .select("customer_phone")
-    .eq("id", orderId)
-    .maybeSingle()
-  const phone = (order as { customer_phone?: string } | null)?.customer_phone?.trim()
-  if (!phone) return
-
-  const { data: cards } = await supabase
-    .from("gift_cards")
-    .select("code, service_name, recipient_name, expires_at")
-    .eq("order_id", orderId)
-
-  for (
-    const c of (cards ?? []) as Array<{
-      code?: string
-      service_name?: string
-      recipient_name?: string
-      expires_at?: string
-    }>
-  ) {
-    if (!c.code) continue
-    const link = `https://saharaclubspa.com/tarjeta-regalo?code=${encodeURIComponent(c.code)}`
-    const exp = c.expires_at ? new Date(c.expires_at).toLocaleDateString("es-MX") : ""
-    const msg = [
-      "🎁 *Tu tarjeta de regalo Sahara Club Spa*",
-      "",
-      c.service_name ? `*Servicio:* ${c.service_name}` : "",
-      c.recipient_name ? `*A nombre de:* ${c.recipient_name}` : "",
-      `*Código:* ${c.code}`,
-      exp ? `*Vence:* ${exp}` : "",
-      "",
-      `Ver tu tarjeta con QR: ${link}`,
-      "",
-      "Preséntala en recepción para agendar tu servicio 🌿",
-    ].filter(Boolean).join("\n")
-    try {
-      await sendBackupText(phone, msg)
-    } catch (e) {
-      console.warn("gift card send failed:", (e as Error).message)
-    }
-  }
-}
 
 function serve(handler: (req: Request) => Promise<Response>) {
   return Deno.serve(handler)
