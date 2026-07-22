@@ -24,6 +24,10 @@ This file records productive Sahara behavior that may be real and useful, but sh
 - Do not copy `auto_confirm_bookings` with a public `?force=1` path; it writes bookings and needs a cron-only trust boundary.
 - Do not expose `whatsapp-ai-router` without caller authentication, rate limiting, and abuse controls.
 - Do not reuse `deposit_voucher` as a public lookup by `booking_id` or `session_id` without a scoped signed token.
+- Do not use Stripe Checkout Session ID as authorization for public documents; it can be correlation only.
+- Do not accept externally supplied `success_url` domains for appointment deposits. Build and allowlist the URL server-side.
+- Do not log full voucher/document tokens; store at most an irreversible hash or short non-sensitive prefix.
+- Do not ship public document links without purpose, scope, HMAC validation, and expiration.
 - Do not embed a service-role web concierge without rate limits, prompt injection monitoring, and clear observability.
 - Do not keep one-shot setup functions deployed after their setup task is complete; remove or keep them neutralized.
 

@@ -16,8 +16,8 @@ Alerts.
 | `lib/features/clients/client_identity_helpers.dart` | Extraer helpers puros | Telefonos MX/Baja, emails sinteticos, duplicados probables y record canonico quedan testeables. |
 | `lib/features/receipts/deposit_receipt_actions.dart` | Reconectar a Agenda con guardas | Carga URL firmada existente, reenvia WhatsApp solo por accion explicita y valida UUID/URL. |
 | `lib/pages/agenda_page.dart` | Conexion minima | El boton de comprobante abre el dialogo real con `booking.id`. |
-| `web/comprobante-anticipo.html` | Sanitizar pagina publica | Acepta `token` o `session_id` temporal; elimina `booking_id`; renderiza con `textContent`. |
-| `supabase/functions/deposit_voucher` | Reducir superficie publica | Rechaza `booking_id`, exige pago confirmado y devuelve payload minimo con nombre enmascarado. |
+| `web/comprobante-anticipo.html` | Sanitizar pagina publica | Fase 3B reemplaza `token/session_id` temporal por `voucher_token` firmado; elimina anon key y renderiza con `textContent`. |
+| `supabase/functions/deposit_voucher` | Reducir superficie publica | Rechaza identificadores publicos debiles, valida HMAC/TTL/proposito y exige pago confirmado. |
 | `supabase/functions/send_deposit_receipt` | Endurecer reenvio | Valida UUID, exige booking pagado y sanitiza errores publicos. |
 | `supabase/functions/_shared/deposit_receipts.ts` | Centralizar contrato | Lookup, firma/verificacion de token, pago, folio, monto y payload publico quedan en helper puro. |
 
@@ -27,18 +27,16 @@ Alerts.
 |---|---|---|---|---|
 | Abrir comprobante en Agenda | Flutter autenticado | `booking_id` UUID interno | URL firmada del bucket privado si existe | Ninguno. |
 | Reenviar comprobante | Flutter autenticado | `booking_id` UUID interno | `ok`, `folio`, `signed_url`, `whatsapp_sent` | Genera/sube PDF y envia WhatsApp best-effort. |
-| Consultar voucher publico | Browser posterior al pago | `token` firmado o `session_id` Stripe temporal | Folio, cliente enmascarado, servicio, fecha/hora, monto MXN | Ninguno. |
+| Consultar voucher publico | Browser posterior al pago | `voucher_token` HMAC firmado | Folio, cliente display, servicio, fecha/hora, monto MXN | Ninguno. |
 
 Notas de seguridad:
 
 - `booking_id` queda prohibido en la consulta publica.
-- `session_id` se conserva solo por compatibilidad con el `success_url` actual
-  de Stripe; el contrato preferido para una fase posterior es `token`.
-- El cliente publico se enmascara (`Ana P.`) y el endpoint no devuelve telefono,
-  email, notas ni URL firmada.
-- El HTML mantiene URL de proyecto y anon key publica heredadas. No es service
-  role, pero debe reemplazarse por configuracion/build antes de usar como
-  plantilla NEXORA.
+- Fase 3B elimina `session_id` como autorizacion del comprobante publico.
+- El endpoint no devuelve telefono, email, notas, ids internos, metadata ni URL
+  firmada privada.
+- El HTML mantiene URL de proyecto para invocar la Edge Function, pero ya no
+  contiene anon key ni consulta tablas directamente.
 
 ## Clientes
 
@@ -68,7 +66,7 @@ si Meta falla, puede devolver PDF generado sin confirmar WhatsApp.
 La pagina publica de comprobante ahora:
 
 - no usa `innerHTML` con datos remotos;
-- valida formato de `token` o `session_id` antes de llamar Edge;
+- valida formato de `voucher_token` antes de llamar Edge;
 - usa `cache: no-store`;
 - no acepta `booking_id`;
 - muestra solo comprobante pagado.
@@ -79,8 +77,8 @@ La pagina publica de comprobante ahora:
 |---|---|
 | `dart format ...` | OK en archivos Dart modificados. |
 | `flutter analyze --no-fatal-infos --no-fatal-warnings` | OK con deuda previa reportada; no falla. |
-| `flutter test` | OK, 23 tests pasaron. |
-| `deno fmt ...` | No ejecutado: `deno` no esta en PATH en esta maquina. |
+| `flutter test` | Fase 3B: OK, 24 tests pasaron. |
+| `deno task edge:fmt/lint/check/test` | Fase 3B: OK con Deno local `C:\Users\edgar\.deno\bin\deno.exe`. |
 | `supabase status` | OK; stack local corriendo. |
 | `supabase db reset` | OK; aplico migraciones locales reconstruidas. |
 | `supabase functions serve --no-verify-jwt` | OK smoke local; runtime arranco y fue detenido automaticamente. |
@@ -96,8 +94,8 @@ Tests agregados:
 - Ejecutar `deno task edge:fmt`, `edge:lint`, `edge:check` y `edge:test` en una
   terminal con Deno disponible en PATH. El smoke de `functions serve` si cargo
   el edge runtime local compatible con Deno.
-- Migrar `success_url` de Stripe a token firmado cuando exista almacenamiento o
-  generacion server-side del token.
+- Configurar `DEPOSIT_VOUCHER_SIGNING_SECRET` y TTL productivo antes de
+  desplegar el token firmado.
 - Definir autenticacion/rate-limit para `send_deposit_receipt` antes de
   publicarlo o desplegarlo.
 - No fusionar Gift Card Alerts todavia; requiere fase dedicada de composicion.
