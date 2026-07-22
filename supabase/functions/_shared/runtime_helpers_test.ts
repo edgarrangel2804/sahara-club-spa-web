@@ -8,6 +8,20 @@ import {
   verifyStripeSignature,
 } from "./stripe_checkout.ts"
 import {
+  addCalendarMonths,
+  buildGiftCardFulfillmentDraft,
+  computeGiftCardValidity,
+  createGiftCardDownloadToken,
+  giftCardAssetPath,
+  giftCardTokenFingerprint,
+  normalizeGiftCardPhone,
+  publicGiftCardPayload,
+  sanitizeDedicationMessage,
+  tijuanaDateFromInstant,
+  validateGiftCardRedemption,
+  verifyGiftCardDownloadToken,
+} from "./gift_card_fulfillment.ts"
+import {
   buildDepositVoucherSuccessUrl,
   checkVoucherRateLimit,
   constantTimeEqual,
@@ -349,6 +363,180 @@ Deno.test("voucher audit helpers avoid raw tokens and rate limit repeated attemp
   )
   assertEquals(constantTimeEqual("abc", "abc"), true)
   assertEquals(constantTimeEqual("abc", "abd"), false)
+})
+
+Deno.test("gift card validity uses three calendar months and clamps month end", () => {
+  assertEquals(addCalendarMonths("2026-08-15", 3), "2026-11-15")
+  assertEquals(addCalendarMonths("2026-08-31", 3), "2026-11-30")
+  assertEquals(addCalendarMonths("2026-12-01", 3), "2027-03-01")
+  assertEquals(computeGiftCardValidity("2026-08-15", "2026-08-15"), {
+    validFrom: "2026-08-15",
+    expiresOn: "2026-11-15",
+  })
+  assertThrows(
+    () => computeGiftCardValidity("2026-08-14", "2026-08-15"),
+    Error,
+    "gift_card_valid_from_in_past",
+  )
+})
+
+Deno.test("gift card date helper reads America/Tijuana without fixed UTC offsets", () => {
+  assertEquals(tijuanaDateFromInstant(new Date("2026-08-15T06:59:00.000Z")), "2026-08-14")
+  assertEquals(tijuanaDateFromInstant(new Date("2026-08-15T07:01:00.000Z")), "2026-08-15")
+})
+
+Deno.test("gift card recipient phone normalizes to E.164 and rejects invalid values", () => {
+  assertEquals(normalizeGiftCardPhone("646 151 9597"), "+526461519597")
+  assertEquals(normalizeGiftCardPhone("+52 646 151 9597"), "+526461519597")
+  assertEquals(normalizeGiftCardPhone("+5216461519597"), "+526461519597")
+  assertEquals(normalizeGiftCardPhone("001 602 587 7771"), "+16025877771")
+  assertEquals(normalizeGiftCardPhone("12345"), null)
+})
+
+Deno.test("gift card dedication strips HTML/control chars and keeps a 350 char cap", () => {
+  const dedication = sanitizeDedicationMessage(
+    `<b>Hola</b>\u0000\n\n\n${"x".repeat(500)}`,
+  )
+  assert(!dedication.includes("<"))
+  assert(!dedication.includes(">"))
+  assert(!dedication.includes("\u0000"))
+  assert(dedication.includes("Hola"))
+  assert(dedication.length <= 350)
+  assert(!dedication.includes("\n\n\n"))
+})
+
+Deno.test("gift card fulfillment draft trusts paid order item snapshot and buyer copy opt-in", () => {
+  const draft = buildGiftCardFulfillmentDraft({
+    todayTijuana: "2026-08-15",
+    order: {
+      customer_name: "Ana Compradora",
+      customer_phone: "6461519597",
+      paid_at: "2026-08-15T18:00:00Z",
+    },
+    item: {
+      product_name: "Gift card alterada desde cliente",
+      product_description: "Descripcion",
+      total_price: 1250,
+      unit_price: 1,
+      quantity: 1,
+      currency: "MXN",
+    },
+    metadata: {
+      service_id: "00000000-0000-4000-8000-000000000001",
+      service_name: "Masaje Relajante",
+      recipient_name: "Luna",
+      recipient_phone: "646 000 0000",
+      sender_name: "Ana",
+      valid_from: "2026-08-31",
+      dedication_message: "Disfruta tu ritual",
+      buyer_copy_requested: true,
+      purchase_channel: "web",
+    },
+  })
+  assertEquals(draft.recipientPhone, "+526460000000")
+  assertEquals(draft.validFrom, "2026-08-31")
+  assertEquals(draft.expiresOn, "2026-11-30")
+  assertEquals(draft.buyerCopyRequested, true)
+  assertEquals(draft.productSnapshot.value_paid, 1250)
+  assertEquals(draft.productSnapshot.service_name, "Masaje Relajante")
+})
+
+Deno.test("gift card download tokens enforce purpose, signature and ttl", async () => {
+  const secret = "local-test-gift-card-download-signing-secret"
+  const giftCardId = "00000000-0000-4000-8000-000000000000"
+  const orderItemId = "00000000-0000-4000-8000-000000000001"
+  const { token, payload } = await createGiftCardDownloadToken({
+    giftCardId,
+    orderItemId,
+    secret,
+    ttlSeconds: 600,
+    nowSeconds: 1000,
+    nonce: "abcdefghijklmnopqrstuvwx",
+  })
+
+  assertEquals(payload.purpose, "gift_card_download")
+  assertEquals(await verifyGiftCardDownloadToken(token, secret, 1200), {
+    ok: true,
+    payload,
+  })
+  assertEquals(await verifyGiftCardDownloadToken(`${token}x`, secret, 1200), {
+    ok: false,
+    error: "invalid_signature",
+    status: 401,
+  })
+  assertEquals(await verifyGiftCardDownloadToken(token, secret, 1701), {
+    ok: false,
+    error: "token_expired",
+    status: 403,
+  })
+})
+
+Deno.test("gift card redemption helper blocks inactive, future, expired and empty cards", () => {
+  assertEquals(
+    validateGiftCardRedemption({
+      status: "active",
+      current_balance: 1000,
+      valid_from: "2026-08-15",
+      expires_on: "2026-11-15",
+    }, { amount: 500, todayTijuana: "2026-09-01" }),
+    { ok: true },
+  )
+  assertEquals(
+    validateGiftCardRedemption({
+      status: "active",
+      current_balance: 1000,
+      valid_from: "2026-08-15",
+      expires_on: "2026-11-15",
+    }, { todayTijuana: "2026-08-14" }),
+    { ok: false, error: "gift_card_not_yet_valid" },
+  )
+  assertEquals(
+    validateGiftCardRedemption({
+      status: "active",
+      current_balance: 1000,
+      valid_from: "2026-08-15",
+      expires_on: "2026-11-15",
+    }, { todayTijuana: "2026-11-16" }),
+    { ok: false, error: "gift_card_expired" },
+  )
+  assertEquals(
+    validateGiftCardRedemption({ status: "redeemed", current_balance: 1000 }),
+    { ok: false, error: "gift_card_not_active" },
+  )
+  assertEquals(
+    validateGiftCardRedemption({ status: "active", current_balance: 0 }),
+    { ok: false, error: "gift_card_empty" },
+  )
+})
+
+Deno.test("gift card public payload and audit fingerprints avoid phone/email/session PII", async () => {
+  const token = "token-value-that-should-never-be-logged"
+  const fingerprint = await giftCardTokenFingerprint(token)
+  const payload = publicGiftCardPayload({
+    signedUrl: "https://example.supabase.co/storage/v1/object/sign/gift-card-assets/gift.pdf",
+    card: {
+      id: "00000000-0000-4000-8000-000000000000",
+      code: "SAHARA-ABCDEFGH",
+      recipient_name: "Luna",
+      sender_name: "Ana",
+      dedication_message: "Un regalo",
+      service_name: "Masaje",
+      valid_from: "2026-08-15",
+      expires_on: "2026-11-15",
+      status: "active",
+      recipient_phone: "+526461519597",
+      purchaser_email: "ana@example.com",
+    },
+  })
+
+  assert(fingerprint.startsWith("sha256:"))
+  assert(!fingerprint.includes(token))
+  assertEquals("recipient_phone" in (payload.card as Record<string, unknown>), false)
+  assertEquals("purchaser_email" in (payload.card as Record<string, unknown>), false)
+  assertEquals(
+    giftCardAssetPath("00000000-0000-4000-8000-000000000000"),
+    "gift-cards/00000000-0000-4000-8000-000000000000/1/gift-card.pdf",
+  )
 })
 
 async function signedTestVoucher(
