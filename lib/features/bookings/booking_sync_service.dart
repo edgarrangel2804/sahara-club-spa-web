@@ -109,11 +109,14 @@ class BookingSyncService {
     }
 
     if (statusFilter == 'active') {
+      // Incluye 'paid': las citas de paquete/gift card cobradas por adelantado
+      // (POS) quedan en 'paid' con fecha futura y DEBEN verse en la grilla.
+      // Antes se omitían y la cita quedaba "invisible" para recepción.
       query = query.or(
         'status.eq.scheduled,status.eq.pending,status.eq.pending_reception,'
         'status.eq.pending_payment,status.eq.payment_received,status.eq.confirmed,'
         'status.eq.checked_in,status.eq.in_progress,'
-        'status.eq.completed,status.eq.awaiting_payment',
+        'status.eq.completed,status.eq.awaiting_payment,status.eq.paid',
       );
     } else if (statusFilter == 'pending') {
       // "Agendadas": engloba el nuevo 'scheduled' + legacy 'pending' /

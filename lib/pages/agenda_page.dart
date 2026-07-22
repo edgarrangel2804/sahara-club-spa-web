@@ -20,6 +20,7 @@ import '../features/reportes/reportes_module.dart';
 import '../features/reception_alerts/reception_alert.dart';
 import '../features/reception_alerts/reception_alerts_service.dart';
 import '../features/reception_alerts/reception_alerts_bell.dart';
+import '../features/receipts/deposit_receipt_actions.dart';
 import '../features/reception_alerts/reception_alert_banner.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -1244,7 +1245,55 @@ class _AgendaPageState extends State<AgendaPage> {
     }
   }
 
+  // Estados cuyo cambio dispara un WhatsApp AUTOMÁTICO al cliente (trigger
+  // handle_booking_whatsapp_events). Se usa para avisar a recepción antes de
+  // ejecutar la acción, para que sepa qué se le enviará al cliente.
+  static const Map<String, String> _statusNotifiesClient = {
+    'confirmed': 'Confirmación de la cita ("tu cita ha sido confirmada")',
+    'cancelled': 'Aviso de cancelación ("tu cita fue cancelada")',
+    'payment_received': 'Aviso de cita agendada',
+    '__reschedule__': 'Aviso de reagendado ("tu cita fue reagendada")',
+  };
+
+  // Nivel 1 de la auditoría (control de disparadores): avisa a recepción que la
+  // acción enviará un WhatsApp automático al cliente y pide confirmar.
+  Future<bool> _confirmClientNotification(String newStatus) async {
+    final desc = _statusNotifiesClient[newStatus];
+    if (desc == null) return true; // esta acción no notifica al cliente
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.chat_bubble_outline, color: Color(0xFF128C7E), size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text('Se enviará un WhatsApp al cliente',
+                  style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w700)),
+            ),
+          ],
+        ),
+        content: Text(
+          'Esta acción enviará automáticamente un WhatsApp al cliente:\n\n• $desc\n\n¿Deseas continuar?',
+          style: GoogleFonts.inter(fontSize: 13.5, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Sí, continuar'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   Future<bool> _updateBookingStatus(_Booking booking, String newStatus) async {
+    if (!await _confirmClientNotification(newStatus)) return false;
     try {
       final finalStatus = await _persistBookingStatusFlow(booking, newStatus);
 
@@ -2306,6 +2355,13 @@ class _AgendaPageState extends State<AgendaPage> {
     DateTime newDate,
     int newMinute,
   ) async {
+    // Mover una cita ya confirmada/reagendada dispara un WhatsApp de reagendado
+    // al cliente. Avisamos a recepción antes; si cancela, revertimos el movimiento.
+    if ((b.status == 'confirmed' || b.status == 'rescheduled') &&
+        !await _confirmClientNotification('__reschedule__')) {
+      await _loadBookings();
+      return false;
+    }
     final bookingDate = _isoDateOnly(newDate);
     final bookingTime = _isoTimeOnly(newMinute);
     try {
@@ -6339,9 +6395,9 @@ enum _BookingOrigin {
       case _BookingOrigin.whatsappAi:
         return 'WhatsApp';
       case _BookingOrigin.web:
-        return 'Web';
+        return 'Página web';
       case _BookingOrigin.landing:
-        return 'Landing';
+        return 'Página web';
     }
   }
 
@@ -6801,6 +6857,19 @@ class _BookingDetailDialog extends StatelessWidget {
                       label: 'Ver ticket',
                       color: const Color(0xFF4A4A4A),
                       onTap: onViewTicket,
+                    ),
+                  // Comprobante del anticipo: visible en citas que ya pagaron
+                  // el anticipo. Genera/reenvía el PDF y deja abrirlo para
+                  // compartirlo si el WhatsApp no llegó.
+                  if (const [
+                    'confirmed', 'payment_received', 'rescheduled',
+                    'in_progress', 'completed', 'paid',
+                  ].contains(b.status))
+                    _DialogBtn(
+                      label: 'Comprobante',
+                      color: const Color(0xFFC6A76A),
+                      textColor: Colors.black87,
+                      onTap: () => showDepositReceiptDialog(context, b.id),
                     ),
                   _DialogBtn(
                     // Abre el formulario completo de la cita (prellenado):
@@ -7456,17 +7525,19 @@ class _DialogBtn extends StatelessWidget {
     required this.label,
     required this.color,
     required this.onTap,
+    this.textColor,
   });
   final String label;
   final Color color;
   final VoidCallback onTap;
+  final Color? textColor;
 
   @override
   Widget build(BuildContext context) => TextButton(
     onPressed: onTap,
     style: TextButton.styleFrom(
       backgroundColor: color.withValues(alpha: 0.15),
-      foregroundColor: color,
+      foregroundColor: textColor ?? color,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(4),
         side: BorderSide(color: color.withValues(alpha: 0.4)),

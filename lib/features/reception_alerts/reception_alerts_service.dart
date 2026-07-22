@@ -11,10 +11,26 @@ class ReceptionAlertsService {
 
   SupabaseClient get _client => Supabase.instance.client;
 
+  /// Fecha de hoy (YYYY-MM-DD) en horario de la península (Tijuana/Ensenada, UTC-7).
+  /// Sirve para ocultar alertas de citas que ya pasaron.
+  static String _todayPeninsula() {
+    final d = DateTime.now().toUtc().subtract(const Duration(hours: 7));
+    return '${d.year.toString().padLeft(4, '0')}-'
+        '${d.month.toString().padLeft(2, '0')}-'
+        '${d.day.toString().padLeft(2, '0')}';
+  }
+
+  /// Solo alertas vigentes para el widget de recepción:
+  /// - se excluyen las ya atendidas (`status = 'resolved'`);
+  /// - se excluyen las de citas pasadas (`booking_date` anterior a hoy);
+  ///   las alertas sin `booking_date` se conservan (no se puede saber si caducaron).
   Future<List<ReceptionAlert>> fetchRecent({int limit = 50}) async {
+    final today = _todayPeninsula();
     final rows = await _client
         .from('reception_alerts')
         .select()
+        .neq('status', 'resolved')
+        .or('booking_date.gte.$today,booking_date.is.null')
         .order('created_at', ascending: false)
         .limit(limit);
     return (rows as List)
@@ -24,10 +40,12 @@ class ReceptionAlertsService {
   }
 
   Future<int> fetchUnseenCount() async {
+    final today = _todayPeninsula();
     final rows = await _client
         .from('reception_alerts')
         .select('id')
-        .eq('status', 'unseen');
+        .eq('status', 'unseen')
+        .or('booking_date.gte.$today,booking_date.is.null');
     return (rows as List).length;
   }
 

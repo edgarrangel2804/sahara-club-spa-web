@@ -13,6 +13,14 @@ class _ReceptionLoginPageState extends State<ReceptionLoginPage> {
   final _passwordController = TextEditingController();
   bool _isLoading = false;
 
+  void _goHome() {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushReplacementNamed(context, '/');
+    }
+  }
+
   Future<void> _signIn() async {
     setState(() => _isLoading = true);
     final supa = Supabase.instance.client;
@@ -132,7 +140,18 @@ class _ReceptionLoginPageState extends State<ReceptionLoginPage> {
                       ? const CircularProgressIndicator(color: Colors.black)
                       : const Text("ENTRAR", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 2)),
                 ),
-              )
+              ),
+              const SizedBox(height: 20),
+              Center(
+                child: TextButton.icon(
+                  onPressed: _isLoading ? null : _goHome,
+                  icon: const Icon(Icons.arrow_back, size: 16, color: Colors.white54),
+                  label: const Text(
+                    "Volver a la página principal",
+                    style: TextStyle(color: Colors.white54, fontSize: 13, letterSpacing: 1),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
