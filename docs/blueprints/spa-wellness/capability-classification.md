@@ -34,7 +34,7 @@ Status values:
 | Servicios | PRODUCTIVO | `services` holds catalog, duration, price, wellness metadata, and giftable service support. |
 | Paquetes | PRODUCTIVO | Package schema and package consumption flows exist, but are not part of this baseline. |
 | Membresías | PRODUCTIVO | Membership plans and client memberships exist with payments and entitlements. |
-| Gift Cards | PRODUCTIVO | `gift_cards` exists with balances, client/service links, and ecommerce lineage. |
+| Gift Cards | PRODUCTIVO | `gift_cards` now has local digital fulfillment coverage: recipient/dedication metadata, `valid_from`/`expires_on`, private assets, signed downloads, WhatsApp delivery ledger, reception action endpoint, and redemption RPC. |
 | Anticipos | PRODUCTIVO | Booking deposit fields, Stripe checkout, payment requirements, PDF receipts, voucher lookup, and AI deposit settings exist. |
 | Historial de spa | PARCIAL | Appointment status history and client stats exist, but the record is spread across multiple SQL files. |
 | Evaluaciones | NO COMPROBABLE | No certified schema for intake/evaluation records was identified in the baseline path. |
@@ -120,6 +120,50 @@ moving them to NEXORA.
 | Hardcoded public HTML config | LEGACY DO NOT COPY | Do not place anon keys in HTML or depend on public table selects for documents. |
 | Tokens in logs or query PII | LEGACY DO NOT COPY | Do not log voucher tokens, customer PII, payment ids, or internal identifiers in public document flows. |
 | Automatic WhatsApp resend from UI | LEGACY DO NOT COPY | Receipt resend must remain an explicit operator action with idempotency/rate-limit before reuse. |
+
+## Gift Card Digital Fulfillment Regularization
+
+This phase classifies the paid Gift Card digital fulfillment path without
+deploying it or moving code to NEXORA.
+
+### Universal NEXORA Candidates
+
+| Capability | Status | Notes |
+|---|---:|---|
+| Digital entitlements | FOUNDATION | A paid order item can create one durable entitlement with code, balance, status, commercial validity, and redemption history. |
+| Gift fulfillment | FOUNDATION | Fulfillment is decomposed into paid-order verification, idempotent entitlement creation, asset generation, delivery, and alerting. |
+| Recipient delivery | FOUNDATION | Recipient delivery stores normalized contact separately from public payloads and masks contact details for internal alerts. |
+| Signed downloads | FOUNDATION | Public access uses purpose-scoped HMAC tokens with TTL and no PII in URLs. |
+| Asset generation | FOUNDATION | Edge runtime can generate PDF assets without Chromium and store them in private Storage with hashes. |
+| Delivery idempotency | FOUNDATION | `gift_card_deliveries` models `gift_card_id + destination_hash + delivery_type` claims for retries and duplicate suppression. |
+| Expiration policies | FOUNDATION | Commercial validity uses calendar-month date math, not fixed day offsets. |
+| Redemption | FOUNDATION | `redeem_service_gift_card` is the backend gate for active status, validity window, balance, and duplicate booking prevention. |
+| Audit trail | FOUNDATION | Transactions, delivery attempts, token fingerprints, and reception alerts create a reusable audit shape. |
+| Channel retries | FOUNDATION | Webhook, download, WhatsApp, and reception actions can complete pending steps without recreating the Gift Card. |
+
+### Vertical Spa & Wellness
+
+| Capability | Status | Notes |
+|---|---:|---|
+| Gift Card por tratamiento | PRODUCTIVO | Gift Cards now snapshot the selected service name, price, description, currency, and purchase date. |
+| Paquetes de sesiones | PARCIAL | Schema and snapshot fields support package ids/names/sessions, but package purchase fulfillment still needs a dedicated certification pass. |
+| Experiencias | PRODUCTIVO | Digital card PDF renders the service/package/experience purchased at payment time. |
+| Vigencia comercial | PRODUCTIVO | `valid_from` and `expires_on` are date fields with three calendar month behavior. |
+| Dedicatorias | PRODUCTIVO | Buyer can provide a sanitized dedication shown in the authorized card/PDF. |
+| Reserva posterior | PARCIAL | WhatsApp copy instructs the recipient to reserve by replying; appointment creation from Gift Card code remains a separate flow. |
+| Canje en recepcion | PRODUCTIVO | Backend redemption RPC enforces validity and balance before consuming the card. |
+| QR de tratamiento | PRODUCTIVO | The QR carries only the opaque redemption code, not PII or payment identifiers. |
+
+### Legacy
+
+| Item | Classification | Notes |
+|---|---|---|
+| Frontend-only Gift Card rendering | LEGACY DO NOT COPY | Cards must be generated server-side or from a trusted backend payload, not from unauthenticated URL parameters. |
+| Gift Card price from client | LEGACY DO NOT COPY | The frontend can select a service, but the backend must resolve price, currency, and snapshot from server-side data. |
+| Fixed day expiration | LEGACY DO NOT COPY | Do not model three months as 90 days; use calendar-month date math with a business timezone. |
+| Raw code/session public lookup | LEGACY DO NOT COPY | Do not authorize card download by raw code, order id, or Stripe session id. Use signed purpose tokens. |
+| WhatsApp without delivery ledger | LEGACY DO NOT COPY | Provider sends must be guarded by a delivery claim keyed by hashed destination and delivery type. |
+| Regenerating cards on retry | LEGACY DO NOT COPY | Webhook retries must reuse `order_item_id`, asset path, code, validity, and delivery status. |
 
 ## Baseline Object Classification
 

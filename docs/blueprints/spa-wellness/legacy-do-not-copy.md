@@ -24,6 +24,7 @@ This file records productive Sahara behavior that may be real and useful, but sh
 - Do not copy `auto_confirm_bookings` with a public `?force=1` path; it writes bookings and needs a cron-only trust boundary.
 - Do not expose `whatsapp-ai-router` without caller authentication, rate limiting, and abuse controls.
 - Do not reuse `deposit_voucher` as a public lookup by `booking_id` or `session_id` without a scoped signed token.
+- Do not reuse Gift Card public lookup by raw `code`, `order_id`, or Stripe `session_id`; use a scoped signed token with purpose `gift_card_download`.
 - Do not use Stripe Checkout Session ID as authorization for public documents; it can be correlation only.
 - Do not accept externally supplied `success_url` domains for appointment deposits. Build and allowlist the URL server-side.
 - Do not log full voucher/document tokens; store at most an irreversible hash or short non-sensitive prefix.
@@ -41,6 +42,9 @@ This file records productive Sahara behavior that may be real and useful, but sh
 ## Domain Modeling
 
 - Do not trust product prices or payable totals from the frontend. Server-side pricing must own Gift Card, package, membership, and appointment charges.
+- Do not trust frontend Gift Card fields for balance, expiration, status, code, or amount paid. The backend owns all commercial facts after payment.
+- Do not generate Gift Card assets only in the browser from query params; authorized backend payloads and private Storage are the safe boundary.
+- Do not calculate Gift Card validity with fixed offsets such as 90 days when the business rule is calendar months.
 - Do not couple Stripe webhook behavior directly to unrelated booking and notification side effects without idempotent boundaries.
 - Do not let optional domain FKs expand every migration into the whole schema. Define explicit domain ownership and migration order.
 - Do not treat `profiles.role`, `staff.role`, and dynamic permissions as interchangeable. Normalize the role model before reuse.
@@ -56,6 +60,8 @@ This file records productive Sahara behavior that may be real and useful, but sh
 - Do not rely on status-only checks when a unique delivery ledger is needed.
 - Do not couple reception UI alerts, WhatsApp provider logs, and Stripe fulfillment without explicit replay safety.
 - Do not allow webhook replay to create duplicate Gift Cards, alerts, or admin notifications.
+- Do not send Gift Card WhatsApp documents without a delivery ledger keyed by `gift_card_id`, hashed destination, and delivery type.
+- Do not put recipient phones, emails, payment ids, or full Gift Card codes into WhatsApp/reception technical logs.
 - Do not merge Gift Card Alerts by replacing regularized reception alert files wholesale. Model fields, banner rows, bell UI, and Agenda navigation need a manual fusion after receipt/client regularization.
 - Do not expose receipt resend actions without caller authentication, rate limiting, and a delivery ledger.
 - Do not make public voucher lookup depend on raw `booking_id`; use a scoped signed token and return only minimal paid voucher data.
