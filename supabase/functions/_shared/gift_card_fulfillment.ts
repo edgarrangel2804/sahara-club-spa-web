@@ -12,6 +12,7 @@ import {
   loadBusinessSettings,
   normalizePhone as normalizeWhatsAppPhone,
 } from "./whatsapp_business.ts"
+import { notifyGiftCardPurchaseAdmins } from "./admin_notifications.ts"
 
 export type AdminClient = any
 
@@ -260,7 +261,12 @@ export function buildGiftCardFulfillmentDraft(input: {
 
 export function normalizePurchaseChannel(value: unknown): string {
   const raw = String(value ?? "").trim().toLowerCase()
-  if (raw === "web" || raw === "whatsapp" || raw === "reception") return raw
+  if (
+    raw === "web" || raw === "whatsapp" || raw === "reception" || raw === "manual" ||
+    raw === "admin"
+  ) {
+    return raw
+  }
   return "unknown"
 }
 
@@ -306,14 +312,52 @@ export async function fulfillGiftCardItem(
     card = await completeMissingGiftCardFields(supabase, card, draft)
   }
 
-  const asset = await ensureGiftCardDigitalAsset(supabase, card)
-  card = asset.card
-  await deliverGiftCardAfterPayment(supabase, card, asset.signedUrl)
   await createGiftCardReceptionAlert(supabase, {
     order: input.order,
     item: input.item,
     card,
     draft,
+  })
+
+  const asset = await ensureGiftCardDigitalAsset(supabase, card)
+  card = asset.card
+  await deliverGiftCardAfterPayment(supabase, card, asset.signedUrl)
+  card = await findGiftCardById(supabase, String(card.id)) ?? card
+  await createGiftCardReceptionAlert(supabase, {
+    order: input.order,
+    item: input.item,
+    card,
+    draft,
+  })
+  let adminNotificationStatus = "skipped"
+  try {
+    const adminResult = await notifyGiftCardPurchaseAdmins(supabase, [{
+      orderId: String(input.order.id ?? input.orderId),
+      orderItemId: String(input.item.id ?? ""),
+      giftCardId: String(card.id ?? ""),
+      buyerName: draft.purchaserName,
+      recipientName: draft.recipientName,
+      productName: draft.serviceName || draft.packageName ||
+        String(input.item.product_name ?? "Gift Card Sahara"),
+      amountPaid: roundCurrency(Number(input.item.total_price ?? 0)),
+      currency: String(input.item.currency ?? input.order.currency ?? "MXN").toUpperCase(),
+      validFrom: draft.validFrom,
+      expiresOn: draft.expiresOn,
+      deliveryStatus: String(card.delivery_status ?? "pending"),
+      assetStatus: String(card.digital_asset_status ?? "pending"),
+      purchaseChannel: draft.purchaseChannel,
+    }])
+    adminNotificationStatus = summarizeAdminNotificationStatus(adminResult)
+  } catch (error) {
+    adminNotificationStatus = "failed"
+    console.warn("gift card admin notification failed:", sanitizeTechnicalError(error))
+  }
+  await createGiftCardReceptionAlert(supabase, {
+    order: input.order,
+    item: input.item,
+    card,
+    draft,
+    adminNotificationStatus,
   })
 
   return card
@@ -710,6 +754,16 @@ async function findGiftCardByOrderItem(supabase: AdminClient, orderItemId: strin
   return (data ?? null) as Record<string, unknown> | null
 }
 
+async function findGiftCardById(supabase: AdminClient, giftCardId: string) {
+  const { data, error } = await supabase
+    .from("gift_cards")
+    .select("*")
+    .eq("id", giftCardId)
+    .maybeSingle()
+  if (error) throw error
+  return (data ?? null) as Record<string, unknown> | null
+}
+
 async function insertGiftCardWithRetry(
   supabase: AdminClient,
   input: { orderId: string; order: Record<string, unknown>; item: Record<string, unknown> },
@@ -973,6 +1027,7 @@ async function createGiftCardReceptionAlert(
     item: Record<string, unknown>
     card: Record<string, unknown>
     draft: GiftCardFulfillmentDraft
+    adminNotificationStatus?: string
   },
 ) {
   try {
@@ -989,41 +1044,53 @@ async function createGiftCardReceptionAlert(
       `Entrega: ${String(input.card.delivery_status ?? "pending")}.`,
     ].join("\n")
 
-    const { error } = await supabase.from("reception_alerts").insert({
-      event_type: "gift_card_purchased",
-      booking_id: null,
-      client_record_id: null,
-      client_name: input.draft.recipientName,
-      client_phone: maskPhone(input.draft.recipientPhone),
-      service_name: input.draft.serviceName || input.draft.packageName || "Gift Card Sahara",
-      channel: input.draft.purchaseChannel,
-      message,
-      amount_mxn: roundCurrency(Number(input.item.total_price ?? 0)),
-      order_id: input.order.id,
-      order_item_id: input.item.id,
-      gift_card_id: input.card.id,
-      buyer_name: input.draft.purchaserName,
-      buyer_email: maskEmail(String(input.order.customer_email ?? "")),
-      buyer_phone: maskPhone(input.draft.purchaserPhone),
-      product_name: String(input.item.product_name ?? input.draft.serviceName),
-      face_value: roundCurrency(Number(input.item.total_price ?? 0)),
-      amount_paid: roundCurrency(Number(input.item.total_price ?? 0)),
-      currency: String(input.item.currency ?? "MXN").toUpperCase(),
-      purchase_channel: input.draft.purchaseChannel,
-      occurred_at: new Date().toISOString(),
-      metadata: {
+    const { error } = await supabase.rpc("log_gift_card_purchase_alert", {
+      p_order_id: input.order.id,
+      p_order_item_id: input.item.id,
+      p_gift_card_id: input.card.id,
+      p_client_name: input.draft.recipientName,
+      p_client_phone: maskPhone(input.draft.recipientPhone),
+      p_service_name: input.draft.serviceName || input.draft.packageName || "Gift Card Sahara",
+      p_channel: input.draft.purchaseChannel,
+      p_message: message,
+      p_amount_mxn: roundCurrency(Number(input.item.total_price ?? 0)),
+      p_buyer_name: input.draft.purchaserName,
+      p_buyer_email: maskEmail(String(input.order.customer_email ?? "")),
+      p_buyer_phone: maskPhone(input.draft.purchaserPhone),
+      p_product_name: String(input.item.product_name ?? input.draft.serviceName),
+      p_face_value: roundCurrency(Number(input.item.total_price ?? 0)),
+      p_amount_paid: roundCurrency(Number(input.item.total_price ?? 0)),
+      p_currency: String(input.item.currency ?? "MXN").toUpperCase(),
+      p_purchase_channel: input.draft.purchaseChannel,
+      p_occurred_at: input.order.paid_at ?? input.order.created_at ?? new Date().toISOString(),
+      p_metadata: {
         recipient_phone_mask: maskPhone(input.draft.recipientPhone),
         gift_card_code_last4: String(input.card.code ?? "").slice(-4),
         valid_from: input.draft.validFrom,
         expires_on: input.draft.expiresOn,
+        buyer_copy_requested: input.draft.buyerCopyRequested,
         delivery_status: String(input.card.delivery_status ?? "pending"),
         digital_asset_status: String(input.card.digital_asset_status ?? "pending"),
+        admin_notification_status: input.adminNotificationStatus,
       },
     })
-    if (error && (error as { code?: string } | null)?.code !== "23505") throw error
+    if (error) throw error
   } catch (error) {
     console.warn("gift card reception alert failed:", sanitizeTechnicalError(error))
   }
+}
+
+function summarizeAdminNotificationStatus(input: {
+  attempted: number
+  sent: number
+  failed: number
+  skipped?: string
+}): string {
+  if (input.skipped || input.attempted === 0) return "skipped"
+  if (input.failed > 0 && input.sent > 0) return "partial_failed"
+  if (input.failed > 0) return "failed"
+  if (input.sent > 0) return "sent"
+  return "skipped"
 }
 
 export async function createGiftCardSignedUrl(
@@ -1296,6 +1363,10 @@ function purchaseChannelLabel(value: string): string {
       return "WhatsApp"
     case "reception":
       return "recepcion"
+    case "manual":
+      return "venta manual"
+    case "admin":
+      return "admin"
     default:
       return "canal no identificado"
   }
