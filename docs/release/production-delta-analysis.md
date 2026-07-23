@@ -8,7 +8,7 @@ Modo: solo lectura. No se hizo `supabase link`, `db pull`, `db push`, deploy, pu
 
 | Componente | Produccion | Release Candidate | Diferencia | Accion |
 |---|---|---|---|---|
-| `origin/main` | `f38833922e7a8dac300c0b57067c9654c38e7b99` | Rama local de regularizacion con recuperacion RPC | RC esta mas de 43 commits adelante | ACTUALIZAR via PR/merge futuro |
+| `origin/main` | `f38833922e7a8dac300c0b57067c9654c38e7b99` | Rama local de regularizacion con recuperacion RPC | RC estaba 51 commits adelante en `867661fa53c985276d2b001dfd43d17d4ed2fe2a`; el cierre agrega correccion/pruebas/docs | ACTUALIZAR via PR/merge futuro |
 | Repo original protegido | 38 movimientos locales | No usado como fuente directa | Original conserva drift local | REQUIERE BACKUP antes de tocar |
 | Worktree Gift Card Alerts | `feature/gift-card-reception-notifications`, `.audit/remote_public_schema.sql` untracked | No modificado | Worktree protegido queda aparte | SIN CAMBIO |
 
@@ -35,13 +35,15 @@ Proyecto remoto listado por CLI: `sahara-club-spa` con ref `fkbyxhwdcsgrrixalzwf
 | Edge `gift_card_reception_actions` | No aparecio en listado remoto | Existe local | Nueva funcion interna recepcion | CREAR |
 | Tablas/policies remotas | NO COMPROBABLE | RLS/policies locales PASS parcial | No se introspecto remoto | NO COMPROBABLE |
 | Buckets remotos | NO COMPROBABLE | `gift-card-assets`, `receipts` privados locales | No se introspecto remoto | NO COMPROBABLE |
+| Reset local reproducible | NO APLICA remoto | Migraciones aplican y SQL pasa, pero `supabase db reset` sale 1 por timeout Storage | Bloqueo de certificacion formal local | CORREGIR/REINTENTAR antes de release final |
+| `supabase_vector` local | NO APLICA remoto | Reinicia por error del colector de logs contra Docker | No hay uso de pgvector/embeddings en codigo | DEUDA LOCAL NO FUNCIONAL |
 
 ## Vercel
 
 | Componente | Produccion | Release Candidate | Diferencia | Accion |
 |---|---|---|---|---|
 | CLI global | No disponible | CLI vendorizado existe | Se uso `node_modules/.bin/vercel.cmd` | SIN CAMBIO |
-| Auth Vercel | Token local invalido | No se pudo listar deployments | Deployment activo NO COMPROBABLE | NO COMPROBABLE |
+| Auth Vercel | NO COMPROBABLE previo | `vercel whoami` autentico cuenta local; no se hizo deploy | Deployment activo/proyecto link NO COMPROBABLE | NO COMPROBABLE |
 | `vercel.json` | NO COMPROBABLE remoto | Local define `buildCommand`, `build/web`, rewrites y headers | Config local lista | VERIFICAR |
 | Deployment activo/SHA/alias | NO COMPROBABLE | No se desplego | Falta metadata read-only valida | NO COMPROBABLE |
 
@@ -52,3 +54,4 @@ Proyecto remoto listado por CLI: `sahara-club-spa` con ref `fkbyxhwdcsgrrixalzwf
 | RPCs de reserva migradas solo localmente | `web_concierge` y `whatsapp-ai-router` ya son reproducibles tras reset local, pero remoto no fue aplicado/verificado | APLICAR y verificar migraciones en release controlado |
 | Funciones nuevas locales ausentes remoto | Gift Card download y reception actions no existen en produccion | CREAR solo despues de migraciones/secrets |
 | Vercel no comprobable | No se puede confirmar SHA activo ni alias | Verificar token/proyecto antes de despliegue |
+| `supabase db reset` local sale 1 | No se puede firmar release candidate integral aunque las pruebas SQL pasen | Resolver timeout local de Storage/CLI o certificar con CLI actualizada antes de PR final |

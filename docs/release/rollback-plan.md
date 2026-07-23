@@ -24,6 +24,14 @@ Estado: propuesta, no ejecutada.
 
 No usar comandos destructivos sin backup confirmado y aprobacion humana.
 
+## Fallo de reset local Supabase/Storage
+
+1. No declarar `RELEASE CANDIDATE CERTIFICADO` si `supabase db reset` termina con exit 1.
+2. Confirmar si las migraciones se aplicaron y ejecutar `security_boundaries.sql` + `ai_booking_rpcs.sql` solo como diagnostico funcional, no como sustituto del PASS formal.
+3. Revisar salud de Storage, Kong y logs sanitizados; no imprimir keys locales ni secrets.
+4. Clasificar `supabase_vector` aparte si solo falla el colector de logs y el codigo no usa pgvector/embeddings.
+5. Reintentar con CLI/entorno Docker corregido antes de PR final o despliegue.
+
 ## Fallo Edge
 
 1. No desplegar frontend nuevo si Edge no esta sano.

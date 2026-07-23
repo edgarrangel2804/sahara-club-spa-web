@@ -2,7 +2,7 @@
 
 Estado: propuesta, no ejecutada.
 
-Veredicto actual: `DESBLOQUEADO LOCALMENTE PARA RPCs DE RESERVA/IA`; despliegue remoto pendiente.
+Veredicto actual: `CERTIFICACION INTEGRAL BLOQUEADA POR TIMEOUT LOCAL DE SUPABASE CLI/STORAGE`; despliegue remoto pendiente.
 
 ## Git
 
@@ -11,7 +11,7 @@ Veredicto actual: `DESBLOQUEADO LOCALMENTE PARA RPCs DE RESERVA/IA`; despliegue 
 | Rama origen | `chore/regularize-production-baseline` |
 | HEAD base antes de recuperar RPCs | `04970fb85ec424b00d789f4281ba761067364e6c` |
 | Base | `f38833922e7a8dac300c0b57067c9654c38e7b99` |
-| Commits adelante de `origin/main` | 43 + commits de recuperacion RPC |
+| Commits adelante de `origin/main` | 51 en `867661fa53c985276d2b001dfd43d17d4ed2fe2a`, mas commits de cierre local si se integran |
 | Estrategia futura | Abrir PR, revisar, CI, backup remoto, merge controlado. No push/deploy desde esta certificacion. |
 
 ## Migraciones
@@ -26,9 +26,9 @@ Veredicto actual: `DESBLOQUEADO LOCALMENTE PARA RPCs DE RESERVA/IA`; despliegue 
 | 6 | `20260722030000_security_hardening_functions.sql` | security definer/search_path helpers | Endurece RPCs | ALTO | Migracion correctiva, no rollback ciego |
 | 7 | `20260722030100_security_hardening_rls_grants.sql` | RLS/grants commerce/admin | Reduce acceso | ALTO | Migracion correctiva basada en backup |
 | 8 | `20260722030200_security_hardening_storage.sql` | buckets privados y policies Storage | Reduce acceso | ALTO | Ajustar policies; no hacer buckets publicos |
-| 9 | `20260722040000_ai_booking_rpcs.sql` | `business_hours`, staff availability support, 3 RPCs reserva/IA, `bookings.ai_idempotency_key` | Aditiva y reproducible | ALTO | Migracion correctiva; no borrar bookings |
+| 9 | `20260722040000_ai_booking_rpcs.sql` | `business_hours`, staff availability support, 3 RPCs reserva/IA, `bookings.ai_idempotency_key`, duracion server-side desde `services.duration_min` | Aditiva y probada localmente | ALTO | Migracion correctiva; no borrar bookings |
 
-Nota: las RPCs de reserva/IA ya estan migradas y probadas localmente; falta aplicar/verificar remoto antes de trafico productivo.
+Nota: las RPCs de reserva/IA ya estan migradas y probadas localmente con 24 aserciones SQL. Falta resolver el exit 1 de `supabase db reset` por timeout de Storage local y aplicar/verificar remoto antes de trafico productivo.
 
 ## Edge Functions
 
@@ -54,7 +54,7 @@ Nota: las RPCs de reserva/IA ya estan migradas y probadas localmente; falta apli
 | Item | Valor |
 |---|---|
 | Build command local | `flutter build web --release` PASS |
-| Vercel config | `buildCommand: bash build.sh`, `outputDirectory: build/web` |
+| Vercel config | `buildCommand: bash build.sh`, `outputDirectory: build/web`; deployment activo/proyecto link no comprobable |
 | Assets criticos | `assets/videos/Portada-2.mp4`, `assets/experiencia/*.png` |
 | Rutas publicas | `/`, `/pagar-anticipo`, `/pagar-anticipo/:bookingId`, `/comprobante-anticipo.html` |
 | Gift Card download | Edge `gift_card_download` con token firmado |
@@ -104,3 +104,9 @@ No ejecutar sin backup remoto, secrets verificados y ventana de release.
 12. Confirmar WhatsApp.
 13. Monitoreo.
 14. Cierre o rollback.
+
+## Stop criteria actuales
+
+- No declarar release final mientras `supabase db reset` cierre con exit 1.
+- No desplegar Edge/Web si no se confirma metadata Vercel activa y proyecto linkeado.
+- No activar flujos reales de Stripe/Meta/WhatsApp/Anthropic sin pruebas sandbox/supervisadas y secrets verificados por nombre.
