@@ -103,7 +103,16 @@ void main() {
 
     test('builds explicit payloads and authorized receipt page URLs', () {
       expect(sendDepositReceiptPayload(bookingId), {'booking_id': bookingId});
+      expect(downloadDepositReceiptPayload(bookingId), {
+        'booking_id': bookingId,
+        'action': 'download_link',
+        'send_whatsapp': false,
+      });
       expect(() => sendDepositReceiptPayload('booking-1'), throwsArgumentError);
+      expect(
+        () => downloadDepositReceiptPayload('booking-1'),
+        throwsArgumentError,
+      );
 
       const voucherToken =
           'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOP.abcdefghijklmnopqrstuvwxyz123456';

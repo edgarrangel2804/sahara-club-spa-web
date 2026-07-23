@@ -8,6 +8,17 @@ import {
   verifyStripeSignature,
 } from "./stripe_checkout.ts"
 import {
+  checkRateLimit,
+  clientIpKey,
+  constantTimeEqual as runtimeConstantTimeEqual,
+  corsHeadersFor,
+  fingerprintValue,
+  isAllowedOrigin,
+  isServiceRoleRequest,
+  resetSecurityRateLimitsForTests,
+  sanitizeTechnicalLog,
+} from "./runtime_security.ts"
+import {
   addCalendarMonths,
   buildGiftCardFulfillmentDraft,
   computeGiftCardValidity,
@@ -119,14 +130,81 @@ Deno.test("verifyStripeSignature accepts valid v1 signatures only", async () => 
     .join("")
 
   assertEquals(
-    await verifyStripeSignature(payload, `t=${timestamp},v1=${signature}`, secret),
+    await verifyStripeSignature(payload, `t=${timestamp},v1=${signature}`, secret, {
+      nowSeconds: Number(timestamp),
+    }),
     true,
   )
   assertEquals(
-    await verifyStripeSignature(payload, `t=${timestamp},v1=bad${signature}`, secret),
+    await verifyStripeSignature(payload, `t=${timestamp},v1=bad${signature}`, secret, {
+      nowSeconds: Number(timestamp),
+    }),
     false,
   )
   assertEquals(await verifyStripeSignature(payload, null, secret), false)
+  assertEquals(
+    await verifyStripeSignature(payload, `t=${timestamp},v1=${signature}`, secret, {
+      nowSeconds: Number(timestamp) + 301,
+      toleranceSeconds: 300,
+    }),
+    false,
+  )
+})
+
+Deno.test("runtime security helpers apply CORS allowlist, fingerprints and rate limits", async () => {
+  resetSecurityRateLimitsForTests()
+  const allowedReq = new Request("https://edge.test", {
+    headers: {
+      origin: "https://saharaclubspa.com",
+      "x-forwarded-for": "203.0.113.8, 10.0.0.1",
+    },
+  })
+  assertEquals(
+    corsHeadersFor(allowedReq)["Access-Control-Allow-Origin"],
+    "https://saharaclubspa.com",
+  )
+  assertEquals(clientIpKey(allowedReq), "203.0.113.8")
+  assertEquals(isAllowedOrigin("http://localhost:54321"), true)
+  assertEquals(isAllowedOrigin("https://evil.example"), false)
+
+  const fingerprint = await fingerprintValue("secret-token-value")
+  assert(fingerprint.startsWith("sha256:"))
+  assert(!fingerprint.includes("secret-token-value"))
+
+  assertEquals(
+    checkRateLimit("checkout:203.0.113.8", {
+      nowMs: 1000,
+      maxAttempts: 1,
+      windowMs: 1000,
+    }).ok,
+    true,
+  )
+  assertEquals(
+    checkRateLimit("checkout:203.0.113.8", {
+      nowMs: 1001,
+      maxAttempts: 1,
+      windowMs: 1000,
+    }),
+    { ok: false, error: "rate_limited", status: 429, resetAt: 2000 },
+  )
+})
+
+Deno.test("runtime security helpers avoid raw secrets in service auth and logs", () => {
+  const serviceRoleKey = "service-role-test-secret"
+  const req = new Request("https://edge.test", {
+    headers: { authorization: `Bearer ${serviceRoleKey}` },
+  })
+  assertEquals(isServiceRoleRequest(req, serviceRoleKey), true)
+  assertEquals(isServiceRoleRequest(req, "different-secret"), false)
+  assertEquals(runtimeConstantTimeEqual("abc", "abc"), true)
+  assertEquals(runtimeConstantTimeEqual("abc", "abd"), false)
+
+  const log = sanitizeTechnicalLog(
+    "email ana@example.com phone +52 646 151 9597 token=abcdefghijklmnopqrstuvwxyz.ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+  )
+  assert(!log.includes("ana@example.com"))
+  assert(!log.includes("646 151 9597"))
+  assert(!log.includes("abcdefghijklmnopqrstuvwxyz"))
 })
 
 Deno.test("deposit voucher input requires signed voucher_token only", async () => {
