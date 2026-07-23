@@ -25,6 +25,7 @@ Estado: no ejecutar todavia.
 No iniciar despliegue hasta que:
 
 - `supabase db reset` cierre con exit 0, reconstruya las RPCs de reserva/IA requeridas y `supabase/tests/ai_booking_rpcs.sql` pase.
+- El reset local se ejecute como ciclo limpio: `supabase stop`, `supabase start`, `supabase db reset`, para evitar upstream obsoleto de Kong hacia un IP anterior de Storage.
 - `dart format --output=none --set-exit-if-changed .` pase o exista decision explicita de aceptar deuda de formato.
 - Vercel tenga metadata read-only valida de proyecto, alias/deployment activo y SHA esperado.
 - Secrets requeridos esten verificados por nombre.

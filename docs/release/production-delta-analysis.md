@@ -35,7 +35,7 @@ Proyecto remoto listado por CLI: `sahara-club-spa` con ref `fkbyxhwdcsgrrixalzwf
 | Edge `gift_card_reception_actions` | No aparecio en listado remoto | Existe local | Nueva funcion interna recepcion | CREAR |
 | Tablas/policies remotas | NO COMPROBABLE | RLS/policies locales PASS parcial | No se introspecto remoto | NO COMPROBABLE |
 | Buckets remotos | NO COMPROBABLE | `gift-card-assets`, `receipts` privados locales | No se introspecto remoto | NO COMPROBABLE |
-| Reset local reproducible | NO APLICA remoto | Migraciones aplican y SQL pasa, pero `supabase db reset` sale 1 por timeout Storage | Bloqueo de certificacion formal local | CORREGIR/REINTENTAR antes de release final |
+| Reset local reproducible | NO APLICA remoto | Tres ciclos limpios `supabase stop` + `supabase start` + `supabase db reset` terminan con exit 0 | Bloqueo formal local cerrado | SIN CAMBIO REMOTO |
 | `supabase_vector` local | NO APLICA remoto | Reinicia por error del colector de logs contra Docker | No hay uso de pgvector/embeddings en codigo | DEUDA LOCAL NO FUNCIONAL |
 
 ## Vercel
@@ -54,4 +54,4 @@ Proyecto remoto listado por CLI: `sahara-club-spa` con ref `fkbyxhwdcsgrrixalzwf
 | RPCs de reserva migradas solo localmente | `web_concierge` y `whatsapp-ai-router` ya son reproducibles tras reset local, pero remoto no fue aplicado/verificado | APLICAR y verificar migraciones en release controlado |
 | Funciones nuevas locales ausentes remoto | Gift Card download y reception actions no existen en produccion | CREAR solo despues de migraciones/secrets |
 | Vercel no comprobable | No se puede confirmar SHA activo ni alias | Verificar token/proyecto antes de despliegue |
-| `supabase db reset` local sale 1 | No se puede firmar release candidate integral aunque las pruebas SQL pasen | Resolver timeout local de Storage/CLI o certificar con CLI actualizada antes de PR final |
+| `supabase db reset` aislado tras resets parciales puede salir 1 | Kong puede retener upstream hacia IP anterior de Storage en entorno local | Usar ciclo limpio stop/start/reset antes de certificacion; no afecta schema ni remoto |

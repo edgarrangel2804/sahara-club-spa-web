@@ -9,9 +9,11 @@ Base: `f38833922e7a8dac300c0b57067c9654c38e7b99`
 
 ## Veredicto de inventario
 
-Estado: `CERTIFICACION INTEGRAL BLOQUEADA POR TIMEOUT LOCAL DE SUPABASE CLI/STORAGE`.
+Estado: `RELEASE CANDIDATE CERTIFICADO LOCALMENTE`.
 
-La rama compila, pasa tests Flutter/Deno, aplica todas las migraciones locales y deja operativas las RPCs que los handlers de reserva web/WhatsApp invocan. Sin embargo, `supabase db reset` no puede declararse PASS formal porque la CLI termina con exit 1 durante el healthcheck final de Storage, despues de aplicar migraciones y reiniciar contenedores. Storage queda `healthy` posteriormente y las pruebas SQL pasan contra esa base reconstruida, pero el comando de reconstruccion reproducible sigue sin cerrar en verde.
+La rama compila, pasa tests Flutter/Deno, aplica todas las migraciones locales y deja operativas las RPCs que los handlers de reserva web/WhatsApp invocan. El bloqueo formal de Storage quedo cerrado con evidencia: tres ciclos limpios `supabase stop` + `supabase start` + `supabase db reset` terminaron con exit 0, Storage quedo `healthy`, la prueba funcional de objeto privado paso y no quedaron residuos.
+
+El timeout previo se clasifico como deuda local de gateway/CLI: al ejecutar resets parciales o repetidos sobre un stack vivo, Kong podia conservar un upstream hacia el IP anterior de Storage. No fue causado por migraciones, RLS, grants ni buckets.
 
 - `check_availability_for_booking_from_ai`
 - `create_pending_booking_from_ai`
@@ -44,7 +46,7 @@ La recuperacion quedo regularizada en `supabase/migrations/20260722040000_ai_boo
 | Concierge | `01520c3`, runtime hardening | `concierge_chat.dart`, `web_concierge` | Chat publico ligero con backend endurecido y `p_request_id` para reservas. | MEDIO: no hay LLM real en smoke. | CERTIFICADO LOCAL |
 | Panel IA | `b21ca46` | `ai_control_panel.dart` | Modos Apagado/Piloto/Publico sin secretos cliente. | BAJO: RLS efectiva depende del backend. | CERTIFICADO |
 | Assets | `d0b9ed5`, `01520c3`, `79e9509` | `Portada-2.mp4`, `assets/experiencia/*`, `pubspec.yaml` | Assets declarados y presentes en build. | BAJO: build web grande por video. | CERTIFICADO |
-| Tests | multiples commits `test(*)` | `test/*`, Deno tests, SQL tests | 46 Flutter, 31 Deno, SQL boundary PASS y AI booking RPC PASS con 24 aserciones de comportamiento/grants. | MEDIO: `supabase db reset` aun falla en healthcheck local de Storage. | CERTIFICADO LOCAL CON BLOQUEO CLI |
+| Tests | multiples commits `test(*)` | `test/*`, Deno tests, SQL tests | 46 Flutter, 31 Deno, SQL boundary PASS y AI booking RPC PASS con 24 aserciones de comportamiento/grants. | MEDIO: remoto/productivo pendiente. | CERTIFICADO LOCAL |
 | Blueprint | docs commits | `docs/blueprints/spa-wellness/*` | Clasificacion de capacidades y legacy. | BAJO. | DOCUMENTACION |
 
 ## Validaciones ejecutadas
@@ -63,13 +65,14 @@ La recuperacion quedo regularizada en `supabase/migrations/20260722040000_ai_boo
 | Deno lint | `deno task edge:lint` | PASS, 25 archivos |
 | Deno check | `deno task edge:check` | PASS |
 | Deno tests | `deno task edge:test` | PASS, 31/31 |
-| Supabase start/status | `supabase stop/start/status` | PASS; DB, Storage, Auth, Realtime y APIs locales operativas; pooler/imgproxy detenidos como servicios no usados |
-| Supabase reset | `supabase db reset` | FAIL formal: aplica todas las migraciones, pero termina con timeout en `GET /storage/v1/bucket`; Storage queda `healthy` despues |
+| Supabase reset ciclos | 3x `supabase stop` + `supabase start` + `supabase db reset` | PASS, tres resets consecutivos con exit 0 y Storage `healthy` |
+| Storage funcional | API local Storage con PDF ficticio | PASS: anon bloqueado, upload 200, signed URL 200, delete 200, cero residuos |
 | SQL/RLS | `supabase/tests/security_boundaries.sql` | PASS |
 | SQL/RPCs reserva IA | `supabase/tests/ai_booking_rpcs.sql` | PASS, 18 aserciones de comportamiento + 6 de grants |
 | RPC catalogo | `pg_proc`/`has_function_privilege` | 3 RPCs presentes, `SECURITY DEFINER`, `service_role` only |
 | Edge smoke | `supabase functions serve --env-file .audit/edge-runtime.local.env --no-verify-jwt` | PASS: 10+ funciones criticas responden OPTIONS=200; `web_concierge GET=405`, `whatsapp-ai-router` validacion temprana=400; proceso detenido |
 | Supabase vector | `docker logs/inspect` + busqueda de codigo | NO BLOQUEANTE FUNCIONAL: reinicia por error local del colector de logs contra Docker; sin uso de embeddings/pgvector en codigo |
+| Diagnostico Storage | `docs/operations/supabase-storage-healthcheck-diagnosis.md` | Causa raiz documentada: upstream obsoleto de Kong hacia IP anterior de Storage en resets sobre stack vivo |
 | Vercel read-only | `node_modules/.bin/vercel.cmd whoami` | Auth local OK; deployment/proyecto activo NO COMPROBABLE porque no hay `.vercel` link local y no se hizo deploy |
 
 ## Auditoria Git y secretos

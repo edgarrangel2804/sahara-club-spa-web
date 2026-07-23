@@ -4,14 +4,14 @@ Fecha local: 2026-07-23.
 
 Regla: no se usaron Stripe real, Meta/WhatsApp real, clientes reales, pagos reales ni webhooks productivos. Las evidencias son tests unitarios/locales, build Flutter, Deno tests, SQL local y smoke de runtime.
 
-Bloqueo formal: `supabase db reset` aplica todas las migraciones, pero termina con exit 1 por timeout del healthcheck local de Storage. La base reconstruida queda utilizable, Storage queda `healthy` despues y las pruebas SQL pasan; aun asi, la certificacion integral no se declara release final mientras ese comando no cierre en verde.
+Bloqueo formal Storage: cerrado localmente. Tres ciclos limpios `supabase stop` + `supabase start` + `supabase db reset` terminaron con exit 0; Storage quedo `healthy` y la prueba funcional de objeto privado paso. El timeout previo se documento como upstream obsoleto de Kong hacia un IP anterior de Storage durante resets sobre stack vivo, no como fallo de migraciones/RLS/grants.
 
 ## Resumen
 
 | Flujo | Resultado | Riesgo principal |
 |---|---|---|
-| Reserva web | CERTIFICADO LOCAL CON BLOQUEO CLI | `web_concierge` invoca RPCs reconstruidas y probadas; smoke sin LLM real. |
-| Reserva WhatsApp | CERTIFICADO LOCAL CON BLOQUEO CLI | `whatsapp-ai-router` invoca las mismas RPCs reconstruidas y probadas; smoke sin Meta real. |
+| Reserva web | CERTIFICADO LOCAL | `web_concierge` invoca RPCs reconstruidas y probadas; smoke sin LLM real. |
+| Reserva WhatsApp | CERTIFICADO LOCAL | `whatsapp-ai-router` invoca las mismas RPCs reconstruidas y probadas; smoke sin Meta real. |
 | Anticipo | CERTIFICACION PENDIENTE | Tokens, voucher y helpers pasan; no se probo Stripe sandbox externo. |
 | Gift Card | CERTIFICACION PENDIENTE | Fulfillment y tokens pasan; funciones nuevas no estan desplegadas remoto. |
 | Canje | CERTIFICADO LOCAL | RPC `redeem_service_gift_card` existe con `search_path` y tests helper pasan. |

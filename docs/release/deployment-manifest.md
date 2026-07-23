@@ -2,7 +2,7 @@
 
 Estado: propuesta, no ejecutada.
 
-Veredicto actual: `CERTIFICACION INTEGRAL BLOQUEADA POR TIMEOUT LOCAL DE SUPABASE CLI/STORAGE`; despliegue remoto pendiente.
+Veredicto actual: `RELEASE CANDIDATE CERTIFICADO LOCALMENTE`; despliegue remoto pendiente.
 
 ## Git
 
@@ -28,7 +28,7 @@ Veredicto actual: `CERTIFICACION INTEGRAL BLOQUEADA POR TIMEOUT LOCAL DE SUPABAS
 | 8 | `20260722030200_security_hardening_storage.sql` | buckets privados y policies Storage | Reduce acceso | ALTO | Ajustar policies; no hacer buckets publicos |
 | 9 | `20260722040000_ai_booking_rpcs.sql` | `business_hours`, staff availability support, 3 RPCs reserva/IA, `bookings.ai_idempotency_key`, duracion server-side desde `services.duration_min` | Aditiva y probada localmente | ALTO | Migracion correctiva; no borrar bookings |
 
-Nota: las RPCs de reserva/IA ya estan migradas y probadas localmente con 24 aserciones SQL. Falta resolver el exit 1 de `supabase db reset` por timeout de Storage local y aplicar/verificar remoto antes de trafico productivo.
+Nota: las RPCs de reserva/IA ya estan migradas y probadas localmente con 24 aserciones SQL. El bloqueo Storage local quedo cerrado con tres ciclos limpios `supabase stop` + `supabase start` + `supabase db reset` exit 0 y prueba funcional de objeto privado. Falta aplicar/verificar remoto antes de trafico productivo.
 
 ## Edge Functions
 
@@ -107,6 +107,10 @@ No ejecutar sin backup remoto, secrets verificados y ventana de release.
 
 ## Stop criteria actuales
 
-- No declarar release final mientras `supabase db reset` cierre con exit 1.
+- No declarar release final si el ciclo limpio `supabase stop` + `supabase start` + `supabase db reset` deja de cerrar con exit 0.
 - No desplegar Edge/Web si no se confirma metadata Vercel activa y proyecto linkeado.
 - No activar flujos reales de Stripe/Meta/WhatsApp/Anthropic sin pruebas sandbox/supervisadas y secrets verificados por nombre.
+
+## Requisito local de certificacion
+
+Ejecutar `supabase stop`, `supabase start` y luego `supabase db reset`. No usar `supabase db reset` aislado como unica validacion despues de resets parciales o recreaciones de contenedores que puedan cambiar el IP de Storage sin regenerar Kong.
