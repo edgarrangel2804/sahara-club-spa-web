@@ -72,6 +72,28 @@ void main() {
       expect(normalized.first.status, 'seen');
     });
 
+    test(
+      'keeps gift card alerts without booking date in newest-first order',
+      () {
+        final normalized = ReceptionAlertsService.normalizeAlertList([
+          _alert(
+            id: 'booking',
+            bookingDate: DateTime(2026, 7, 22),
+            createdAt: DateTime.utc(2026, 7, 22, 18),
+          ),
+          _alert(
+            id: 'gift-card',
+            eventType: 'gift_card_purchased',
+            createdAt: DateTime.utc(2026, 7, 22, 20),
+          ),
+        ], today: today);
+
+        expect(normalized.map((alert) => alert.id), ['gift-card', 'booking']);
+        expect(normalized.first.isGiftCardPurchase, isTrue);
+        expect(normalized.first.bookingDate, isNull);
+      },
+    );
+
     test('computes today using Tijuana commercial date', () {
       expect(
         ReceptionAlertsService.todayPeninsula(
@@ -92,12 +114,13 @@ void main() {
 ReceptionAlert _alert({
   required String id,
   String status = 'unseen',
+  String eventType = 'booking_pending_reception',
   DateTime? bookingDate,
   DateTime? createdAt,
 }) {
   return ReceptionAlert(
     id: id,
-    eventType: 'booking_pending_reception',
+    eventType: eventType,
     status: status,
     channel: 'whatsapp',
     createdAt: createdAt ?? DateTime.utc(2026, 7, 22, 18),
