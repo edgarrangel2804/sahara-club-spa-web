@@ -36,6 +36,7 @@ This file records productive Sahara behavior that may be real and useful, but sh
 - Do not keep one-shot setup functions deployed after their setup task is complete; remove or keep them neutralized.
 - Do not trust public CORS wildcard as harmless. Public/signed endpoints still need an origin allowlist and abuse limits.
 - Do not trust caller-supplied appointment deposit amounts or checkout return domains.
+- Do not expose the public web concierge UI unless the Edge Function keeps origin controls, body/message caps, rate limits, sanitized logs, and server-side secret ownership.
 
 ## Secrets And Configuration
 
@@ -59,6 +60,15 @@ This file records productive Sahara behavior that may be real and useful, but sh
 - Do not copy appointment status labels/colors/actions as separate switch statements. Extract one state machine first.
 - Do not copy `ClientsModule` as a client-management template. It is productive Sahara runtime, but it mixes PII, histories, packages, memberships, Gift Cards, sales, Supabase calls, and receipt actions in one widget tree.
 - Do not implement automatic client merges from phone/email heuristics without an audited review workflow.
+- Do not replace a richer Store implementation with an older Gift Card-only shortcut; preserve broader catalog, cart, checkout, memberships, and digital fulfillment paths.
+
+## Public Site And Assets
+
+- Do not assume web asset paths are case-insensitive. `Portada-2.mp4` must remain exact in code, pubspec, tests, and filesystem.
+- Do not keep deleted landing media as a fallback unless it is intentionally declared and tested.
+- Do not paste public landing widgets over a newer checkout/navigation shell; manually fuse hero, contact, concierge, Store and asset changes.
+- Do not treat decorative public media as throwaway. Public spa experience assets are part of the product baseline and need hashable backup provenance.
+- Do not execute loose AI or content SQL from backup folders. Promote intended behavior through reviewed migrations and tests.
 
 ## Notifications And Idempotency
 

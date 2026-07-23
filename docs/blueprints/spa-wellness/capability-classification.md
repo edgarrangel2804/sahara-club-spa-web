@@ -245,6 +245,41 @@ Gift Card fulfillment, and alert regularization work.
 | Authenticated `using (true)` commerce policies | LEGACY DO NOT COPY | Authenticated does not mean operational staff; owner/staff distinctions must be explicit. |
 | Public service-role jobs | LEGACY DO NOT COPY | Cron and provider jobs need service role/internal-secret gates before side effects. |
 | Frontend totals and product metadata | LEGACY DO NOT COPY | Payment totals, fulfillment URLs, membership durations, and Gift Card commercial facts must be server-owned. |
+
+## Public Spa Experience Regularization
+
+This phase classifies the final public landing/store/admin reconciliation from
+the original 38 local movements without copying protected worktrees wholesale.
+
+### Universal NEXORA Candidates
+
+| Capability | Status | Notes |
+|---|---:|---|
+| Public media manifest | FOUNDATION | Web runtime media paths are centralized in `lib/config/web_media_paths.dart`; asset existence and case-sensitive paths are covered by tests. |
+| Public content composition | FOUNDATION | Landing sections are explicit widgets with scroll keys and recoverable public assets; the pattern can be rebuilt as a CMS-backed public shell. |
+| Web concierge client | FOUNDATION | Flutter client is only a lightweight chat surface; trust boundary remains the hardened `web_concierge` Edge Function. |
+| Store capability preservation | FOUNDATION | Store reconciliation protects a superior implementation from being overwritten by an older Gift Card-only shortcut. |
+| Admin AI controls | FOUNDATION | UI maps operational modes to human labels while secrets remain server-side and RLS owns access. |
+
+### Vertical Spa & Wellness
+
+| Capability | Status | Notes |
+|---|---:|---|
+| Immersive hero video | PRODUCTIVO | `Portada-2.mp4` replaces deleted `portada.mp4` and is declared through the Flutter web asset path. |
+| Experience pillars | PRODUCTIVO | `assets/experiencia/*` images now support the public "Presencia/Conexion/Transformacion" section. |
+| Concierge reservations | PRODUCTIVO | Public CTAs open the web concierge, which can guide new reservation intent through the existing backend. |
+| Gift Card store entry | PRODUCTIVO | `StorePage` retains Gift Card Digital fulfillment while preserving broader catalog, cart and membership navigation. |
+| AI operating modes | PRODUCTIVO | Admin UI presents Apagado, Piloto and Publico, with legacy `assisted` displayed as Publico. |
+
+### Legacy
+
+| Item | Classification | Notes |
+|---|---|---|
+| Wholesale landing copy | LEGACY DO NOT COPY | Public widgets must be fused with current checkout/navigation/security state, not pasted over the regularized branch. |
+| Old store shortcut | LEGACY DO NOT COPY | The Gift Card-only `StorePage` was useful historically but would erase catalog/cart/membership capabilities. |
+| Loose AI SQL | LEGACY DO NOT COPY | `ai_bot_rules_no_cancel_and_assisted.sql` is evidence, not an executable baseline; future changes need reviewed migrations. |
+| Public chat without endpoint hardening | LEGACY DO NOT COPY | The UI is safe only because `web_concierge` has CORS, body caps, message caps, rate limit and sanitized logs. |
+| Case-insensitive asset assumptions | LEGACY DO NOT COPY | Web assets must match exact case; `Portada-2.mp4` and `portada.mp4` are different runtime paths. |
 | Direct browser Storage signing | LEGACY DO NOT COPY | Private document buckets should mint signed URLs through authorized backend actions. |
 
 ## Baseline Object Classification
