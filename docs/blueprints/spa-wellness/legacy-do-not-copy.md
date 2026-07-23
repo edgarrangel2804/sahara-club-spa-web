@@ -17,6 +17,9 @@ This file records productive Sahara behavior that may be real and useful, but sh
 - Do not expose `security definer` RPCs broadly unless the trust boundary is explicit and tested.
 - Do not keep `verify_jwt = false` on Edge Functions without a written reason, compensating auth, and abuse tests.
 - Do not grant broad anon/auth access just because Supabase dumps include default grants.
+- Do not let `authenticated` mean "staff". Commerce RLS must distinguish owner access from operational roles.
+- Do not leave `SECURITY DEFINER` functions without `search_path = public, pg_temp`.
+- Do not expose delivery/redemption RPCs to anon; use service role or an explicit operational-role check.
 
 ## Edge Functions And Public Runtime
 
@@ -31,6 +34,8 @@ This file records productive Sahara behavior that may be real and useful, but sh
 - Do not ship public document links without purpose, scope, HMAC validation, and expiration.
 - Do not embed a service-role web concierge without rate limits, prompt injection monitoring, and clear observability.
 - Do not keep one-shot setup functions deployed after their setup task is complete; remove or keep them neutralized.
+- Do not trust public CORS wildcard as harmless. Public/signed endpoints still need an origin allowlist and abuse limits.
+- Do not trust caller-supplied appointment deposit amounts or checkout return domains.
 
 ## Secrets And Configuration
 
@@ -42,6 +47,7 @@ This file records productive Sahara behavior that may be real and useful, but sh
 ## Domain Modeling
 
 - Do not trust product prices or payable totals from the frontend. Server-side pricing must own Gift Card, package, membership, and appointment charges.
+- Do not accept product types in checkout unless a server-owned catalog/fulfillment source exists for that type.
 - Do not trust frontend Gift Card fields for balance, expiration, status, code, or amount paid. The backend owns all commercial facts after payment.
 - Do not generate Gift Card assets only in the browser from query params; authorized backend payloads and private Storage are the safe boundary.
 - Do not calculate Gift Card validity with fixed offsets such as 90 days when the business rule is calendar months.
@@ -71,6 +77,7 @@ This file records productive Sahara behavior that may be real and useful, but sh
 - Do not send provider messages from webhook paths unless the critical paid Gift Card state is already durable and provider failures are best-effort.
 - Do not expose receipt resend actions without caller authentication, rate limiting, and a delivery ledger.
 - Do not make public voucher lookup depend on raw `booking_id`; use a scoped signed token and return only minimal paid voucher data.
+- Do not let the browser mint signed Storage URLs for private operational documents; route through authorized Edge actions.
 
 ## Developer Experience
 

@@ -211,6 +211,42 @@ without deploying it or moving code to NEXORA.
 | Wholesale feature copying | LEGACY DO NOT COPY | Gift Card Alerts must be manually fused with the regularized fulfillment runtime, not pasted over canonical files. |
 | Indiscriminate retries | LEGACY DO NOT COPY | Retrying all admin recipients can duplicate successful sends; only failed/pending destinations may be claimed. |
 
+## Security Hardening Regularization
+
+This phase classifies security boundaries added after the commerce, receipt,
+Gift Card fulfillment, and alert regularization work.
+
+### Universal NEXORA Candidates
+
+| Capability | Status | Notes |
+|---|---:|---|
+| RLS role helper | FOUNDATION | `has_any_role(text[])` centralizes active profile/staff role checks for reusable policy design. |
+| Private commerce data boundary | FOUNDATION | Orders, items, payments, Gift Cards, transactions, deliveries, alerts, logs, and config now reject anon table access. |
+| Signed asset delivery | FOUNDATION | Receipt and Gift Card PDFs live in private Storage and are exposed only by authorized Edge Functions or signed token flows. |
+| Edge auth matrix | FOUNDATION | Public, signed, operational, and internal endpoints are classified in `docs/security/edge-function-auth-matrix.md`. |
+| Runtime security helper | FOUNDATION | CORS allowlist, rate limits, fingerprints, internal auth, role auth, and log sanitization are reusable Edge patterns. |
+| Server-side pricing | FOUNDATION | Checkout rehydrates services/Gift Cards from server data and rejects unsafe product types without server catalog ownership. |
+
+### Vertical Spa & Wellness
+
+| Capability | Status | Notes |
+|---|---:|---|
+| Gift Card asset privacy | PRODUCTIVO | `gift-card-assets` remains private; download requires a signed purpose token or reception role. |
+| Deposit receipt privacy | PRODUCTIVO | `receipts` is private; reception obtains signed URLs through `send_deposit_receipt`. |
+| Operational Gift Card redemption | PRODUCTIVO | `redeem_service_gift_card` requires an operational role and validates booking/client/service consistency. |
+| Appointment deposit integrity | PRODUCTIVO | Deposit amount comes from booking/config/Stripe Price, not from browser payloads. |
+| Internal admin notifications | PRODUCTIVO | Admin/unpaid/auto-confirm functions require service role or internal secret before using service role internally. |
+
+### Security Legacy
+
+| Item | Classification | Notes |
+|---|---|---|
+| Broad anon grants from dumps | LEGACY DO NOT COPY | Public data access belongs behind signed endpoints, not direct table grants. |
+| Authenticated `using (true)` commerce policies | LEGACY DO NOT COPY | Authenticated does not mean operational staff; owner/staff distinctions must be explicit. |
+| Public service-role jobs | LEGACY DO NOT COPY | Cron and provider jobs need service role/internal-secret gates before side effects. |
+| Frontend totals and product metadata | LEGACY DO NOT COPY | Payment totals, fulfillment URLs, membership durations, and Gift Card commercial facts must be server-owned. |
+| Direct browser Storage signing | LEGACY DO NOT COPY | Private document buckets should mint signed URLs through authorized backend actions. |
+
 ## Baseline Object Classification
 
 | Object | Classification | Source |
