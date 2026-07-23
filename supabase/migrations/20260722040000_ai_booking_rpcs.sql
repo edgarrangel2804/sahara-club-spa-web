@@ -832,7 +832,7 @@ begin
     );
   end if;
 
-  v_dur := coalesce(nullif(p_duration_min, 0), v_service.duration_min, 60);
+  v_dur := coalesce(v_service.duration_min, nullif(p_duration_min, 0), 60);
   v_start_at := (p_requested_date::text || ' ' || p_requested_time::text || ' America/Tijuana')::timestamptz;
 
   if p_staff_id is not null then
@@ -938,7 +938,7 @@ begin
     return jsonb_build_object('ok', false, 'error', 'service_not_found');
   end if;
 
-  v_dur := coalesce(nullif(p_duration_min, 0), v_service.duration_min, 60);
+  v_dur := coalesce(v_service.duration_min, nullif(p_duration_min, 0), 60);
 
   if (p_booking_date::text || ' ' || p_booking_time::text || ' America/Tijuana')::timestamptz
      < now() - interval '1 minute' then
