@@ -63,6 +63,12 @@ This file records productive Sahara behavior that may be real and useful, but sh
 - Do not send Gift Card WhatsApp documents without a delivery ledger keyed by `gift_card_id`, hashed destination, and delivery type.
 - Do not put recipient phones, emails, payment ids, or full Gift Card codes into WhatsApp/reception technical logs.
 - Do not merge Gift Card Alerts by replacing regularized reception alert files wholesale. Model fields, banner rows, bell UI, and Agenda navigation need a manual fusion after receipt/client regularization.
+- Do not couple Gift Card purchase alerts to `booking_id`, `booking_date`, or default Agenda navigation. Commercial alerts need their own event context.
+- Do not show full phone, email, Payment Intent, Checkout Session, download token, full redemption code, full dedication, or Stripe metadata in the reception bell/banner.
+- Do not create a second admin notification ledger when an existing delivery ledger can express `gift_card_id + destination_hash + delivery_type`.
+- Do not hardcode administrative WhatsApp recipients. Use configured admin numbers, normalization, dedupe, and masked logs.
+- Do not retry every administrative destination indiscriminately. Successful or processing deliveries must be skipped by atomic claim.
+- Do not send provider messages from webhook paths unless the critical paid Gift Card state is already durable and provider failures are best-effort.
 - Do not expose receipt resend actions without caller authentication, rate limiting, and a delivery ledger.
 - Do not make public voucher lookup depend on raw `booking_id`; use a scoped signed token and return only minimal paid voucher data.
 

@@ -165,6 +165,52 @@ deploying it or moving code to NEXORA.
 | WhatsApp without delivery ledger | LEGACY DO NOT COPY | Provider sends must be guarded by a delivery claim keyed by hashed destination and delivery type. |
 | Regenerating cards on retry | LEGACY DO NOT COPY | Webhook retries must reuse `order_item_id`, asset path, code, validity, and delivery status. |
 
+## Gift Card Operational Alerts Regularization
+
+This phase classifies the manually integrated Gift Card purchase alert path
+without deploying it or moving code to NEXORA.
+
+### Universal NEXORA Candidates
+
+| Capability | Status | Notes |
+|---|---:|---|
+| Internal commercial events | FOUNDATION | A paid commerce event can produce one internal operational alert without coupling it to appointments. |
+| Operational alerts | FOUNDATION | `reception_alerts` can represent booking alerts and commercial alerts when event payloads are explicit and PII is masked. |
+| Notification delivery ledger | FOUNDATION | `gift_card_deliveries` models recipient, buyer copy, download, resend, and admin WhatsApp attempts with one claim table. |
+| Configurable recipients | FOUNDATION | Admin delivery reads `ai_settings.ai_admin_numbers` and dedupes normalized destinations instead of using hardcoded phones. |
+| Atomic claims | FOUNDATION | Delivery claims use `gift_card_id + destination_hash + delivery_type` so retries do not resend successful destinations. |
+| Controlled retries | FOUNDATION | Failed or pending deliveries can be claimed again, while sent or processing destinations are skipped. |
+| Best-effort channels | FOUNDATION | PDF, Storage, recipient WhatsApp, buyer copy, and admin WhatsApp are operational side effects and must not undo a paid Gift Card. |
+| Navigation from events | FOUNDATION | Alerts route to the existing operational context or dialog instead of assuming every alert has a booking. |
+| Fulfillment state | FOUNDATION | Reception sees current asset and delivery state without reading raw provider payloads. |
+| Sanitized audit | FOUNDATION | Logs and UI use masks, hashes, and status labels rather than full phone, payment ids, tokens, or full Gift Card codes. |
+
+### Vertical Spa & Wellness
+
+| Capability | Status | Notes |
+|---|---:|---|
+| Treatment Gift Card alert | PRODUCTIVO | `gift_card_purchased` identifies a paid spa treatment/experience Gift Card for reception follow-up. |
+| Gift reception | PRODUCTIVO | Reception can identify buyer, recipient, product, amount, validity, delivery state, and copy request. |
+| Experience validity | PRODUCTIVO | `valid_from` and `expires_on` are visible as commercial validity for the gifted experience. |
+| Card resend | PRODUCTIVO | Reception can explicitly request resend to the recipient through the existing authorized Edge Function. |
+| Buyer copy | PRODUCTIVO | Reception can send the buyer copy only when the original purchase requested it. |
+| Packages and sessions | PARCIAL | Alert payload can display package/session snapshots, but package-specific purchase fulfillment remains a separate certification. |
+| Delivery follow-up | PRODUCTIVO | Staff can see whether the digital asset and recipient delivery are pending, sent, failed, or skipped. |
+| Reception redemption | PRODUCTIVO | The alert leads to the Gift Card context while redemption remains guarded by backend Gift Card RPCs. |
+
+### Legacy
+
+| Item | Classification | Notes |
+|---|---|---|
+| Booking-coupled alerts | LEGACY DO NOT COPY | Commercial alerts must not require `booking_id`, `booking_date`, or appointment navigation. |
+| Hardcoded admin phones | LEGACY DO NOT COPY | Admin recipients belong in configuration and must be normalized/deduped before delivery. |
+| Webhook sends without ledger | LEGACY DO NOT COPY | Admin WhatsApp from a webhook needs a delivery claim and retry state before each provider call. |
+| Duplicate delivery tables | LEGACY DO NOT COPY | Do not create `admin_notification_deliveries` when `gift_card_deliveries` already models the same claim. |
+| Always navigate to Agenda | LEGACY DO NOT COPY | Alert opening must route according to event domain, not assume a calendar booking exists. |
+| PII in bell/banner | LEGACY DO NOT COPY | The general reception surface must not show full phones, email, payment ids, tokens, full code, or Stripe metadata. |
+| Wholesale feature copying | LEGACY DO NOT COPY | Gift Card Alerts must be manually fused with the regularized fulfillment runtime, not pasted over canonical files. |
+| Indiscriminate retries | LEGACY DO NOT COPY | Retrying all admin recipients can duplicate successful sends; only failed/pending destinations may be claimed. |
+
 ## Baseline Object Classification
 
 | Object | Classification | Source |
