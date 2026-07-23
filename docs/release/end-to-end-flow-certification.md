@@ -8,8 +8,8 @@ Regla: no se usaron Stripe real, Meta/WhatsApp real, clientes reales, pagos real
 
 | Flujo | Resultado | Riesgo principal |
 |---|---|---|
-| Reserva web | BLOQUEADO | `web_concierge` invoca RPCs de disponibilidad/booking que no existen tras reset local. |
-| Reserva WhatsApp | BLOQUEADO | `whatsapp-ai-router` invoca las mismas RPCs faltantes. |
+| Reserva web | CERTIFICADO LOCAL | `web_concierge` invoca RPCs reconstruidas tras reset local; smoke sin LLM real. |
+| Reserva WhatsApp | CERTIFICADO LOCAL | `whatsapp-ai-router` invoca las mismas RPCs reconstruidas; smoke sin Meta real. |
 | Anticipo | CERTIFICACION PENDIENTE | Tokens, voucher y helpers pasan; no se probo Stripe sandbox externo. |
 | Gift Card | CERTIFICACION PENDIENTE | Fulfillment y tokens pasan; funciones nuevas no estan desplegadas remoto. |
 | Canje | CERTIFICADO LOCAL | RPC `redeem_service_gift_card` existe con `search_path` y tests helper pasan. |
@@ -23,10 +23,10 @@ Regla: no se usaron Stripe real, Meta/WhatsApp real, clientes reales, pagos real
 | Catalogo | `web_concierge` compila y consulta `services` | PASS tecnico | `deno task edge:check` | BAJO |
 | Seleccion | Prompt usa catalogo server-side | PASS tecnico | handler compilado | BAJO |
 | Cliente | Input normalizado en handler | PASS tecnico | Deno check | MEDIO |
-| Cita | RPC `create_pending_booking_from_ai` | FAIL local | RPC no existe tras `supabase db reset` | ALTO |
+| Cita | RPC `create_pending_booking_from_ai` | PASS local | `supabase/tests/ai_booking_rpcs.sql` | MEDIO |
 | Anticipo | `create_booking_deposit_checkout` compila | PASS tecnico | Deno check | MEDIO |
 | Checkout mock | No llamada externa | NO EJECUTADO | Restriccion de no Stripe real | MEDIO |
-| Confirmacion | Depende de RPC/checkout | BLOQUEADO | RPC faltante | ALTO |
+| Confirmacion | Depende de RPC/checkout | PASS local parcial | RPC crea `pending_reception`; checkout externo no ejecutado | MEDIO |
 
 ## Reserva WhatsApp
 
@@ -36,7 +36,7 @@ Regla: no se usaron Stripe real, Meta/WhatsApp real, clientes reales, pagos real
 | Concierge/router | `whatsapp-ai-router` compila | PASS tecnico | `edge:check` | MEDIO |
 | Seleccion | Reglas en router | PASS tecnico | source checked | MEDIO |
 | Checkout mock | No llamada externa | NO EJECUTADO | Restriccion de no Meta/Stripe real | MEDIO |
-| Cita | RPCs de disponibilidad/booking | FAIL local | RPCs faltantes post-reset | ALTO |
+| Cita | RPCs de disponibilidad/booking | PASS local | `supabase/tests/ai_booking_rpcs.sql` | MEDIO |
 
 ## Anticipo
 
@@ -45,7 +45,7 @@ Regla: no se usaron Stripe real, Meta/WhatsApp real, clientes reales, pagos real
 | Pago confirmado mock | Helpers de firma y estado | PASS | Deno tests voucher | BAJO |
 | Booking confirmado | Handler compila | PASS tecnico | `stripe_webhook` check | MEDIO |
 | Comprobante | `send_deposit_receipt` compila | PASS tecnico | `edge:check` | MEDIO |
-| Token firmado | Tests HMAC/TTL | PASS | Deno 28/28 | BAJO |
+| Token firmado | Tests HMAC/TTL | PASS | Deno tests | BAJO |
 | Consulta publica limitada | HTML y helper tests | PASS | Flutter receipt tests + SQL buckets | BAJO |
 
 ## Gift Card
@@ -90,8 +90,8 @@ Regla: no se usaron Stripe real, Meta/WhatsApp real, clientes reales, pagos real
 | Multimedia | `Portada-2.mp4` existe en build | PASS | build asset check | BAJO |
 | Experiencia | PNGs recuperados | PASS | Flutter tests | BAJO |
 | Store | Gift Card Digital preservada | PASS | Flutter tests | BAJO |
-| Reservacion | CTA abre concierge | PASS cliente | Flutter tests/source | MEDIO por RPC faltante |
-| Concierge | Runtime smoke carga | PASS tecnico | `functions serve` | ALTO por RPC faltante |
+| Reservacion | CTA abre concierge | PASS cliente | Flutter tests/source | MEDIO por dependencias externas no reales |
+| Concierge | Runtime smoke carga | PASS tecnico | `functions serve` | MEDIO por LLM externo no ejecutado |
 
 ## Timezone
 
@@ -119,3 +119,4 @@ Regla: no se usaron Stripe real, Meta/WhatsApp real, clientes reales, pagos real
 | WhatsApp destinatario/comprador/admin | Delivery ledger tests y admin notification skip/retry | PASS helper |
 | Reception alerts | Unique `reception_alerts_one_gift_card_purchase` | PASS local |
 | Comprobantes | Voucher token tests TTL/reuse/tamper | PASS |
+| Reserva IA web/WhatsApp | `bookings.ai_idempotency_key`, `p_request_id`, SQL replay | PASS local |

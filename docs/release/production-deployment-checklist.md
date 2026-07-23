@@ -7,7 +7,7 @@ Estado: no ejecutar todavia.
 | 1 | Tech lead | Crear backup remoto | Backup visible/restaurable | Snapshot confirmado | No hay backup | Fallo de migracion |
 | 2 | Tech lead | Registrar estado actual | Git/Supabase/Vercel documentados | Hashes y versiones guardadas | Falta Vercel/Supabase metadata | Fallo Web/Edge |
 | 3 | Admin Supabase | Verificar secrets | Solo nombres, no valores en docs | Secrets requeridos presentes | Falta secret critico | No desplegar |
-| 4 | DB owner | Resolver RPCs faltantes | `supabase db reset` local crea RPCs | Reserva web/WhatsApp reproducible | RPCs siguen faltando | Fallo por RPCs |
+| 4 | DB owner | Verificar RPCs de reserva/IA | `supabase db reset` + `supabase/tests/ai_booking_rpcs.sql` | Reserva web/WhatsApp reproducible | RPCs no existen o grants incorrectos | Fallo por RPCs |
 | 5 | DB owner | Aplicar migraciones | Migration table y schema | Todas aplicadas en orden | Error o drift inesperado | Fallo de migracion |
 | 6 | Security | Verificar RLS/Storage | Queries de policies/buckets | Buckets privados, anon bloqueado | Anon accede a datos privados | Fallo seguridad |
 | 7 | Backend | Desplegar Edge Functions | Versiones activas | Handlers nuevos/modificados activos | Handler no carga | Fallo Edge |
@@ -24,7 +24,7 @@ Estado: no ejecutar todavia.
 
 No iniciar despliegue hasta que:
 
-- `supabase db reset` reconstruya tambien las RPCs de reserva/IA requeridas.
+- `supabase db reset` reconstruya tambien las RPCs de reserva/IA requeridas y `supabase/tests/ai_booking_rpcs.sql` pase.
 - `dart format --output=none --set-exit-if-changed .` pase o exista decision explicita de aceptar deuda de formato.
 - Vercel tenga metadata read-only valida.
 - Secrets requeridos esten verificados por nombre.

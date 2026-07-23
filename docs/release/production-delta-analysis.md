@@ -8,7 +8,7 @@ Modo: solo lectura. No se hizo `supabase link`, `db pull`, `db push`, deploy, pu
 
 | Componente | Produccion | Release Candidate | Diferencia | Accion |
 |---|---|---|---|---|
-| `origin/main` | `f38833922e7a8dac300c0b57067c9654c38e7b99` | `d132e36c1daca65b9e12fd017b4175b7473e1492` | RC esta 43 commits adelante | ACTUALIZAR via PR/merge futuro |
+| `origin/main` | `f38833922e7a8dac300c0b57067c9654c38e7b99` | Rama local de regularizacion con recuperacion RPC | RC esta mas de 43 commits adelante | ACTUALIZAR via PR/merge futuro |
 | Repo original protegido | 38 movimientos locales | No usado como fuente directa | Original conserva drift local | REQUIERE BACKUP antes de tocar |
 | Worktree Gift Card Alerts | `feature/gift-card-reception-notifications`, `.audit/remote_public_schema.sql` untracked | No modificado | Worktree protegido queda aparte | SIN CAMBIO |
 
@@ -19,7 +19,7 @@ Proyecto remoto listado por CLI: `sahara-club-spa` con ref `fkbyxhwdcsgrrixalzwf
 | Componente | Produccion | Release Candidate | Diferencia | Accion |
 |---|---|---|---|---|
 | Proyecto | Existe en Supabase Management API | Local no linkeado | Project ref conocido, sin link local | SIN CAMBIO |
-| Migraciones registradas | NO COMPROBABLE sin link o DB URL/password | 8 migraciones locales nuevas | No se comparo tabla remota de migraciones | NO COMPROBABLE |
+| Migraciones registradas | NO COMPROBABLE sin link o DB URL/password | 9 migraciones locales nuevas | No se comparo tabla remota de migraciones | NO COMPROBABLE |
 | Edge `stripe_webhook` | ACTIVE v14, updated 2026-07-01 | Fuente local modificada/endurecida | Posible actualizar | ACTUALIZAR |
 | Edge `create_checkout_session` | ACTIVE v4 | Fuente local modificada | Posible actualizar | ACTUALIZAR |
 | Edge `confirm_order_payment` | ACTIVE v6 | Fuente local modificada | Posible actualizar | ACTUALIZAR |
@@ -49,6 +49,6 @@ Proyecto remoto listado por CLI: `sahara-club-spa` con ref `fkbyxhwdcsgrrixalzwf
 
 | Drift | Impacto | Accion |
 |---|---|---|
-| SQL suelto con RPCs de reserva no migrado | `web_concierge` y `whatsapp-ai-router` no son plenamente reproducibles localmente | MIGRAR o documentar dependencia remota antes de release |
+| RPCs de reserva migradas solo localmente | `web_concierge` y `whatsapp-ai-router` ya son reproducibles tras reset local, pero remoto no fue aplicado/verificado | APLICAR y verificar migraciones en release controlado |
 | Funciones nuevas locales ausentes remoto | Gift Card download y reception actions no existen en produccion | CREAR solo despues de migraciones/secrets |
 | Vercel no comprobable | No se puede confirmar SHA activo ni alias | Verificar token/proyecto antes de despliegue |

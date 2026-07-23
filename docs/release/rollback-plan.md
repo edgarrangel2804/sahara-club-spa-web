@@ -66,5 +66,5 @@ No usar comandos destructivos sin backup confirmado y aprobacion humana.
 
 1. No activar `web_concierge` ni `whatsapp-ai-router` para reservas nuevas.
 2. Mantener derivacion a recepcion/WhatsApp manual.
-3. Crear migracion controlada para RPCs faltantes.
-4. Certificar `supabase db reset` y smoke de reserva mock antes de reintentar despliegue.
+3. Aplicar migracion correctiva sobre `20260722040000_ai_booking_rpcs.sql`.
+4. Certificar `supabase db reset`, `supabase/tests/ai_booking_rpcs.sql` y smoke de reserva mock antes de reintentar despliegue.

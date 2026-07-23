@@ -2,16 +2,16 @@
 
 Estado: propuesta, no ejecutada.
 
-Veredicto actual: `BLOQUEADO POR SUPABASE`.
+Veredicto actual: `DESBLOQUEADO LOCALMENTE PARA RPCs DE RESERVA/IA`; despliegue remoto pendiente.
 
 ## Git
 
 | Campo | Valor |
 |---|---|
 | Rama origen | `chore/regularize-production-baseline` |
-| HEAD | `d132e36c1daca65b9e12fd017b4175b7473e1492` |
+| HEAD base antes de recuperar RPCs | `04970fb85ec424b00d789f4281ba761067364e6c` |
 | Base | `f38833922e7a8dac300c0b57067c9654c38e7b99` |
-| Commits adelante de `origin/main` | 43 |
+| Commits adelante de `origin/main` | 43 + commits de recuperacion RPC |
 | Estrategia futura | Abrir PR, revisar, CI, backup remoto, merge controlado. No push/deploy desde esta certificacion. |
 
 ## Migraciones
@@ -26,8 +26,9 @@ Veredicto actual: `BLOQUEADO POR SUPABASE`.
 | 6 | `20260722030000_security_hardening_functions.sql` | security definer/search_path helpers | Endurece RPCs | ALTO | Migracion correctiva, no rollback ciego |
 | 7 | `20260722030100_security_hardening_rls_grants.sql` | RLS/grants commerce/admin | Reduce acceso | ALTO | Migracion correctiva basada en backup |
 | 8 | `20260722030200_security_hardening_storage.sql` | buckets privados y policies Storage | Reduce acceso | ALTO | Ajustar policies; no hacer buckets publicos |
+| 9 | `20260722040000_ai_booking_rpcs.sql` | `business_hours`, staff availability support, 3 RPCs reserva/IA, `bookings.ai_idempotency_key` | Aditiva y reproducible | ALTO | Migracion correctiva; no borrar bookings |
 
-Nota bloqueante: agregar una migracion revisada para RPCs de reserva/IA antes de despliegue si esos flujos deben quedar certificados desde cero.
+Nota: las RPCs de reserva/IA ya estan migradas y probadas localmente; falta aplicar/verificar remoto antes de trafico productivo.
 
 ## Edge Functions
 
@@ -87,20 +88,19 @@ No incluir valores.
 
 ## Orden de despliegue propuesto
 
-No ejecutar hasta resolver bloqueo Supabase.
+No ejecutar sin backup remoto, secrets verificados y ventana de release.
 
 1. Backup remoto y snapshot de schema.
 2. Registrar estado actual remoto: Git, Supabase functions, migrations, buckets, Vercel deployment.
 3. Configurar/verificar secrets nuevos.
-4. Agregar migracion faltante para RPCs de reserva/IA o decidir desactivar flujos dependientes.
-5. Aplicar migraciones.
-6. Verificar RLS, grants, buckets privados y Realtime.
-7. Desplegar Edge Functions en orden de dependencias.
-8. Smoke tests sandbox/local controlado.
-9. Desplegar Flutter Web.
-10. Prueba supervisada de anticipo.
-11. Prueba supervisada de Gift Card.
-12. Confirmar Recepcion.
-13. Confirmar WhatsApp.
-14. Monitoreo.
-15. Cierre o rollback.
+4. Aplicar migraciones, incluyendo `20260722040000_ai_booking_rpcs.sql`.
+5. Verificar RLS, grants, buckets privados, Realtime y RPCs de reserva.
+6. Desplegar Edge Functions en orden de dependencias.
+7. Smoke tests sandbox/local controlado.
+8. Desplegar Flutter Web.
+9. Prueba supervisada de anticipo.
+10. Prueba supervisada de Gift Card.
+11. Confirmar Recepcion.
+12. Confirmar WhatsApp.
+13. Monitoreo.
+14. Cierre o rollback.
