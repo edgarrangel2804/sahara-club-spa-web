@@ -54,11 +54,22 @@ bool isValidVoucherTokenString(String? value) {
   ).hasMatch((value ?? '').trim());
 }
 
-Map<String, String> sendDepositReceiptPayload(String bookingId) {
+Map<String, dynamic> sendDepositReceiptPayload(String bookingId) {
   if (!isValidBookingId(bookingId)) {
     throw ArgumentError('invalid_booking_id');
   }
   return {'booking_id': bookingId};
+}
+
+Map<String, dynamic> downloadDepositReceiptPayload(String bookingId) {
+  if (!isValidBookingId(bookingId)) {
+    throw ArgumentError('invalid_booking_id');
+  }
+  return {
+    'booking_id': bookingId,
+    'action': 'download_link',
+    'send_whatsapp': false,
+  };
 }
 
 String redactReceiptToken(String? value) {
@@ -218,10 +229,14 @@ Future<String?> loadSignedDepositReceiptUrl(
   if (!isValidBookingId(bookingId)) {
     throw ArgumentError('invalid_booking_id');
   }
-  final url = await client.storage
-      .from('receipts')
-      .createSignedUrl('$bookingId.pdf', 60 * 60 * 24 * 7);
-  return isSafeReceiptUrl(url) ? url : null;
+  final dynamic response = await client.functions.invoke(
+    'send_deposit_receipt',
+    body: downloadDepositReceiptPayload(bookingId),
+  );
+  final result = DepositReceiptResponse.fromFunctionData(response.data);
+  return result.ok && isSafeReceiptUrl(result.signedUrl)
+      ? result.signedUrl
+      : null;
 }
 
 Future<DepositReceiptResponse> sendDepositReceipt(

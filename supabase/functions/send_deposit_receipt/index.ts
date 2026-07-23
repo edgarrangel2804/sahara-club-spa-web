@@ -17,18 +17,13 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { PDFDocument, rgb, StandardFonts } from "https://esm.sh/pdf-lib@1.17.1?target=deno"
 import { isPaidBooking, isUuid, sanitizePublicError } from "../_shared/deposit_receipts.ts"
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-}
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-    status,
-  })
-}
+import {
+  authorizeInternalRequest,
+  jsonResponseFor,
+  OPERATIONAL_ROLES,
+  preflightResponse,
+  sanitizeTechnicalLog,
+} from "../_shared/runtime_security.ts"
 
 function createAdminClient(): any {
   return createClient(
@@ -348,19 +343,33 @@ async function sendWhatsAppDocument(opts: {
   })
   if (!res.ok) {
     const txt = await res.text().catch(() => "")
-    console.warn("send_deposit_receipt: WhatsApp rechazó el documento:", res.status, txt)
+    console.warn(
+      "send_deposit_receipt: WhatsApp rechazo el documento:",
+      res.status,
+      sanitizeTechnicalLog(txt),
+    )
     return false
   }
   return true
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
+  const json = (body: unknown, status = 200) => jsonResponseFor(req, body, status)
+  if (req.method === "OPTIONS") return preflightResponse(req)
   if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405)
 
   try {
+    const authorization = await authorizeInternalRequest(req, {
+      allowedRoles: OPERATIONAL_ROLES,
+    })
+    if (!authorization.ok) {
+      return json({ ok: false, error: "not_authorized" }, authorization.status)
+    }
+
     const body = await req.json().catch(() => ({}))
     const bookingId = String(body.booking_id ?? "").trim()
+    const action = String(body.action ?? "send").trim()
+    const shouldSendWhatsApp = action !== "download_link" && body.send_whatsapp !== false
     if (!bookingId) return json({ ok: false, error: "booking_id_required" }, 400)
     if (!isUuid(bookingId)) return json({ ok: false, error: "invalid_booking_id" }, 400)
 
@@ -441,7 +450,7 @@ serve(async (req) => {
     // 5. Enviar al cliente por WhatsApp como documento (best-effort)
     let whatsappSent = false
     const to = normalizePhone(phone)
-    if (to && signedUrl) {
+    if (shouldSendWhatsApp && to && signedUrl) {
       const caption = [
         "🌿 *Sahara Club Spa*",
         `Comprobante de tu anticipo · Folio ${folio}`,
@@ -459,7 +468,10 @@ serve(async (req) => {
           caption,
         })
       } catch (e) {
-        console.warn("send_deposit_receipt: error enviando documento:", (e as Error).message)
+        console.warn(
+          "send_deposit_receipt: error enviando documento:",
+          sanitizeTechnicalLog(e),
+        )
       }
       // Trazabilidad (auditoría): registra el envío del comprobante en whatsapp_logs.
       await logOutbound(supabase, {
