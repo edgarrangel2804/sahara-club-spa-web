@@ -7,7 +7,14 @@ import {
   recordGiftCardDownload,
   verifyGiftCardDownloadToken,
 } from "../_shared/gift_card_fulfillment.ts"
-import { corsHeaders, jsonResponse } from "../_shared/stripe_checkout.ts"
+import {
+  checkRateLimit,
+  clientIpKey,
+  fingerprintValue,
+  jsonResponseFor,
+  preflightResponse,
+  sanitizeTechnicalLog,
+} from "../_shared/runtime_security.ts"
 
 function createAdminClient(): any {
   return createClient(
@@ -17,7 +24,8 @@ function createAdminClient(): any {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
+  const jsonResponse = (body: unknown, status = 200) => jsonResponseFor(req, body, status)
+  if (req.method === "OPTIONS") return preflightResponse(req)
   if (req.method !== "POST" && req.method !== "GET") {
     return jsonResponse({ ok: false, error: "method_not_allowed" }, 405)
   }
@@ -30,6 +38,15 @@ Deno.serve(async (req) => {
     } else {
       const body = await req.json().catch(() => ({})) as Record<string, unknown>
       token = String(body.gift_card_token ?? body.token ?? "")
+    }
+
+    const tokenFingerprint = token ? await fingerprintValue(token) : "missing"
+    const rateLimit = checkRateLimit(`gift-card-download:${tokenFingerprint}:${clientIpKey(req)}`, {
+      maxAttempts: 12,
+      windowMs: 5 * 60 * 1000,
+    })
+    if (!rateLimit.ok) {
+      return jsonResponse({ ok: false, error: rateLimit.error }, rateLimit.status)
     }
 
     const verified = await verifyGiftCardDownloadToken(token, giftCardDownloadSigningSecret())
@@ -75,7 +92,7 @@ Deno.serve(async (req) => {
     return jsonResponse(publicGiftCardPayload({ card: currentCard, signedUrl }))
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error ?? "")
-    console.warn("gift_card_download failed:", message.slice(0, 160))
+    console.warn("gift_card_download failed:", sanitizeTechnicalLog(message))
     return jsonResponse({ ok: false, error: "gift_card_download_unavailable" }, 500)
   }
 })

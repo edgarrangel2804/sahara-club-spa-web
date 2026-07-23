@@ -9,20 +9,19 @@
 // cuando la hora local Tijuana es exactamente las 20. Idempotente.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
-import { corsHeaders, loadBusinessSettings, normalizePhone } from "../_shared/whatsapp_business.ts"
+import { loadBusinessSettings, normalizePhone } from "../_shared/whatsapp_business.ts"
+import {
+  authorizeInternalRequest,
+  jsonResponseFor,
+  preflightResponse,
+  sanitizeTechnicalLog,
+} from "../_shared/runtime_security.ts"
 
 function admin(): any {
   return createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
   )
-}
-
-function jsonResponse(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  })
 }
 
 // "Ahora" en zona Tijuana como wall-clock.
@@ -38,7 +37,14 @@ function ymd(d: Date): string {
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
+  const jsonResponse = (body: unknown, status = 200) => jsonResponseFor(req, body, status)
+  if (req.method === "OPTIONS") return preflightResponse(req)
+  if (req.method !== "POST") return jsonResponse({ ok: false, error: "method_not_allowed" }, 405)
+
+  const authorization = await authorizeInternalRequest(req)
+  if (!authorization.ok) {
+    return jsonResponse({ ok: false, error: "not_authorized" }, authorization.status)
+  }
 
   const sb = admin()
   const url = new URL(req.url)
@@ -59,7 +65,7 @@ Deno.serve(async (req: Request) => {
     )
     .eq("status", "payment_received")
     .eq("booking_date", tomorrow)
-  if (error) return jsonResponse({ ok: false, error: error.message }, 200)
+  if (error) return jsonResponse({ ok: false, error: "query_failed" }, 200)
 
   const bookings = (rows ?? []) as Array<{
     id: string
@@ -131,7 +137,7 @@ Deno.serve(async (req: Request) => {
       .eq("id", b.id)
       .eq("status", "payment_received")
     if (updErr) {
-      console.warn("auto-confirm update failed", b.id, updErr.message)
+      console.warn("auto-confirm update failed", sanitizeTechnicalLog(updErr))
       continue
     }
     confirmed++

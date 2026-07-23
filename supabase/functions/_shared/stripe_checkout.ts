@@ -178,6 +178,7 @@ export async function verifyStripeSignature(
   payload: string,
   signatureHeader: string | null,
   secret: string,
+  options: { toleranceSeconds?: number; nowSeconds?: number } = {},
 ) {
   if (!signatureHeader) return false
 
@@ -190,6 +191,11 @@ export async function verifyStripeSignature(
     .map((part) => part.slice(3))
 
   if (!timestamp || signatures.length == 0) return false
+  const timestampSeconds = Number(timestamp)
+  if (!Number.isFinite(timestampSeconds)) return false
+  const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1000)
+  const toleranceSeconds = options.toleranceSeconds ?? 300
+  if (Math.abs(nowSeconds - timestampSeconds) > toleranceSeconds) return false
 
   const signedPayload = `${timestamp}.${payload}`
   const key = await crypto.subtle.importKey(

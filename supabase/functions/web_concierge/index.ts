@@ -5,15 +5,18 @@
 // create_pending_booking_from_ai, check_booking_payment_requirement).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import {
+  checkRateLimit,
+  clientIpKey,
+  jsonResponseFor,
+  preflightResponse,
+  sanitizeTechnicalLog,
+} from "../_shared/runtime_security.ts"
 
 const BRANCH = "11111111-1111-1111-1111-111111111111"
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-}
-const json = (o: unknown) =>
-  new Response(JSON.stringify(o), { headers: { ...cors, "content-type": "application/json" } })
+const MAX_BODY_BYTES = 32_000
+const MAX_MESSAGES = 16
+const MAX_MESSAGE_CHARS = 1200
 
 const DAYS = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"]
 const MONTHS = [
@@ -54,10 +57,29 @@ function fechasTable(): string {
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: cors })
+  const json = (body: unknown, status = 200) => jsonResponseFor(req, body, status)
+  if (req.method === "OPTIONS") return preflightResponse(req)
+  if (req.method !== "POST") return json({ reply: "Metodo no permitido." }, 405)
+
   try {
+    const contentLength = Number(req.headers.get("content-length") ?? 0)
+    if (contentLength > MAX_BODY_BYTES) {
+      return json({
+        reply: "El mensaje es demasiado largo. Escríbenos por WhatsApp y te ayudamos.",
+      }, 413)
+    }
+    const rateLimit = checkRateLimit(`web-concierge:${clientIpKey(req)}`, {
+      maxAttempts: 20,
+      windowMs: 10 * 60 * 1000,
+    })
+    if (!rateLimit.ok) {
+      return json({
+        reply: "Recibimos muchas solicitudes seguidas. Intenta de nuevo en unos minutos.",
+      }, 429)
+    }
+
     const body = await req.json().catch(() => ({}))
-    const messages = Array.isArray(body.messages) ? body.messages : []
+    const messages = normalizeMessages(Array.isArray(body.messages) ? body.messages : [])
 
     const sb: any = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -149,7 +171,7 @@ Deno.serve(async (req: Request) => {
       }),
     })
     if (!resp.ok) {
-      console.error("Anthropic", resp.status, await resp.text())
+      console.error("Anthropic", resp.status, sanitizeTechnicalLog(await resp.text()))
       return json({
         reply: "Tuve un problema para responder. Escríbenos por WhatsApp y te ayudamos. 🤍",
       })
@@ -258,7 +280,7 @@ Deno.serve(async (req: Request) => {
                   )
                   payUrl = String((co as any)?.checkout_url ?? "")
                 } catch (e) {
-                  console.error("checkout web", e)
+                  console.error("checkout web", sanitizeTechnicalLog(e))
                 }
                 if (payUrl) {
                   reply += `\n\nPara apartar tu cita realiza el anticipo de $${
@@ -281,7 +303,7 @@ Deno.serve(async (req: Request) => {
             done = true
           }
         } catch (e) {
-          console.error("reserva web", e)
+          console.error("reserva web", sanitizeTechnicalLog(e))
         }
       }
       if (!done) {
@@ -291,7 +313,19 @@ Deno.serve(async (req: Request) => {
 
     return json({ reply })
   } catch (e) {
-    console.error(e)
+    console.error(sanitizeTechnicalLog(e))
     return json({ reply: "Ocurrió un error. Escríbenos por WhatsApp y te ayudamos." })
   }
 })
+
+function normalizeMessages(
+  rawMessages: unknown[],
+): Array<{ role: "assistant" | "user"; content: string }> {
+  return rawMessages
+    .slice(-MAX_MESSAGES)
+    .map((m: any) => ({
+      role: m?.role === "assistant" ? "assistant" as const : "user" as const,
+      content: String(m?.content ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_MESSAGE_CHARS),
+    }))
+    .filter((message) => message.content.length > 0)
+}

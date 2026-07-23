@@ -14,13 +14,14 @@
 // Validación interna: booking debe existir y estar en pending_payment.
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
+import { createAdminClient, stripeApiRequest, toMinorUnits } from "../_shared/stripe_checkout.ts"
 import {
-  corsHeaders,
-  createAdminClient,
-  jsonResponse,
-  stripeApiRequest,
-  toMinorUnits,
-} from "../_shared/stripe_checkout.ts"
+  checkRateLimit,
+  clientIpKey,
+  jsonResponseFor,
+  preflightResponse,
+  sanitizeTechnicalLog,
+} from "../_shared/runtime_security.ts"
 
 type StripePaymentIntent = {
   id: string
@@ -33,10 +34,17 @@ type StripePaymentIntent = {
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
+  const jsonResponse = (body: unknown, status = 200) => jsonResponseFor(req, body, status)
+  if (req.method === "OPTIONS") return preflightResponse(req)
   if (req.method !== "POST") return jsonResponse({ error: "method not allowed" }, 405)
 
   try {
+    const rateLimit = checkRateLimit(`appointment-payment-intent:${clientIpKey(req)}`, {
+      maxAttempts: 30,
+      windowMs: 10 * 60 * 1000,
+    })
+    if (!rateLimit.ok) return jsonResponse({ ok: false, error: rateLimit.error }, rateLimit.status)
+
     const body = await req.json().catch(() => ({}))
     const bookingId = String(body.booking_id ?? "").trim()
     if (!bookingId) {
@@ -48,8 +56,10 @@ serve(async (req) => {
     // 1. Cargar booking + validar
     const { data: booking, error: bErr } = await supabase
       .from("bookings")
-      .select("id, status, stripe_payment_intent_id, deposit_amount, " +
-        "booking_date, booking_time, service_id, client_record_id")
+      .select(
+        "id, status, stripe_payment_intent_id, deposit_amount, deposit_required_cents, " +
+          "booking_date, booking_time, service_id, client_record_id",
+      )
       .eq("id", bookingId)
       .maybeSingle()
     if (bErr) throw bErr
@@ -74,9 +84,11 @@ serve(async (req) => {
     // 2. Cargar ai_settings (monto/currency/price_id) y stripe_settings (publishable)
     const { data: aiSettings } = await supabase
       .from("ai_settings")
-      .select("appointment_deposit_amount, appointment_deposit_currency, " +
-        "appointment_deposit_enabled, appointment_deposit_product_id, " +
-        "appointment_deposit_price_id")
+      .select(
+        "appointment_deposit_amount, appointment_deposit_currency, " +
+          "appointment_deposit_enabled, appointment_deposit_product_id, " +
+          "appointment_deposit_price_id",
+      )
       .eq("id", 1)
       .maybeSingle()
     const settings = (aiSettings ?? {}) as {
@@ -95,20 +107,25 @@ serve(async (req) => {
 
     // Si hay un Stripe Price configurado, ese es la única fuente de verdad
     // del monto y la moneda. Si no, caemos al monto local.
-    let amount = booking.deposit_amount ?? settings.appointment_deposit_amount ?? 200
+    let amount = Number(booking.deposit_required_cents ?? 0) > 0
+      ? Number(booking.deposit_required_cents) / 100
+      : booking.deposit_amount ?? settings.appointment_deposit_amount ?? 200
     let currency = String(settings.appointment_deposit_currency ?? "mxn").toLowerCase()
     if (priceId) {
       try {
         const price = await stripeApiRequest<{
-          id: string; unit_amount: number; currency: string; active: boolean;
-          product: string;
+          id: string
+          unit_amount: number
+          currency: string
+          active: boolean
+          product: string
         }>(`/prices/${priceId}`, { method: "GET" })
         if (price.active && typeof price.unit_amount === "number") {
           amount = price.unit_amount / 100
           currency = String(price.currency).toLowerCase()
         }
       } catch (e) {
-        console.warn("price fetch failed, using local amount:", (e as Error).message)
+        console.warn("price fetch failed, using local amount:", sanitizeTechnicalLog(e))
       }
     }
 
@@ -127,7 +144,12 @@ serve(async (req) => {
           `/payment_intents/${booking.stripe_payment_intent_id}`,
           { method: "GET" },
         )
-        const reusable = ["requires_payment_method","requires_confirmation","requires_action","processing"]
+        const reusable = [
+          "requires_payment_method",
+          "requires_confirmation",
+          "requires_action",
+          "processing",
+        ]
           .includes(existing.status)
         if (reusable) {
           pi = existing
@@ -204,7 +226,7 @@ serve(async (req) => {
       },
     })
   } catch (e) {
-    console.error("create_appointment_deposit_payment_intent error:", (e as Error).message)
-    return jsonResponse({ ok: false, error: (e as Error).message }, 500)
+    console.error("create_appointment_deposit_payment_intent error:", sanitizeTechnicalLog(e))
+    return jsonResponse({ ok: false, error: "payment_intent_unavailable" }, 500)
   }
 })

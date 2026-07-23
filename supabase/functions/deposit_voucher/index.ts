@@ -15,18 +15,7 @@ import {
   verifyDepositVoucherToken,
   voucherTokenFingerprint,
 } from "../_shared/deposit_receipts.ts"
-
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Cache-Control": "no-store",
-}
-
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    headers: { ...cors, "Content-Type": "application/json" },
-    status,
-  })
+import { clientIpKey, jsonResponseFor, preflightResponse } from "../_shared/runtime_security.ts"
 
 async function readVoucherRequest(req: Request): Promise<{
   voucherToken?: string
@@ -58,7 +47,8 @@ async function auditVoucherEvent(event: string, voucherToken: string): Promise<v
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: cors })
+  const json = (body: unknown, status = 200) => jsonResponseFor(req, body, status)
+  if (req.method === "OPTIONS") return preflightResponse(req)
   if (req.method !== "POST" && req.method !== "GET") {
     return json({ ok: false, error: "method_not_allowed" }, 405)
   }
@@ -71,10 +61,7 @@ Deno.serve(async (req) => {
     voucherToken = parsed.voucherToken
 
     const tokenHash = await voucherTokenFingerprint(voucherToken)
-    const ipPrefix = String(req.headers.get("x-forwarded-for") ?? "local")
-      .split(",")[0]
-      .trim()
-      .slice(0, 48)
+    const ipPrefix = clientIpKey(req)
     const rateLimit = checkVoucherRateLimit(`${tokenHash}:${ipPrefix}`)
     if (!rateLimit.ok) {
       await auditVoucherEvent("rate_limited", voucherToken)

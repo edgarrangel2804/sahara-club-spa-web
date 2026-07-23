@@ -6,16 +6,15 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0"
+import {
+  authorizeInternalRequest,
+  jsonResponseFor,
+  preflightResponse,
+  sanitizeTechnicalLog,
+} from "../_shared/runtime_security.ts"
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-
-function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "content-type": "application/json",
-  }
-}
 
 // Trazabilidad (auditoría): registra en whatsapp_logs cada mensaje saliente.
 // Best-effort: nunca lanza.
@@ -47,7 +46,14 @@ async function logOutbound(
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders() })
+  const json = (body: unknown, status = 200) => jsonResponseFor(req, body, status)
+  if (req.method === "OPTIONS") return preflightResponse(req)
+  if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405)
+
+  const authorization = await authorizeInternalRequest(req)
+  if (!authorization.ok) {
+    return json({ ok: false, error: "not_authorized" }, authorization.status)
+  }
 
   const supabase: any = createClient(SUPABASE_URL, SERVICE_ROLE)
 
@@ -55,12 +61,7 @@ serve(async (req) => {
   const { data: candidates, error } = await supabase.rpc(
     "list_unpaid_deposit_bookings_for_alert",
   )
-  if (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: corsHeaders(),
-    })
-  }
+  if (error) return json({ error: error.message }, 500)
   const rows = (candidates ?? []) as Array<{
     booking_id: string
     client_phone: string
@@ -71,11 +72,7 @@ serve(async (req) => {
     minutes_since_created: number
   }>
 
-  if (rows.length === 0) {
-    return new Response(JSON.stringify({ ok: true, alerted: 0 }), {
-      headers: corsHeaders(),
-    })
-  }
+  if (rows.length === 0) return json({ ok: true, alerted: 0 })
 
   // 2. Cargar backup numbers y access token
   const { data: settings } = await supabase
@@ -89,9 +86,7 @@ serve(async (req) => {
     []) as string[]
 
   if (!enabled || targets.length === 0) {
-    return new Response(JSON.stringify({ ok: true, alerted: 0, reason: "backup_disabled" }), {
-      headers: corsHeaders(),
-    })
+    return json({ ok: true, alerted: 0, reason: "backup_disabled" })
   }
 
   const { data: wa } = await supabase
@@ -101,12 +96,7 @@ serve(async (req) => {
     .maybeSingle()
   const accessToken = (wa as { access_token?: string } | null)?.access_token
   const phoneNumberId = (wa as { phone_number_id?: string } | null)?.phone_number_id
-  if (!accessToken || !phoneNumberId) {
-    return new Response(JSON.stringify({ error: "missing_meta_config" }), {
-      status: 500,
-      headers: corsHeaders(),
-    })
-  }
+  if (!accessToken || !phoneNumberId) return json({ error: "missing_meta_config" }, 500)
 
   let alerted = 0
   for (const r of rows) {
@@ -144,7 +134,7 @@ serve(async (req) => {
         })
         alertedThisRow = true
       } catch (e) {
-        console.warn("notify failed for", t, (e as Error).message)
+        console.warn("notify failed for target", sanitizeTechnicalLog(e))
       }
     }
 
@@ -157,7 +147,5 @@ serve(async (req) => {
     }
   }
 
-  return new Response(JSON.stringify({ ok: true, alerted, checked: rows.length }), {
-    headers: corsHeaders(),
-  })
+  return json({ ok: true, alerted, checked: rows.length })
 })

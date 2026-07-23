@@ -1,8 +1,6 @@
 import {
-  corsHeaders,
   createAdminClient,
   fulfillOrder,
-  jsonResponse,
   markOrderAsPaid,
   markOrderWithStatus,
   stripeApiRequest,
@@ -11,16 +9,30 @@ import {
   createGiftCardDownloadToken,
   giftCardDownloadSigningSecret,
 } from "../_shared/gift_card_fulfillment.ts"
+import {
+  checkRateLimit,
+  clientIpKey,
+  jsonResponseFor,
+  preflightResponse,
+  sanitizeTechnicalLog,
+} from "../_shared/runtime_security.ts"
 
 serve(async (req) => {
+  const jsonResponse = (body: unknown, status = 200) => jsonResponseFor(req, body, status)
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders })
+    return preflightResponse(req)
   }
 
   try {
     if (req.method !== "POST") {
       return jsonResponse({ error: "Metodo no permitido." }, 405)
     }
+
+    const rateLimit = checkRateLimit(`confirm-order:${clientIpKey(req)}`, {
+      maxAttempts: 40,
+      windowMs: 10 * 60 * 1000,
+    })
+    if (!rateLimit.ok) return jsonResponse({ error: rateLimit.error }, rateLimit.status)
 
     const body = await req.json().catch(() => ({}))
     const orderId = String(body.order_id ?? "").trim()
@@ -94,7 +106,7 @@ serve(async (req) => {
       payment_status: paymentStatus,
     })
   } catch (error) {
-    console.error("confirm_order_payment", error)
+    console.error("confirm_order_payment", sanitizeTechnicalLog(error))
     return jsonResponse({ error: "No se pudo confirmar el pago con Stripe." }, 400)
   }
 })

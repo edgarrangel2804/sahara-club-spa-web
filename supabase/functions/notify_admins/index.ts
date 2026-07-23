@@ -15,16 +15,12 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { DEFAULT_BRANCH_ID, loadBusinessSettings } from "../_shared/whatsapp_business.ts"
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-}
-const json = (b: unknown, s = 200) =>
-  new Response(JSON.stringify(b), {
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-    status: s,
-  })
+import {
+  authorizeInternalRequest,
+  jsonResponseFor,
+  preflightResponse,
+  sanitizeTechnicalLog,
+} from "../_shared/runtime_security.ts"
 
 function createAdminClient() {
   return createClient(
@@ -74,8 +70,16 @@ function fmtTime(t: string): string {
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
+  const json = (b: unknown, s = 200) => jsonResponseFor(req, b, s)
+  if (req.method === "OPTIONS") return preflightResponse(req)
+  if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405)
+
   try {
+    const authorization = await authorizeInternalRequest(req)
+    if (!authorization.ok) {
+      return json({ ok: false, error: "not_authorized" }, authorization.status)
+    }
+
     const body = await req.json().catch(() => ({}))
     const bookingId = String(body.booking_id ?? "").trim()
     const event = String(body.event ?? "").trim() // confirmed | cancelled | rescheduled
@@ -206,6 +210,7 @@ serve(async (req) => {
 
     return json({ ok: true, sent })
   } catch (e) {
-    return json({ ok: false, error: (e as Error).message }, 500)
+    console.warn("notify_admins failed:", sanitizeTechnicalLog(e))
+    return json({ ok: false, error: "notify_admins_unavailable" }, 500)
   }
 })
