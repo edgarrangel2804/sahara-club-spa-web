@@ -21,6 +21,7 @@ import '../features/reception_alerts/reception_alert.dart';
 import '../features/reception_alerts/reception_alerts_service.dart';
 import '../features/reception_alerts/reception_alerts_bell.dart';
 import '../features/reception_alerts/reception_alert_banner.dart';
+import '../features/reception_alerts/gift_card_reception_actions.dart';
 import '../features/receipts/deposit_receipt_actions.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -1028,6 +1029,13 @@ class _AgendaPageState extends State<AgendaPage> {
       } catch (_) {}
     }
     if (!mounted) return;
+    if (alert.isGiftCardPurchase) {
+      setState(() => _activeModule = 'ventas');
+      await _loadAlerts();
+      if (!mounted) return;
+      await showGiftCardReceptionDialog(context, alert);
+      return;
+    }
     if (alert.bookingId != null) {
       setState(() {
         _activeModule = 'agenda';
