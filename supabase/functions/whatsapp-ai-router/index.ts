@@ -4,6 +4,10 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import {
+  buildCreatePendingBookingRpcArgs,
+  normalizeAiBookingTime,
+} from "../_shared/ai_booking_contracts.ts"
+import {
   callMetaApi,
   corsHeaders,
   DEFAULT_BRANCH_ID,
@@ -779,6 +783,7 @@ type ToolContext = {
   conversationId?: string
   clientName?: string | null
   messageText?: string | null
+  messageId?: string | null
 }
 
 // "Ahora" en zona Tijuana, como wall-clock (mismo truco que buildSystemPrompt).
@@ -971,7 +976,7 @@ async function execTool(
             "La fecha/hora solicitada ya pasó en zona Tijuana. Pide al cliente un día/hora futuros.",
         }
       }
-      const timeNorm = time.length === 5 ? `${time}:00` : time
+      const timeNorm = normalizeAiBookingTime(time)
       const requestedStaffId = await resolveRequestedStaffId(input, ctx.messageText)
       const { data, error } = await supabase.rpc("check_availability_for_booking_from_ai", {
         p_service_id: serviceId,
@@ -1003,24 +1008,24 @@ async function execTool(
           "NO digas que la solicitud quedó registrada todavía."
       } else if (result.available === true && phone && resolvedName) {
         try {
+          const createArgs = await buildCreatePendingBookingRpcArgs({
+            channel: "whatsapp_ai",
+            phone,
+            clientName: resolvedName,
+            email: input.client_email ? String(input.client_email) : null,
+            serviceId,
+            bookingDate: date,
+            bookingTime: timeNorm,
+            durationMin: input.duration_min ? Number(input.duration_min) : null,
+            notes: "Solicitud creada por IA WhatsApp.",
+            conversationId: ctx.conversationId ?? null,
+            confidenceScore: 0.9,
+            therapistId: requestedStaffId ? String(requestedStaffId) : null,
+            externalMessageId: ctx.messageId ?? null,
+          })
           const { data: created, error: createErr } = await supabase.rpc(
             "create_pending_booking_from_ai",
-            {
-              p_phone: phone,
-              p_client_name: resolvedName,
-              p_email: input.client_email ? String(input.client_email) : null,
-              p_service_id: serviceId,
-              p_booking_date: date,
-              p_booking_time: timeNorm,
-              p_duration_min: input.duration_min ? Number(input.duration_min) : null,
-              p_notes: "Solicitud creada por IA WhatsApp.",
-              p_ai_conversation_id: ctx.conversationId ?? null,
-              p_ai_confidence_score: 0.9,
-              // Política: solo asignamos terapeuta si el cliente lo pidió por
-              // nombre. Si la elección la hizo el RPC automáticamente,
-              // dejamos therapist_id=null para que recepción asigne.
-              p_therapist_id: requestedStaffId ? String(requestedStaffId) : null,
-            },
+            createArgs,
           )
           if (!createErr && created) {
             const createdResult = created as Record<string, unknown>
@@ -1247,7 +1252,7 @@ async function execTool(
         }
       }
       // Normalizar HH:MM → HH:MM:00 para tipo time
-      const timeNorm = time.length === 5 ? `${time}:00` : time
+      const timeNorm = normalizeAiBookingTime(time)
       const requestedStaffId = await resolveRequestedStaffId(input, ctx.messageText)
       // Safety net: re-verificar disponibilidad. La IA debió llamar
       // check_availability_for_booking antes, pero validamos por si acaso.
@@ -1278,21 +1283,22 @@ async function execTool(
             "correo para el comprobante) antes de crear la cita. NO digas que quedó registrada.",
         }
       }
-      const { data, error } = await supabase.rpc("create_pending_booking_from_ai", {
-        p_phone: phone,
-        p_client_name: resolvedName,
-        p_email: input.client_email ? String(input.client_email) : null,
-        p_service_id: serviceId,
-        p_booking_date: date,
-        p_booking_time: timeNorm,
-        p_duration_min: input.duration_min ? Number(input.duration_min) : null,
-        p_notes: String(input.notes ?? ""),
-        p_ai_conversation_id: ctx.conversationId ?? null,
-        p_ai_confidence_score: input.confidence != null ? Number(input.confidence) : null,
-        // Política: respetar terapeuta SOLO si el cliente lo nombró.
-        // Si no, dejar NULL para que recepción asigne.
-        p_therapist_id: requestedStaffId ? String(requestedStaffId) : null,
+      const createArgs = await buildCreatePendingBookingRpcArgs({
+        channel: "whatsapp_ai",
+        phone,
+        clientName: resolvedName,
+        email: input.client_email ? String(input.client_email) : null,
+        serviceId,
+        bookingDate: date,
+        bookingTime: timeNorm,
+        durationMin: input.duration_min ? Number(input.duration_min) : null,
+        notes: String(input.notes ?? ""),
+        conversationId: ctx.conversationId ?? null,
+        confidenceScore: input.confidence != null ? Number(input.confidence) : null,
+        therapistId: requestedStaffId ? String(requestedStaffId) : null,
+        externalMessageId: ctx.messageId ?? null,
       })
+      const { data, error } = await supabase.rpc("create_pending_booking_from_ai", createArgs)
       if (error) return { error: error.message }
       const result = data as Record<string, unknown> | null
       // Alerta interna a recepción solo si REALMENTE se creó (no en dup)
@@ -2965,6 +2971,7 @@ Deno.serve(async (req) => {
               conversationId: convId,
               clientName: client?.full_name ?? null,
               messageText,
+              messageId: wamid,
             })
           // Señal de cita real: booking_id presente, recién creada o duplicado
           // (duplicado ⇒ ya existe una cita para ese slot, confirmar es válido).

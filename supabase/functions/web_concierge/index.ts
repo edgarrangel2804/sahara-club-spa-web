@@ -6,6 +6,10 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import {
+  buildCreatePendingBookingRpcArgs,
+  normalizeAiBookingTime,
+} from "../_shared/ai_booking_contracts.ts"
+import {
   checkRateLimit,
   clientIpKey,
   jsonResponseFor,
@@ -216,7 +220,7 @@ Deno.serve(async (req: Request) => {
       }
       if (!done && serviceId && fecha && hora && telefono && nombreOk) {
         try {
-          const timeNorm = hora.length === 5 ? `${hora}:00` : hora
+          const timeNorm = normalizeAiBookingTime(hora)
           const { data: avail } = await sb.rpc("check_availability_for_booking_from_ai", {
             p_service_id: serviceId,
             p_requested_date: fecha,
@@ -226,19 +230,19 @@ Deno.serve(async (req: Request) => {
             p_staff_id: null,
           })
           if ((avail as any)?.available === true) {
-            const { data: created } = await sb.rpc("create_pending_booking_from_ai", {
-              p_phone: telefono,
-              p_client_name: nombre,
-              p_email: email || null,
-              p_service_id: serviceId,
-              p_booking_date: fecha,
-              p_booking_time: timeNorm,
-              p_duration_min: null,
-              p_notes: "Solicitud creada por concierge web.",
-              p_ai_conversation_id: null,
-              p_ai_confidence_score: 0.9,
-              p_therapist_id: null,
+            const createArgs = await buildCreatePendingBookingRpcArgs({
+              channel: "web_concierge",
+              phone: telefono,
+              clientName: nombre,
+              email: email || null,
+              serviceId,
+              bookingDate: fecha,
+              bookingTime: timeNorm,
+              durationMin: null,
+              notes: "Solicitud creada por concierge web.",
+              confidenceScore: 0.9,
             })
+            const { data: created } = await sb.rpc("create_pending_booking_from_ai", createArgs)
             const bookingId = (created as any)?.booking_id
             if (bookingId) {
               // 🌐 Origen real: esta cita nació en el CONCIERGE WEB, no en el bot
