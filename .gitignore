@@ -33,6 +33,7 @@ migrate_working_dir/
 /build/
 /coverage/
 supabase/.temp/
+supabase/.branches/
 
 # Symbolication related
 app.*.symbols
@@ -47,3 +48,4 @@ app.*.map.json
 .vercel
 
 .claude/
+.audit/

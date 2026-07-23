@@ -4,11 +4,15 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import {
+  buildCreatePendingBookingRpcArgs,
+  normalizeAiBookingTime,
+} from "../_shared/ai_booking_contracts.ts"
+import {
+  callMetaApi,
   corsHeaders,
   DEFAULT_BRANCH_ID,
   loadBusinessSettings,
   normalizePhone,
-  callMetaApi,
 } from "../_shared/whatsapp_business.ts"
 
 type Settings = {
@@ -57,8 +61,10 @@ async function resolveRequestedStaffId(
   messageText: string | null | undefined,
 ): Promise<string | null> {
   const explicit = String(input.staff_id ?? "").trim()
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-    .test(explicit)) return explicit
+  if (
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      .test(explicit)
+  ) return explicit
 
   const haystack = normalizeSearchText(
     `${explicit} ${String(input.staff_name ?? "")} ${messageText ?? ""}`,
@@ -95,7 +101,7 @@ function classifyShortMessage(rawText: string): "soft_closing" | "ignore" | "nor
   const text = (rawText || "")
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "") // sin acentos
-    .replace(/[¿¡!?.,;:]/g, "")      // sin signos
+    .replace(/[¿¡!?.,;:]/g, "") // sin signos
     .trim()
     .toLowerCase()
 
@@ -103,18 +109,39 @@ function classifyShortMessage(rawText: string): "soft_closing" | "ignore" | "nor
 
   // Soft closings: agradecimientos / aceptaciones explícitas
   const softClosings = new Set([
-    "gracias", "gracias!", "muchas gracias", "mil gracias",
-    "ok gracias", "okay gracias", "sale gracias",
-    "ok muchas gracias", "okay muchas gracias", "ok mil gracias", "okay mil gracias",
-    "perfecto", "perfecto gracias", "excelente",
-    "perfecto muchas gracias", "excelente gracias", "excelente muchas gracias",
-    "muy bien", "muy bien gracias", "buenisimo", "buenisimo gracias",
-    "entendido", "entendido gracias",
-    "listo", "listo gracias",
-    "sale", "ok sale",
-    "genial", "genial gracias",
-    "a la orden", "de nada",
-    "todo bien", "todo bien gracias",
+    "gracias",
+    "gracias!",
+    "muchas gracias",
+    "mil gracias",
+    "ok gracias",
+    "okay gracias",
+    "sale gracias",
+    "ok muchas gracias",
+    "okay muchas gracias",
+    "ok mil gracias",
+    "okay mil gracias",
+    "perfecto",
+    "perfecto gracias",
+    "excelente",
+    "perfecto muchas gracias",
+    "excelente gracias",
+    "excelente muchas gracias",
+    "muy bien",
+    "muy bien gracias",
+    "buenisimo",
+    "buenisimo gracias",
+    "entendido",
+    "entendido gracias",
+    "listo",
+    "listo gracias",
+    "sale",
+    "ok sale",
+    "genial",
+    "genial gracias",
+    "a la orden",
+    "de nada",
+    "todo bien",
+    "todo bien gracias",
   ])
 
   // Quita emojis y trims múltiples espacios para matchear
@@ -130,8 +157,9 @@ function classifyShortMessage(rawText: string): "soft_closing" | "ignore" | "nor
   // - "ok" o "okay" pelado (sin gracias)
   // - jajaja / hahaha / lol
   // - Hasta 2 chars
-  const onlyEmojis = /^[\s\u{1F300}-\u{1FAFF}\u{1F000}-\u{1F02F}\u{2600}-\u{27BF}✨🌿💆‍♀️👍👌🙏❤️♥️💕😊😀😁]+$/u
-    .test(rawText.trim())
+  const onlyEmojis =
+    /^[\s\u{1F300}-\u{1FAFF}\u{1F000}-\u{1F02F}\u{2600}-\u{27BF}✨🌿💆‍♀️👍👌🙏❤️♥️💕😊😀😁]+$/u
+      .test(rawText.trim())
   if (onlyEmojis) return "ignore"
 
   if (cleaned === "ok" || cleaned === "okay" || cleaned === "k") return "ignore"
@@ -174,8 +202,10 @@ async function notifyHumanBackup(
     .select("human_backup_enabled, human_backup_numbers, human_backup_dedup_minutes")
     .eq("id", 1).maybeSingle()
   const enabled = (s as { human_backup_enabled?: boolean })?.human_backup_enabled === true
-  const numbers = ((s as { human_backup_numbers?: string[] })?.human_backup_numbers ?? []) as string[]
-  const dedupMinutes = (s as { human_backup_dedup_minutes?: number })?.human_backup_dedup_minutes ?? 15
+  const numbers =
+    ((s as { human_backup_numbers?: string[] })?.human_backup_numbers ?? []) as string[]
+  const dedupMinutes = (s as { human_backup_dedup_minutes?: number })?.human_backup_dedup_minutes ??
+    15
 
   if (!enabled || numbers.length === 0) {
     return { sent: false, reason: "disabled_or_no_recipients" }
@@ -197,8 +227,7 @@ async function notifyHumanBackup(
   const businessSettings = await loadBusinessSettings(supabase, DEFAULT_BRANCH_ID)
   if (!businessSettings) return { sent: false, reason: "no_business_settings" }
 
-  const alertText =
-    `🚨 Nuevo mensaje sin respuesta IA\n\n` +
+  const alertText = `🚨 Nuevo mensaje sin respuesta IA\n\n` +
     `Cliente: ${customerPhone}\n` +
     `Mensaje:\n"${customerMessage.slice(0, 500)}"\n\n` +
     `Motivo:\n${reason}\n\n` +
@@ -225,7 +254,10 @@ async function notifyHumanBackup(
       )
       const wamid = (res.data as { messages?: Array<{ id?: string }> })?.messages?.[0]?.id ?? null
       const metaErr = !res.ok
-        ? ((res.data as { error?: Record<string, unknown> })?.error ?? {}) as { message?: string; code?: number }
+        ? ((res.data as { error?: Record<string, unknown> })?.error ?? {}) as {
+          message?: string
+          code?: number
+        }
         : {}
 
       await supabase.from("whatsapp_logs").insert({
@@ -259,7 +291,8 @@ async function notifyReceptionRaw(alertText: string): Promise<number> {
     .eq("id", 1).maybeSingle()
   const enabled = (s as { human_backup_enabled?: boolean } | null)?.human_backup_enabled === true
   if (!enabled) return 0
-  const backups = ((s as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
+  const backups =
+    ((s as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
   const admins = ((s as { ai_admin_numbers?: string[] } | null)?.ai_admin_numbers ?? []) as string[]
   const seen = new Set<string>()
   let okCount = 0
@@ -279,7 +312,9 @@ async function notifyReceptionRaw(alertText: string): Promise<number> {
   return okCount
 }
 
-async function loadBookingBrief(bookingId: string): Promise<{ service: string; date?: string; time?: string }> {
+async function loadBookingBrief(
+  bookingId: string,
+): Promise<{ service: string; date?: string; time?: string }> {
   try {
     const { data } = await supabase
       .from("bookings")
@@ -299,31 +334,35 @@ async function loadBookingBrief(bookingId: string): Promise<{ service: string; d
 }
 
 async function notifyReceptionReschedule(
-  customerPhone: string, customerName: string | null,
-  bookingId: string, newDate: string, newTime: string,
+  customerPhone: string,
+  customerName: string | null,
+  bookingId: string,
+  newDate: string,
+  newTime: string,
 ): Promise<number> {
   const brief = await loadBookingBrief(bookingId)
   const alert = [
-    "🔄 *Reagenda IA (revalidar)*",
+    "🔄 *Solicitud de reagendado · vía WhatsApp*",
     "",
     `*Cliente:* ${customerName ?? "Cliente WhatsApp"}`,
     `*Teléfono:* ${customerPhone}`,
     `*Servicio:* ${brief.service}`,
-    `*Nueva fecha:* ${newDate}`,
-    `*Nueva hora:* ${newTime}`,
+    `*Nueva fecha/hora deseada:* ${newDate} ${newTime}`,
     "",
-    "La cita quedó en revisión (pending_reception). Validar en agenda Sahara.",
+    "⚠️ El cliente DESEA reagendar su cita a ese horario. La cita NO se movió: por favor atiende esta solicitud en la agenda de Sahara.",
   ].join("\n")
   return await notifyReceptionRaw(alert)
 }
 
 async function notifyReceptionCancel(
-  customerPhone: string, customerName: string | null,
-  bookingId: string, reason: string,
+  customerPhone: string,
+  customerName: string | null,
+  bookingId: string,
+  reason: string,
 ): Promise<number> {
   const brief = await loadBookingBrief(bookingId)
   const alert = [
-    "❌ *Cancelación IA*",
+    "🔔 *Solicitud de cancelación · vía WhatsApp*",
     "",
     `*Cliente:* ${customerName ?? "Cliente WhatsApp"}`,
     `*Teléfono:* ${customerPhone}`,
@@ -331,9 +370,35 @@ async function notifyReceptionCancel(
     brief.date ? `*Fecha:* ${brief.date}${brief.time ? ` ${brief.time}` : ""}` : "",
     reason ? `*Motivo:* ${reason}` : "",
     "",
-    "El cliente canceló su cita desde WhatsApp.",
+    "⚠️ El cliente DESEA cancelar esta cita. La cita NO está cancelada todavía: por favor atiende esta solicitud en la agenda de Sahara.",
   ].filter(Boolean).join("\n")
   return await notifyReceptionRaw(alert)
+}
+
+// Nombres genéricos que NUNCA deben quedar guardados como el nombre del cliente
+// (el viejo placeholder "Cliente WhatsApp" y variantes). Si llega uno de estos,
+// se considera que AÚN NO tenemos el nombre real y la cita no se cierra.
+const GENERIC_NAME_RX =
+  /^(cliente(\s+whats?app|\s+web)?|whats?app|sin\s+nombre|invitad[oa]|test|prueba|na|n\/a)$/i
+
+// ¿Es un nombre real y completo? Exige nombre + apellido (2 palabras de >=2
+// letras) y descarta los genéricos. Evita guardar "Cliente WhatsApp".
+function isRealClientName(name: unknown): boolean {
+  const n = String(name ?? "").trim().replace(/\s+/g, " ")
+  if (n.length < 3) return false
+  if (GENERIC_NAME_RX.test(n)) return false
+  const words = n.split(" ").filter((w) => /[a-zA-ZÀ-ÿ]{2,}/.test(w))
+  return words.length >= 2
+}
+
+// Devuelve el primer nombre REAL de una lista de candidatos (input del modelo,
+// nombre en BD), ya normalizado. null si ninguno sirve → hay que pedirlo.
+function firstRealName(cands: unknown[]): string | null {
+  for (const c of cands) {
+    const n = String(c ?? "").trim().replace(/\s+/g, " ")
+    if (isRealClientName(n)) return n
+  }
+  return null
 }
 
 // Inserta una alerta visible para recepción en el panel (tabla reception_alerts).
@@ -366,12 +431,18 @@ async function logReceptionAlert(
 async function createGiftCardCheckout(opts: {
   serviceId: string
   recipientName: string
+  recipientPhone: string
   senderName: string
+  validFrom: string
   message?: string
+  sendCopyToBuyer?: boolean
+  termsAccepted?: boolean
   buyerName?: string | null
   buyerEmail?: string | null
   buyerPhone: string
-}): Promise<{ ok: boolean; checkout_url?: string; service_name?: string; amount?: number; error?: string }> {
+}): Promise<
+  { ok: boolean; checkout_url?: string; service_name?: string; amount?: number; error?: string }
+> {
   try {
     const { data: svc, error: svcErr } = await supabase
       .from("services")
@@ -381,14 +452,22 @@ async function createGiftCardCheckout(opts: {
     if (svcErr) return { ok: false, error: svcErr.message }
     if (!svc) return { ok: false, error: "service_not_found" }
     const s = svc as {
-      name?: string; price?: number; is_active?: boolean
-      price_on_quote?: boolean; is_package?: boolean
+      name?: string
+      price?: number
+      is_active?: boolean
+      price_on_quote?: boolean
+      is_package?: boolean
     }
     if (s.is_active === false) return { ok: false, error: "service_inactive" }
     if (s.price_on_quote === true) return { ok: false, error: "service_price_on_quote" }
     const price = Number(s.price ?? 0)
     if (!(price > 0)) return { ok: false, error: "service_no_price" }
     const serviceName = String(s.name ?? "Servicio")
+    if (!opts.recipientPhone.trim()) return { ok: false, error: "recipient_phone_required" }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(opts.validFrom.trim())) {
+      return { ok: false, error: "valid_from_required" }
+    }
+    if (opts.termsAccepted !== true) return { ok: false, error: "terms_required" }
 
     // Stripe exige customer_email; si no hay, placeholder derivado del teléfono.
     const phoneDigits = String(opts.buyerPhone ?? "").replace(/\D/g, "")
@@ -414,8 +493,14 @@ async function createGiftCardCheckout(opts: {
         service_id: opts.serviceId,
         service_name: serviceName,
         recipient_name: opts.recipientName,
+        recipient_phone: opts.recipientPhone,
         sender_name: opts.senderName,
+        dedication_message: opts.message ?? "",
         message: opts.message ?? "",
+        valid_from: opts.validFrom,
+        buyer_copy_requested: opts.sendCopyToBuyer === true,
+        purchase_channel: "whatsapp",
+        terms_accepted: opts.termsAccepted === true,
         delivery_method: "digital",
       },
     }
@@ -544,9 +629,28 @@ const TOOLS = [
         service_id: { type: "string", description: "UUID del servicio (de list_services)" },
         requested_date: { type: "string", description: "YYYY-MM-DD zona Tijuana" },
         requested_time: { type: "string", description: "HH:MM 24h" },
-        duration_min: { type: "number", description: "Duración minutos (opcional, default servicio)" },
-        staff_id: { type: "string", description: "UUID del terapeuta si el cliente pidio uno especifico" },
-        staff_name: { type: "string", description: "Nombre del terapeuta si el cliente pidio uno especifico" },
+        duration_min: {
+          type: "number",
+          description: "Duración minutos (opcional, default servicio)",
+        },
+        staff_id: {
+          type: "string",
+          description: "UUID del terapeuta si el cliente pidio uno especifico",
+        },
+        staff_name: {
+          type: "string",
+          description: "Nombre del terapeuta si el cliente pidio uno especifico",
+        },
+        client_name: {
+          type: "string",
+          description:
+            "Nombre COMPLETO del cliente (nombre y apellido). Pídelo antes de cerrar la reserva.",
+        },
+        client_email: {
+          type: "string",
+          description:
+            "Email del cliente para enviarle el comprobante del anticipo. Pídelo antes de cerrar la reserva.",
+        },
       },
       required: ["service_id", "requested_date", "requested_time"],
     },
@@ -554,7 +658,7 @@ const TOOLS = [
   {
     name: "get_staff_day_status",
     description:
-      "Devuelve el estado de cada terapeuta para una fecha: working / off / time_off / lunch / busy / available. Úsalo SOLO si el cliente pregunta explícitamente por una terapeuta (\"¿está Victoria?\", \"¿quién atiende hoy?\", \"¿Anita trabaja mañana?\"). NO la uses para chequear si un slot está libre — para eso usa check_availability_for_booking. Solo lectura, no reserva nada. Devuelve también start_time/end_time/lunch_start/lunch_end por si necesitas narrar horarios.",
+      'Devuelve el estado de cada terapeuta para una fecha: working / off / time_off / lunch / busy / available. Úsalo SOLO si el cliente pregunta explícitamente por una terapeuta ("¿está Victoria?", "¿quién atiende hoy?", "¿Anita trabaja mañana?"). NO la uses para chequear si un slot está libre — para eso usa check_availability_for_booking. Solo lectura, no reserva nada. Devuelve también start_time/end_time/lunch_start/lunch_end por si necesitas narrar horarios.',
     input_schema: {
       type: "object",
       properties: {
@@ -573,7 +677,14 @@ const TOOLS = [
         booking_date: { type: "string", description: "YYYY-MM-DD en zona Tijuana" },
         booking_time: { type: "string", description: "HH:MM 24h (ej. 14:00)" },
         duration_min: { type: "number", description: "Duración en minutos (opcional, default 60)" },
-        client_name: { type: "string", description: "Nombre del cliente si lo conoces; opcional" },
+        client_name: {
+          type: "string",
+          description: "Nombre COMPLETO del cliente (nombre y apellido)",
+        },
+        client_email: {
+          type: "string",
+          description: "Email del cliente para el comprobante del anticipo",
+        },
         notes: { type: "string", description: "Notas opcionales (preferencias, contexto)" },
         confidence: { type: "number", description: "Confianza 0-1 en que la intención es real" },
       },
@@ -583,17 +694,20 @@ const TOOLS = [
   {
     name: "consult_my_appointments",
     description:
-      "Devuelve las próximas citas del cliente que escribe (se identifica por su propio teléfono, no pidas el número). Úsala cuando pregunte '¿qué citas tengo?', '¿cuándo es mi cita?', '¿a qué hora quedé?', '¿ya tengo algo agendado?'. Solo lectura. Cada cita trae booking_id, service_name, date, time, status_label y ai_manageable (true si tú puedes reagendarla/cancelarla, false si la maneja recepción).",
+      "Devuelve las próximas citas del cliente que escribe (se identifica por su propio teléfono, no pidas el número). Úsala cuando pregunte '¿qué citas tengo?', '¿cuándo es mi cita?', '¿a qué hora quedé?', '¿ya tengo algo agendado?'. Solo lectura. Cada cita trae booking_id, service_name, date, time y status_label. IGNORA el campo ai_manageable para decidir si actúas: TÚ NUNCA cancelas ni reagendas, pero cuando el cliente pida cancelar/reagendar SIEMPRE debes llamar cancel_my_booking / reschedule_my_booking (con cualquier estado) para registrar la solicitud y avisar a recepción/administradores.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "reschedule_my_booking",
     description:
-      "Mueve una cita EXISTENTE del cliente a nueva fecha/hora. Úsala solo cuando el cliente pida cambiar/mover una cita suya. PRIMERO obtén el booking_id con consult_my_appointments y confirma cuál cita quiere mover. Solo funciona si ai_manageable=true (citas no confirmadas). Valida disponibilidad: si available=false devuelve suggested_slots para ofrecer. Si available=true, deja la cita en revisión de recepción con la nueva fecha/hora.",
+      "Registra la solicitud del cliente de mover una cita a nueva fecha/hora y AVISA a recepción/administradores. Úsala SIEMPRE que el cliente pida cambiar/mover una cita suya, SIN IMPORTAR el estado ni ai_manageable. PRIMERO obtén el booking_id con consult_my_appointments y confirma cuál cita. TÚ NO mueves la cita: solo registras la solicitud. Devolverá error='requires_reception' — eso es lo ESPERADO (no es un fallo): significa que recepción la gestionará. Responde cálido al cliente diciendo que le avisas a recepción.",
     input_schema: {
       type: "object",
       properties: {
-        booking_id: { type: "string", description: "UUID de la cita a mover (de consult_my_appointments)" },
+        booking_id: {
+          type: "string",
+          description: "UUID de la cita a mover (de consult_my_appointments)",
+        },
         new_date: { type: "string", description: "YYYY-MM-DD zona Tijuana" },
         new_time: { type: "string", description: "HH:MM 24h (ej. 16:00)" },
       },
@@ -603,11 +717,14 @@ const TOOLS = [
   {
     name: "cancel_my_booking",
     description:
-      "Cancela una cita EXISTENTE del cliente. Úsala solo cuando el cliente pida explícitamente cancelar una cita suya, y DESPUÉS de confirmar con él cuál (obtén el booking_id con consult_my_appointments). Solo funciona si ai_manageable=true. Si devuelve error 'requires_reception', informa que recepción le ayudará con esa cita.",
+      "Registra la solicitud del cliente de cancelar una cita y AVISA a recepción/administradores. Úsala SIEMPRE que el cliente pida cancelar una cita suya, SIN IMPORTAR el estado ni ai_manageable (confirmada o no), y DESPUÉS de confirmar con él cuál (obtén el booking_id con consult_my_appointments). TÚ NO cancelas la cita: solo registras la solicitud. Devolverá error='requires_reception' — eso es lo ESPERADO (no es un fallo): recepción la gestionará. Responde cálido diciendo que le avisas a recepción; NUNCA digas que hubo un problema técnico.",
     input_schema: {
       type: "object",
       properties: {
-        booking_id: { type: "string", description: "UUID de la cita a cancelar (de consult_my_appointments)" },
+        booking_id: {
+          type: "string",
+          description: "UUID de la cita a cancelar (de consult_my_appointments)",
+        },
         reason: { type: "string", description: "Motivo breve si el cliente lo da (opcional)" },
       },
       required: ["booking_id"],
@@ -616,17 +733,47 @@ const TOOLS = [
   {
     name: "create_gift_card_checkout",
     description:
-      "Genera un LINK DE PAGO de Stripe para comprar una GIFT CARD de un servicio (regala 1 sesión de ese servicio). Úsala cuando el cliente quiera REGALAR o COMPRAR una gift card / tarjeta de regalo de un servicio del spa. ANTES de llamarla: 1) obtén el service_id con list_services y confirma con el cliente cuál servicio quiere regalar y su precio; 2) pregunta y confirma el nombre de quién recibe el regalo (recipient_name) y de parte de quién va (sender_name). Devuelve checkout_url: envíaselo al cliente para que pague. Al pagar, la gift card se genera automáticamente y recepción la verá. NO sirve para canjear gift cards, solo para comprarlas.",
+      "Genera un LINK DE PAGO de Stripe para comprar una GIFT CARD de un servicio (regala 1 sesión de ese servicio). Úsala cuando el cliente quiera REGALAR o COMPRAR una gift card / tarjeta de regalo de un servicio del spa. ANTES de llamarla: 1) obtén el service_id con list_services y confirma servicio/precio; 2) pregunta y confirma recipient_name, recipient_phone, sender_name, valid_from y aceptación de vigencia/cita previa; 3) opcionalmente captura dedicatoria, email y copia al comprador. Devuelve checkout_url. Al pagar, la tarjeta digital se genera y recepción la verá. NO sirve para canjear gift cards, solo para comprarlas.",
     input_schema: {
       type: "object",
       properties: {
-        service_id: { type: "string", description: "UUID del servicio a regalar (de list_services)" },
+        service_id: {
+          type: "string",
+          description: "UUID del servicio a regalar (de list_services)",
+        },
         recipient_name: { type: "string", description: "Nombre de quien recibe el regalo" },
+        recipient_phone: {
+          type: "string",
+          description: "WhatsApp de quien recibe el regalo, con lada",
+        },
         sender_name: { type: "string", description: "Nombre de quien regala (de parte de)" },
+        valid_from: {
+          type: "string",
+          description:
+            "Fecha local America/Tijuana en formato YYYY-MM-DD desde la que inicia la vigencia",
+        },
         message: { type: "string", description: "Mensaje opcional del regalo" },
-        buyer_email: { type: "string", description: "Email del comprador para el recibo (opcional)" },
+        send_copy_to_buyer: {
+          type: "boolean",
+          description: "true solo si el comprador pidio recibir copia",
+        },
+        terms_accepted: {
+          type: "boolean",
+          description: "true cuando el comprador acepta vigencia de 3 meses y cita previa",
+        },
+        buyer_email: {
+          type: "string",
+          description: "Email del comprador para el recibo (opcional)",
+        },
       },
-      required: ["service_id", "recipient_name", "sender_name"],
+      required: [
+        "service_id",
+        "recipient_name",
+        "recipient_phone",
+        "sender_name",
+        "valid_from",
+        "terms_accepted",
+      ],
     },
   },
 ]
@@ -636,6 +783,7 @@ type ToolContext = {
   conversationId?: string
   clientName?: string | null
   messageText?: string | null
+  messageId?: string | null
 }
 
 // "Ahora" en zona Tijuana, como wall-clock (mismo truco que buildSystemPrompt).
@@ -683,7 +831,9 @@ async function execTool(
     case "get_service_detail": {
       const { data, error } = await supabase
         .from("services")
-        .select("id, name, description, category, duration_min, price, tagline, benefits, contraindications, recommended_for")
+        .select(
+          "id, name, description, category, duration_min, price, tagline, benefits, contraindications, recommended_for",
+        )
         .eq("id", String(input.service_id))
         .maybeSingle()
       if (error) return { error: error.message }
@@ -691,7 +841,7 @@ async function execTool(
       return data
     }
     case "get_business_hours": {
-      const days = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"]
+      const days = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"]
       // Calculamos today/tomorrow SIEMPRE en America/Tijuana (timezone del negocio)
       const tjNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Tijuana" }))
       const tjToday = tjNow.toISOString().slice(0, 10)
@@ -702,7 +852,8 @@ async function execTool(
       if (input.date) {
         const at = `${input.date}T12:00:00-07:00`
         const { data, error } = await supabase.rpc("is_business_open", {
-          p_at: at, p_branch_id: DEFAULT_BRANCH_ID,
+          p_at: at,
+          p_branch_id: DEFAULT_BRANCH_ID,
         })
         if (error) return { error: error.message }
         return {
@@ -748,16 +899,19 @@ async function execTool(
       let rows = (data ?? []) as Array<Record<string, unknown>>
       if (input.query) {
         const term = String(input.query).toLowerCase()
-        rows = rows.filter((r) =>
-          `${r.question} ${r.answer}`.toLowerCase().includes(term),
-        )
+        rows = rows.filter((r) => `${r.question} ${r.answer}`.toLowerCase().includes(term))
       }
       // Defensa en profundidad: aunque vengan con scope='sahara', revalidamos
       // por si futuras filas tienen un valor inesperado.
       rows = rows.filter((r) => (r.scope_category ?? "sahara") === "sahara")
-      return { faqs: rows.slice(0, 6).map((r) => ({
-        question: r.question, answer: r.answer, category: r.category, tags: r.tags,
-      })) }
+      return {
+        faqs: rows.slice(0, 6).map((r) => ({
+          question: r.question,
+          answer: r.answer,
+          category: r.category,
+          tags: r.tags,
+        })),
+      }
     }
     case "identify_client": {
       const phone = normalizePhone(String(input.phone ?? ""))
@@ -781,7 +935,7 @@ async function execTool(
         .eq("service_id", sid)
         .gte("booking_date", from)
         .lte("booking_date", to)
-        .in("status", ["confirmed","rescheduled","checked_in","in_progress"])
+        .in("status", ["confirmed", "rescheduled", "checked_in", "in_progress"])
       if (error) return { error: error.message }
       const { data: hours } = await supabase
         .from("business_hours").select("weekday, opens_at, closes_at, is_closed")
@@ -818,10 +972,11 @@ async function execTool(
           requested_time: time,
           server_now_date: tjNow.date,
           server_now_time: tjNow.time,
-          note: "La fecha/hora solicitada ya pasó en zona Tijuana. Pide al cliente un día/hora futuros.",
+          note:
+            "La fecha/hora solicitada ya pasó en zona Tijuana. Pide al cliente un día/hora futuros.",
         }
       }
-      const timeNorm = time.length === 5 ? `${time}:00` : time
+      const timeNorm = normalizeAiBookingTime(time)
       const requestedStaffId = await resolveRequestedStaffId(input, ctx.messageText)
       const { data, error } = await supabase.rpc("check_availability_for_booking_from_ai", {
         p_service_id: serviceId,
@@ -837,31 +992,48 @@ async function execTool(
       // se crea sí o sí, aunque el modelo olvide llamar create_pending_booking.
       // La idempotencia del RPC evita duplicados.
       const phone = String(ctx.phone ?? "").trim()
-      if (result.available === true && phone) {
+      // 🪪 NOMBRE OBLIGATORIO: no cerramos la cita con un genérico ("Cliente
+      // WhatsApp"). Si todavía no tenemos nombre real (ni del modelo ni de la
+      // BD), devolvemos available=true + need_client_info para que el modelo lo
+      // pida ANTES de crear. Así el voucher y la agenda salen con el nombre real.
+      const resolvedName = firstRealName([input.client_name, ctx.clientName])
+      if (result.available === true && phone && !resolvedName) {
+        result.need_client_info = true
+        result.booking_created = false
+        result.missing_client_name = true
+        result.note =
+          "Hay disponibilidad, PERO falta el NOMBRE COMPLETO (nombre y apellido) del cliente. " +
+          "Pídelo en un solo mensaje (y un correo para el comprobante) y vuelve a llamar " +
+          "check_availability_for_booking con client_name y client_email. " +
+          "NO digas que la solicitud quedó registrada todavía."
+      } else if (result.available === true && phone && resolvedName) {
         try {
-          const { data: created, error: createErr } = await supabase.rpc("create_pending_booking_from_ai", {
-            p_phone: phone,
-            p_client_name: String(ctx.clientName ?? ""),
-            p_service_id: serviceId,
-            p_booking_date: date,
-            p_booking_time: timeNorm,
-            p_duration_min: input.duration_min ? Number(input.duration_min) : null,
-            p_notes: "Solicitud creada por IA WhatsApp.",
-            p_ai_conversation_id: ctx.conversationId ?? null,
-            p_ai_confidence_score: 0.9,
-            // Política: solo asignamos terapeuta si el cliente lo pidió por
-            // nombre. Si la elección la hizo el RPC automáticamente,
-            // dejamos therapist_id=null para que recepción asigne.
-            p_therapist_id: requestedStaffId
-              ? String(requestedStaffId)
-              : null,
+          const createArgs = await buildCreatePendingBookingRpcArgs({
+            channel: "whatsapp_ai",
+            phone,
+            clientName: resolvedName,
+            email: input.client_email ? String(input.client_email) : null,
+            serviceId,
+            bookingDate: date,
+            bookingTime: timeNorm,
+            durationMin: input.duration_min ? Number(input.duration_min) : null,
+            notes: "Solicitud creada por IA WhatsApp.",
+            conversationId: ctx.conversationId ?? null,
+            confidenceScore: 0.9,
+            therapistId: requestedStaffId ? String(requestedStaffId) : null,
+            externalMessageId: ctx.messageId ?? null,
           })
+          const { data: created, error: createErr } = await supabase.rpc(
+            "create_pending_booking_from_ai",
+            createArgs,
+          )
           if (!createErr && created) {
             const createdResult = created as Record<string, unknown>
             result.booking_id = createdResult.booking_id
             result.booking_created = createdResult.created
             result.duplicate_prevented = createdResult.duplicate_prevented
             result.status = createdResult.status
+            result.client_is_new = createdResult.client_is_new
 
             // Si el booking fue creado por primera vez:
             //  0) Consultar check_booking_payment_requirement (gift_card / membresía)
@@ -901,8 +1073,9 @@ async function execTool(
                   const giftCardId = reqResult.gift_card_id as string | null
                   const membershipId = reqResult.membership_id as string | null
                   const clientPackageId = reqResult.client_package_id as string | null
-                  const clientPackageSessionId =
-                    reqResult.client_package_session_id as string | null
+                  const clientPackageSessionId = reqResult.client_package_session_id as
+                    | string
+                    | null
                   await supabase
                     .from("bookings")
                     .update({
@@ -931,14 +1104,17 @@ async function execTool(
                     const reasonLabel = waiverReason === "gift_card"
                       ? "Gift card activa con saldo"
                       : waiverReason === "membership"
-                        ? "Membresía activa con sesiones"
-                        : waiverReason === "package"
-                          ? "Paquete activo con sesiones"
-                          : "Override admin"
+                      ? "Membresía activa con sesiones"
+                      : waiverReason === "package"
+                      ? "Paquete activo con sesiones"
+                      : "Override admin"
+                    const isNew = createdResult.client_is_new === true
                     const alert = [
                       "📅 *Nueva solicitud IA (sin anticipo)*",
                       "",
-                      `*Cliente:* ${ctx.clientName ?? "Cliente WhatsApp"}`,
+                      `*Cliente:* ${resolvedName}${
+                        isNew ? " 🆕 (cliente nuevo — crear expediente)" : ""
+                      }`,
                       `*Teléfono:* ${phone}`,
                       `*Servicio:* ${serviceName}`,
                       `*Fecha:* ${date}`,
@@ -963,7 +1139,9 @@ async function execTool(
                           const tail = String(t).replace(/\D/g, "").slice(-10)
                           if (tail.length === 10 && !seen.has(tail)) {
                             seen.add(tail)
-                            try { await sendTextToMeta(normalizePhone(String(t)), alert) } catch {
+                            try {
+                              await sendTextToMeta(normalizePhone(String(t)), alert)
+                            } catch {
                               /* swallow */
                             }
                           }
@@ -985,7 +1163,25 @@ async function execTool(
                       payment_status: "pending",
                     })
                     .eq("id", bookingId)
-                  result.checkout_url = `https://saharaclubspa.com/pagar-anticipo/${bookingId}`
+                  // La página /pagar-anticipo no existe en el front (regresaba a
+                  // la home). Generamos la sesión de Stripe Checkout y damos el
+                  // link DIRECTO a la pasarela. Al pagar, el webhook confirma la
+                  // cita y manda el comprobante.
+                  try {
+                    const { data: co } = await supabase.functions.invoke(
+                      "create_booking_deposit_checkout",
+                      { body: { booking_id: bookingId, amount: depositAmount } },
+                    )
+                    const url = (co as { checkout_url?: string } | null)?.checkout_url ?? ""
+                    if (url) {
+                      result.checkout_url = url
+                    } else {
+                      result.checkout_error = true
+                    }
+                  } catch (e) {
+                    console.warn("checkout link failed:", (e as Error).message)
+                    result.checkout_error = true
+                  }
                   result.deposit_amount = depositAmount
                   result.status = "pending_payment"
                   result.payment_requirement = "deposit_required"
@@ -1009,7 +1205,11 @@ async function execTool(
             result.booking_created = false
             result.checkout_error = createErr?.message ?? "create_pending_booking_returned_null"
             try {
-              await notifyHumanBackup(phone, ctx.messageText ?? "(intento de reserva)", "ai_booking_create_failed")
+              await notifyHumanBackup(
+                phone,
+                ctx.messageText ?? "(intento de reserva)",
+                "ai_booking_create_failed",
+              )
             } catch { /* swallow */ }
           }
         } catch (e) {
@@ -1020,7 +1220,11 @@ async function execTool(
           result.booking_created = false
           result.checkout_error = (e as Error).message
           try {
-            await notifyHumanBackup(phone, ctx.messageText ?? "(intento de reserva)", "ai_booking_create_exception")
+            await notifyHumanBackup(
+              phone,
+              ctx.messageText ?? "(intento de reserva)",
+              "ai_booking_create_exception",
+            )
           } catch { /* swallow */ }
         }
       }
@@ -1043,11 +1247,12 @@ async function execTool(
           error: "past_datetime",
           server_now_date: tjNow.date,
           server_now_time: tjNow.time,
-          note: "La fecha/hora ya pasó en zona Tijuana. Pide al cliente un día/hora futuros antes de crear la cita.",
+          note:
+            "La fecha/hora ya pasó en zona Tijuana. Pide al cliente un día/hora futuros antes de crear la cita.",
         }
       }
       // Normalizar HH:MM → HH:MM:00 para tipo time
-      const timeNorm = time.length === 5 ? `${time}:00` : time
+      const timeNorm = normalizeAiBookingTime(time)
       const requestedStaffId = await resolveRequestedStaffId(input, ctx.messageText)
       // Safety net: re-verificar disponibilidad. La IA debió llamar
       // check_availability_for_booking antes, pero validamos por si acaso.
@@ -1067,22 +1272,33 @@ async function execTool(
           note: "Slot ocupado o fuera de horario. Sugiere las alternativas al cliente.",
         }
       }
-      const { data, error } = await supabase.rpc("create_pending_booking_from_ai", {
-        p_phone: phone,
-        p_client_name: String(input.client_name ?? ctx.clientName ?? ""),
-        p_service_id: serviceId,
-        p_booking_date: date,
-        p_booking_time: timeNorm,
-        p_duration_min: input.duration_min ? Number(input.duration_min) : null,
-        p_notes: String(input.notes ?? ""),
-        p_ai_conversation_id: ctx.conversationId ?? null,
-        p_ai_confidence_score: input.confidence != null ? Number(input.confidence) : null,
-        // Política: respetar terapeuta SOLO si el cliente lo nombró.
-        // Si no, dejar NULL para que recepción asigne.
-        p_therapist_id: requestedStaffId
-          ? String(requestedStaffId)
-          : null,
+      // 🪪 NOMBRE OBLIGATORIO: no creamos la cita con un genérico. Si no hay
+      // nombre real (ni del modelo ni de la BD), pedimos al modelo capturarlo.
+      const resolvedName = firstRealName([input.client_name, ctx.clientName])
+      if (!resolvedName) {
+        return {
+          ok: false,
+          error: "client_name_required",
+          note: "Falta el NOMBRE COMPLETO (nombre y apellido) del cliente. Pídelo (y un " +
+            "correo para el comprobante) antes de crear la cita. NO digas que quedó registrada.",
+        }
+      }
+      const createArgs = await buildCreatePendingBookingRpcArgs({
+        channel: "whatsapp_ai",
+        phone,
+        clientName: resolvedName,
+        email: input.client_email ? String(input.client_email) : null,
+        serviceId,
+        bookingDate: date,
+        bookingTime: timeNorm,
+        durationMin: input.duration_min ? Number(input.duration_min) : null,
+        notes: String(input.notes ?? ""),
+        conversationId: ctx.conversationId ?? null,
+        confidenceScore: input.confidence != null ? Number(input.confidence) : null,
+        therapistId: requestedStaffId ? String(requestedStaffId) : null,
+        externalMessageId: ctx.messageId ?? null,
       })
+      const { data, error } = await supabase.rpc("create_pending_booking_from_ai", createArgs)
       if (error) return { error: error.message }
       const result = data as Record<string, unknown> | null
       // Alerta interna a recepción solo si REALMENTE se creó (no en dup)
@@ -1098,7 +1314,10 @@ async function execTool(
             .eq("id", serviceId)
             .maybeSingle()
           const serviceName = (svc as { name?: string } | null)?.name ?? "Servicio"
-          const customerName = String(input.client_name ?? ctx.clientName ?? "Cliente WhatsApp")
+          const isNew = (result as Record<string, unknown>).client_is_new === true
+          const customerName = `${resolvedName}${
+            isNew ? " 🆕 (cliente nuevo — crear expediente)" : ""
+          }`
           const alert = [
             "📅 *Nueva solicitud IA*",
             "",
@@ -1116,8 +1335,12 @@ async function execTool(
             .select("human_backup_numbers, human_backup_enabled")
             .eq("id", 1)
             .maybeSingle()
-          const enabled = (settingsRow as { human_backup_enabled?: boolean } | null)?.human_backup_enabled === true
-          const targets = ((settingsRow as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
+          const enabled =
+            (settingsRow as { human_backup_enabled?: boolean } | null)?.human_backup_enabled ===
+              true
+          const targets =
+            ((settingsRow as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ??
+              []) as string[]
           if (enabled && Array.isArray(targets)) {
             for (const target of targets) {
               try {
@@ -1157,23 +1380,48 @@ async function execTool(
         p_new_time: timeNorm,
       })
       if (error) return { error: error.message }
-      const result = (data as Record<string, unknown> | null) ?? { ok: false, error: "rpc_returned_null" }
+      const result = (data as Record<string, unknown> | null) ??
+        { ok: false, error: "rpc_returned_null" }
       // Si se reagendó con éxito, alerta a recepción (re-validación de slot nuevo).
       if (result.ok === true && result.rescheduled === true) {
         try {
-          await notifyReceptionReschedule(phone, ctx.clientName ?? null, bookingId, newDate, newTime)
+          await notifyReceptionReschedule(
+            phone,
+            ctx.clientName ?? null,
+            bookingId,
+            newDate,
+            newTime,
+          )
         } catch (e) {
           console.warn("reschedule reception alert failed:", (e as Error).message)
         }
         await logReceptionAlert("reschedule_requested", {
-          bookingId, phone, clientName: ctx.clientName ?? null,
+          bookingId,
+          phone,
+          clientName: ctx.clientName ?? null,
           message: `Nueva fecha solicitada: ${newDate} ${newTime}`,
         })
       } else if (result.error === "requires_reception") {
-        // El cliente quiso reagendar una cita confirmada → recepción debe actuar.
-        await logReceptionAlert("requires_reception", {
-          bookingId, phone, clientName: ctx.clientName ?? null,
-          message: `El cliente pidió reagendar a ${newDate} ${newTime}, pero la cita ya está confirmada.`,
+        // REGLA DE ORO: el bot NUNCA reagenda (ninguna cita, ningún origen).
+        // Avisa a los administradores por WhatsApp (nombre/servicio/fecha/hora) y
+        // deja alerta en el panel. Recepción autoriza y ejecuta.
+        try {
+          await notifyReceptionReschedule(
+            phone,
+            ctx.clientName ?? null,
+            bookingId,
+            newDate,
+            newTime,
+          )
+        } catch (e) {
+          console.warn("reschedule reception alert failed:", (e as Error).message)
+        }
+        await logReceptionAlert("reschedule_requested", {
+          bookingId,
+          phone,
+          clientName: ctx.clientName ?? null,
+          message:
+            `El cliente pidió reagendar a ${newDate} ${newTime}. Recepción debe autorizar y ejecutar.`,
         })
       }
       return result
@@ -1189,25 +1437,46 @@ async function execTool(
         p_reason: input.reason ? String(input.reason) : null,
       })
       if (error) return { error: error.message }
-      const result = (data as Record<string, unknown> | null) ?? { ok: false, error: "rpc_returned_null" }
+      const result = (data as Record<string, unknown> | null) ??
+        { ok: false, error: "rpc_returned_null" }
       if (result.ok === true && result.cancelled === true) {
         try {
-          await notifyReceptionCancel(phone, ctx.clientName ?? null, bookingId, String(input.reason ?? ""))
+          await notifyReceptionCancel(
+            phone,
+            ctx.clientName ?? null,
+            bookingId,
+            String(input.reason ?? ""),
+          )
         } catch (e) {
           console.warn("cancel reception alert failed:", (e as Error).message)
         }
         await logReceptionAlert("booking_cancelled", {
-          bookingId, phone, clientName: ctx.clientName ?? null,
+          bookingId,
+          phone,
+          clientName: ctx.clientName ?? null,
           message: input.reason ? String(input.reason) : undefined,
         })
       } else if (result.error === "requires_reception") {
-        // El cliente quiso cancelar una cita confirmada → recepción debe actuar
-        // (puede haber anticipo / política 24h). No se canceló automáticamente.
-        await logReceptionAlert("requires_reception", {
-          bookingId, phone, clientName: ctx.clientName ?? null,
+        // REGLA DE ORO: el bot NUNCA cancela (ninguna cita, ningún origen).
+        // Avisa a los administradores por WhatsApp (nombre/servicio/fecha/hora) y
+        // deja alerta en el panel. Recepción autoriza y ejecuta (anticipo / 24h).
+        try {
+          await notifyReceptionCancel(
+            phone,
+            ctx.clientName ?? null,
+            bookingId,
+            String(input.reason ?? ""),
+          )
+        } catch (e) {
+          console.warn("cancel reception alert failed:", (e as Error).message)
+        }
+        await logReceptionAlert("booking_cancelled", {
+          bookingId,
+          phone,
+          clientName: ctx.clientName ?? null,
           message: input.reason
-            ? `Quiere cancelar (cita confirmada). Motivo: ${String(input.reason)}`
-            : "El cliente quiere cancelar una cita ya confirmada.",
+            ? `Solicitud de cancelación. Motivo: ${String(input.reason)}`
+            : "El cliente solicita cancelar. Recepción debe autorizar.",
         })
       }
       return result
@@ -1217,13 +1486,23 @@ async function execTool(
       if (!phone) return { error: "phone_missing_from_context" }
       const serviceId = String(input.service_id ?? "").trim()
       const recipientName = String(input.recipient_name ?? "").trim()
+      const recipientPhone = String(input.recipient_phone ?? "").trim()
       const senderName = String(input.sender_name ?? "").trim()
-      if (!serviceId || !recipientName || !senderName) return { error: "missing_params" }
+      const validFrom = String(input.valid_from ?? "").trim()
+      const termsAccepted = input.terms_accepted === true
+      if (!serviceId || !recipientName || !recipientPhone || !senderName || !validFrom) {
+        return { error: "missing_params" }
+      }
+      if (!termsAccepted) return { error: "terms_required" }
       return await createGiftCardCheckout({
         serviceId,
         recipientName,
+        recipientPhone,
         senderName,
+        validFrom,
         message: input.message ? String(input.message) : "",
+        sendCopyToBuyer: input.send_copy_to_buyer === true,
+        termsAccepted,
         buyerName: ctx.clientName ?? senderName,
         buyerEmail: input.buyer_email ? String(input.buyer_email) : null,
         buyerPhone: phone,
@@ -1240,7 +1519,8 @@ async function execTool(
 const ADMIN_TOOLS = [
   {
     name: "get_today_summary",
-    description: "Resumen operativo de HOY (zona Tijuana): total citas, confirmadas, canceladas, pendientes, completadas, ingresos pagados.",
+    description:
+      "Resumen operativo de HOY (zona Tijuana): total citas, confirmadas, canceladas, pendientes, completadas, ingresos pagados.",
     input_schema: { type: "object", properties: {} },
   },
   {
@@ -1254,12 +1534,14 @@ const ADMIN_TOOLS = [
   },
   {
     name: "get_tomorrow_appointments",
-    description: "Lista compacta de las citas de MAÑANA (Tijuana): hora, servicio, terapeuta, status. NO devuelve nombre completo del cliente, solo inicial.",
+    description:
+      "Lista compacta de las citas de MAÑANA (Tijuana): hora, servicio, terapeuta, status. NO devuelve nombre completo del cliente, solo inicial.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "get_pending_confirmations",
-    description: "Lista citas próximas 7 días que están en estado pending, scheduled o pending_reception (creadas por IA), todas esperando confirmar.",
+    description:
+      "Lista citas próximas 7 días que están en estado pending, scheduled o pending_reception (creadas por IA), todas esperando confirmar.",
     input_schema: { type: "object", properties: {} },
   },
   {
@@ -1282,7 +1564,8 @@ const ADMIN_TOOLS = [
   },
   {
     name: "get_top_services",
-    description: "Top 5 servicios más reservados en un rango de fechas (date_from, date_to en YYYY-MM-DD).",
+    description:
+      "Top 5 servicios más reservados en un rango de fechas (date_from, date_to en YYYY-MM-DD).",
     input_schema: {
       type: "object",
       properties: {
@@ -1303,12 +1586,14 @@ const ADMIN_TOOLS = [
   },
   {
     name: "get_whatsapp_status_summary",
-    description: "Estado del canal WhatsApp últimas 24h: enviados, entregados, fallidos, en cola, dead-letter, latencia.",
+    description:
+      "Estado del canal WhatsApp últimas 24h: enviados, entregados, fallidos, en cola, dead-letter, latencia.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "get_ai_usage_summary",
-    description: "Métricas IA: conversaciones activas hoy, mensajes, costo USD, latencia promedio, escaladas a recepción.",
+    description:
+      "Métricas IA: conversaciones activas hoy, mensajes, costo USD, latencia promedio, escaladas a recepción.",
     input_schema: { type: "object", properties: {} },
   },
   {
@@ -1331,7 +1616,8 @@ const ADMIN_TOOLS = [
   },
   {
     name: "get_daily_operations_summary",
-    description: "Resumen extendido del día: citas + cancelaciones + ingresos + WhatsApp + IA en una sola llamada.",
+    description:
+      "Resumen extendido del día: citas + cancelaciones + ingresos + WhatsApp + IA en una sola llamada.",
     input_schema: {
       type: "object",
       properties: { date: { type: "string" } },
@@ -1340,7 +1626,8 @@ const ADMIN_TOOLS = [
   // --- Suite director: finanzas, nómina, clientes, prospectos ---
   {
     name: "get_financial_summary",
-    description: "Estado de resultados de un rango (default: mes en curso, Tijuana): ingresos pagados, gastos variables, gastos a proveedores, gastos fijos mensuales, nómina y UTILIDAD neta. Si una sección no tiene datos cargados lo indica con has_data=false. Úsalo para 'cómo vamos este mes', 'utilidad', 'ganancias', 'cuánto llevamos'.",
+    description:
+      "Estado de resultados de un rango (default: mes en curso, Tijuana): ingresos pagados, gastos variables, gastos a proveedores, gastos fijos mensuales, nómina y UTILIDAD neta. Si una sección no tiene datos cargados lo indica con has_data=false. Úsalo para 'cómo vamos este mes', 'utilidad', 'ganancias', 'cuánto llevamos'.",
     input_schema: {
       type: "object",
       properties: {
@@ -1351,12 +1638,14 @@ const ADMIN_TOOLS = [
   },
   {
     name: "get_fixed_expenses",
-    description: "Lista los gastos fijos del negocio (renta, servicios, etc.) con monto, frecuencia y día de pago, más el total mensual activo.",
+    description:
+      "Lista los gastos fijos del negocio (renta, servicios, etc.) con monto, frecuencia y día de pago, más el total mensual activo.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "get_payroll_summary",
-    description: "Nómina por periodo (default: mes en curso): detalle por empleado (sueldo base, comisiones, bonos, propinas, deducciones, total) y gran total. Para 'cuánto pagamos de nómina', 'sueldos'.",
+    description:
+      "Nómina por periodo (default: mes en curso): detalle por empleado (sueldo base, comisiones, bonos, propinas, deducciones, total) y gran total. Para 'cuánto pagamos de nómina', 'sueldos'.",
     input_schema: {
       type: "object",
       properties: {
@@ -1367,18 +1656,23 @@ const ADMIN_TOOLS = [
   },
   {
     name: "get_recurring_clients",
-    description: "Clientes recurrentes: quienes tienen 2+ citas. Devuelve nombre, teléfono, total de citas, visitas completadas y última visita. Para 'clientes recurrentes', 'clientes frecuentes', 'quiénes regresan'.",
+    description:
+      "Clientes recurrentes: quienes tienen 2+ citas. Devuelve nombre, teléfono, total de citas, visitas completadas y última visita. Para 'clientes recurrentes', 'clientes frecuentes', 'quiénes regresan'.",
     input_schema: {
       type: "object",
       properties: {
-        min_visits: { type: "integer", description: "mínimo de citas para contar como recurrente (default 2)" },
+        min_visits: {
+          type: "integer",
+          description: "mínimo de citas para contar como recurrente (default 2)",
+        },
         limit: { type: "integer", description: "máximo de clientes a devolver (default 20)" },
       },
     },
   },
   {
     name: "get_client_lookup",
-    description: "Busca un cliente por NOMBRE o TELÉFONO y devuelve su ficha completa: contacto, historial reciente de citas, próxima cita, total de visitas y membresía. Para 'dame los datos de X', 'historial de X', 'cuándo vino X'.",
+    description:
+      "Busca un cliente por NOMBRE o TELÉFONO y devuelve su ficha completa: contacto, historial reciente de citas, próxima cita, total de visitas y membresía. Para 'dame los datos de X', 'historial de X', 'cuándo vino X'.",
     input_schema: {
       type: "object",
       properties: { query: { type: "string", description: "nombre o teléfono" } },
@@ -1387,12 +1681,14 @@ const ADMIN_TOOLS = [
   },
   {
     name: "get_memberships_summary",
-    description: "Membresías activas: total, cuántas vencen en 30 días, cuántas con auto-renovación, y el detalle (cliente, vencimiento, sesiones usadas/totales). Para 'membresías', 'quién está por vencer'.",
+    description:
+      "Membresías activas: total, cuántas vencen en 30 días, cuántas con auto-renovación, y el detalle (cliente, vencimiento, sesiones usadas/totales). Para 'membresías', 'quién está por vencer'.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "get_prospects",
-    description: "Clientes nuevos / prospectos de un rango (default: mes en curso): total de altas, cuántos son leads sin cita aún, y el detalle. Para 'prospectos', 'clientes nuevos', 'leads'.",
+    description:
+      "Clientes nuevos / prospectos de un rango (default: mes en curso): total de altas, cuántos son leads sin cita aún, y el detalle. Para 'prospectos', 'clientes nuevos', 'leads'.",
     input_schema: {
       type: "object",
       properties: {
@@ -1426,8 +1722,7 @@ async function execAdminTool(name: string, input: Record<string, unknown>) {
         counts[r.status] = (counts[r.status] ?? 0) + 1
       }
       // Derivado: "pendientes por confirmar" = pending + scheduled + pending_reception (IA) + rescheduled
-      const pendingToConfirm =
-        (counts["pending"] ?? 0) +
+      const pendingToConfirm = (counts["pending"] ?? 0) +
         (counts["scheduled"] ?? 0) +
         (counts["pending_reception"] ?? 0) +
         (counts["rescheduled"] ?? 0)
@@ -1483,9 +1778,12 @@ async function execAdminTool(name: string, input: Record<string, unknown>) {
         .from("bookings").select("status").eq("booking_date", date)
       if (error) return { error: error.message }
       const total = data?.length ?? 0
-      const cancelled = (data ?? []).filter((r: { status: string }) => r.status === "cancelled").length
+      const cancelled =
+        (data ?? []).filter((r: { status: string }) => r.status === "cancelled").length
       return {
-        date, total, cancelled,
+        date,
+        total,
+        cancelled,
         cancellation_rate_pct: total > 0 ? Math.round((cancelled / total) * 1000) / 10 : 0,
       }
     }
@@ -1523,7 +1821,8 @@ async function execAdminTool(name: string, input: Record<string, unknown>) {
       const { data: staff } = await supabase
         .from("staff").select("id, full_name").in("id", ids)
       const result = (staff ?? []).map((s: { id: string; full_name: string }) => ({
-        therapist: s.full_name, count: counts[s.id] ?? 0,
+        therapist: s.full_name,
+        count: counts[s.id] ?? 0,
       })).sort((a, b) => b.count - a.count)
       return { date, by_therapist: result }
     }
@@ -1627,7 +1926,7 @@ async function execAdminTool(name: string, input: Record<string, unknown>) {
 }
 
 function buildAdminSystemPrompt(): { stable: string; dynamic: string } {
-  const days = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"]
+  const days = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"]
   const tjNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Tijuana" }))
   const tjDate = tjNow.toISOString().slice(0, 10)
   const tjTime = tjNow.toTimeString().slice(0, 5)
@@ -1635,7 +1934,8 @@ function buildAdminSystemPrompt(): { stable: string; dynamic: string } {
   const tjTomorrowDate = new Date(tjNow.getTime() + 86400000).toISOString().slice(0, 10)
   const tjTomorrowName = days[(tjNow.getDay() + 1) % 7]
 
-  const stable = `Eres Sahara, el ANALISTA DE NEGOCIO y mano derecha del dueño/administrador de Sahara Club Spa.
+  const stable =
+    `Eres Sahara, el ANALISTA DE NEGOCIO y mano derecha del dueño/administrador de Sahara Club Spa.
 Este usuario es admin autorizado (dueño/arquitecto). Tiene acceso TOTAL a la información del negocio por WhatsApp: operación, finanzas, nómina, gastos, clientes (con nombres y contacto), membresías y prospectos. Tu trabajo es darle datos REALES, claros y accionables, y ACONSEJARLO cuando lo pida o cuando los datos lo ameriten.
 
 REGLAS DURAS (admin):
@@ -1716,8 +2016,11 @@ async function buildServiceCatalog(): Promise<string> {
       return "(catálogo no disponible — usa list_services como fallback)"
     }
     const rows = (data ?? []) as Array<{
-      id: string; name: string; category: string | null;
-      duration_min: number | null; price: number | string | null;
+      id: string
+      name: string
+      category: string | null
+      duration_min: number | null
+      price: number | string | null
       tagline: string | null
     }>
     if (rows.length === 0) return "(sin servicios activos)"
@@ -1759,32 +2062,47 @@ function buildSystemBlocks(stable: string, dynamic: string): SystemBlock[] {
   ]
 }
 
-function buildSystemPrompt(clientKnown: string | null, serviceCatalog: string = ""): { stable: string; dynamic: string } {
+function buildSystemPrompt(
+  clientKnown: string | null,
+  serviceCatalog: string = "",
+): { stable: string; dynamic: string } {
   // SIEMPRE en zona horaria del negocio
-  const days = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"]
-  const monthsEs = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"]
+  const days = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"]
+  const monthsEs = [
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+  ]
   const tjNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Tijuana" }))
-  const tjDate = tjNow.toISOString().slice(0, 10)
   const tjTime = tjNow.toTimeString().slice(0, 5)
-  const tjWeekday = days[tjNow.getDay()]
-  const tjTomorrowDate = new Date(tjNow.getTime() + 86400000).toISOString().slice(0, 10)
-  const tjTomorrowName = days[(tjNow.getDay() + 1) % 7]
 
-  // Tabla autoritativa de los próximos 14 días: nombre + fecha exacta.
+  // Tabla autoritativa de los próximos 45 días: nombre + fecha exacta.
   // El modelo NUNCA debe calcular; solo hacer lookup en esta tabla.
   const upcomingLines: string[] = []
-  for (let i = 0; i < 14; i++) {
+  for (let i = 0; i < 45; i++) {
     const d = new Date(tjNow.getTime() + i * 86400000)
     const dateStr = d.toISOString().slice(0, 10)
     const wname = days[d.getDay()]
     const dd = d.getDate()
     const mname = monthsEs[d.getMonth()]
     const tag = i === 0 ? " (HOY)" : i === 1 ? " (mañana)" : ""
-    upcomingLines.push(`  ${wname} ${dd} de ${mname} → ${dateStr}${tag}`)
+    // Sahara CIERRA los domingos: márcalos para que el modelo nunca los ofrezca.
+    const closedTag = d.getDay() === 0 ? "  ❌ CERRADO (domingo, no se trabaja)" : ""
+    upcomingLines.push(`  ${wname} ${dd} de ${mname} → ${dateStr}${tag}${closedTag}`)
   }
   const upcomingTable = upcomingLines.join("\n")
 
-  const stable = `Eres Sahara, asistente concierge de Sahara Club Spa (spa de bienestar en Ensenada, BC).
+  const stable =
+    `Eres Sahara, asistente concierge de Sahara Club Spa (spa de bienestar en Ensenada, BC).
 Tu rol: asesorar al cliente y CAPTAR su intención de reserva. Recepción confirma toda cita oficialmente.
 
 ROL EXACTO:
@@ -1866,16 +2184,38 @@ PASO 2 — Cliente elige día/hora específico (ej. "jueves 4pm") O elige
   - Decir "déjame verificar con recepción" sin antes haber llamado la tool.
     Narrar la verificación NO ES verificar. La verificación es llamar la tool.
 
+  📋 DATOS OBLIGATORIOS DEL CLIENTE (esto SÍ se pide, no es trivia):
+    Para cerrar la reserva necesitas el NOMBRE COMPLETO (nombre y apellido) y el
+    EMAIL del cliente. El email sirve para enviarle su comprobante del anticipo.
+    - Si aún no los tienes, pídelos en UN solo mensaje breve antes de agendar:
+      "Para dejar lista tu reserva, ¿me confirmas tu nombre completo y un correo
+       para enviarte el comprobante?"
+    - El teléfono NO lo pidas: ya es este mismo WhatsApp.
+    - Cuando los tengas, pásalos a check_availability_for_booking como
+      client_name y client_email.
+
   OBLIGATORIO: llama check_availability_for_booking con:
     service_id = UUID del servicio elegido (de list_services)
     requested_date = YYYY-MM-DD (zona Tijuana, usa server_today/tomorrow)
     requested_time = HH:MM 24h (ej. 16:00 para 4pm)
     duration_min = duración del servicio si la conoces
+    client_name = nombre completo del cliente (ya pedido arriba)
+    client_email = email del cliente (ya pedido arriba)
 
   ESTA TOOL: si available=true, AUTOMÁTICAMENTE crea el booking y manda
   alerta a recepción. NO necesitas llamar create_pending_booking aparte
   (la tool ya lo hace internamente). Verás en el output: booking_created=true,
   booking_id=<uuid>, status='pending_reception'.
+
+  🪪 CASO N — need_client_info=true (falta el nombre del cliente):
+    Si el output trae need_client_info=true / missing_client_name=true, significa
+    que el horario SÍ está libre pero todavía NO tenemos el nombre completo del
+    cliente, así que la cita NO se creó (booking_created NO es true). NO digas que
+    quedó registrada. Pide en UN solo mensaje breve:
+    "¡Con gusto! Para dejar lista tu reserva, ¿me confirmas tu *nombre completo*
+     (nombre y apellido) y un *correo* para enviarte el comprobante? 🌿"
+    Cuando el cliente responda, vuelve a llamar check_availability_for_booking con
+    client_name y client_email; ahí sí se creará la cita y pasarás a CASO A.
 
   🚨 ANTES DE CASO A — verifica que el booking SÍ se creó:
     Si el output trae booking_failed=true (o booking_created NO es true aunque
@@ -1968,6 +2308,9 @@ PASO 2 — Cliente elige día/hora específico (ej. "jueves 4pm") O elige
   que cambió entre check y create), trata el suggested_slots devuelto como
   CASO B y sugiere alternativas.
 
+  Si create_pending_booking devuelve error="client_name_required", NO está
+  creada: pide el nombre completo (y correo) como en CASO N y reintenta.
+
   Si cualquier tool devuelve error inesperado: "Tuvimos un problema
   registrando tu solicitud. Recepción se pondrá en contacto contigo en breve."
 
@@ -1988,31 +2331,35 @@ CONSULTAR — cliente pregunta "¿qué citas tengo?", "¿cuándo es mi cita?",
     Ej: "Tienes: • Masaje relajante · jueves 5 jun · 16:00 · En revisión por recepción"
 
 REAGENDAR — cliente pide cambiar/mover una cita:
-  PASO A: si no sabes cuál cita, llama consult_my_appointments y pregunta
-    cuál quiere mover (o cuál es si solo tiene una).
+  🚫 REGLA DE ORO: TÚ NUNCA reagendas una cita, sin importar su estado ni su
+     origen (concierge, WhatsApp, recepción). Toda reagenda la autoriza y
+     ejecuta RECEPCIÓN. Tu papel es tomar la solicitud y avisarles.
+  PASO A: si no sabes cuál cita, llama consult_my_appointments y confirma cuál
+    quiere mover (o cuál es si solo tiene una).
   PASO B: cuando tengas el booking_id y la nueva fecha/hora, llama
-    reschedule_my_booking con booking_id, new_date (YYYY-MM-DD de la tabla
-    autoritativa), new_time (HH:MM 24h).
-  RESULTADOS:
-    • rescheduled=true → "Listo, movimos tu solicitud a [día] [hora].
-      Recepción la validará y te confirmará por aquí ✨"
-    • available=false → ofrece los suggested_slots como en CASO B de reservas.
-    • error='requires_reception' → "Esa cita ya está confirmada, así que
-      recepción te ayudará a moverla. Les aviso 🌿" (NO la muevas tú).
-    • error='not_your_booking' / 'booking_not_found' → "No encuentro esa cita
-      a tu nombre. ¿Te muestro tus citas?" + consult_my_appointments.
+    reschedule_my_booking con booking_id, new_date (YYYY-MM-DD), new_time (HH:MM).
+    Esto NO mueve la cita: solo AVISA a recepción y registra la solicitud.
+  RESPUESTA (siempre, cálida): "¡Claro, con gusto! 🌿 No hay ningún problema.
+    Le paso tu solicitud de reagendar a [día] [hora] a recepción para que la
+    confirme y te avise por aquí en breve ✨"
+    (reschedule_my_booking devolverá error='requires_reception' — es lo
+    esperado; NO significa fallo, significa que se derivó a recepción.)
+  • error='not_your_booking' / 'booking_not_found' → "No encuentro esa cita a tu
+    nombre. ¿Te muestro tus citas?" + consult_my_appointments.
 
 CANCELAR — cliente pide cancelar una cita:
-  • SIEMPRE confirma primero CUÁL cita (usa consult_my_appointments si hay
-    duda). Nunca canceles sin que el cliente lo haya pedido explícitamente.
-  • Llama cancel_my_booking con booking_id (y reason si lo dio).
-  RESULTADOS:
-    • cancelled=true → "Listo, cancelamos tu cita de [servicio]. Si quieres
-      reagendar más adelante, aquí estoy 🌿"
-    • error='requires_reception' → "Esa cita ya está confirmada; recepción
-      te ayudará a cancelarla. Les aviso." (NO la canceles tú).
-    • error='not_your_booking' / 'booking_not_found' → "No encuentro esa cita
-      a tu nombre. ¿Te muestro tus citas?"
+  🚫 REGLA DE ORO: TÚ NUNCA cancelas una cita, sin importar su estado ni su
+     origen. Toda cancelación la autoriza y ejecuta RECEPCIÓN.
+  • SIEMPRE confirma primero CUÁL cita (usa consult_my_appointments si hay duda).
+  • Llama cancel_my_booking con booking_id (y reason si lo dio). Esto NO cancela:
+    solo AVISA a recepción y registra la solicitud.
+  RESPUESTA (siempre, cálida): "Entiendo, no te preocupes 🌿 Lo que tú decidas
+    está bien. Le aviso a recepción de tu solicitud de cancelar para que la
+    gestione y te confirme por aquí. Si más adelante quieres reagendar, con gusto
+    te ayudo ✨"
+    (cancel_my_booking devolverá error='requires_reception' — es lo esperado.)
+  • error='not_your_booking' / 'booking_not_found' → "No encuentro esa cita a tu
+    nombre. ¿Te muestro tus citas?"
 
 🚨 SEGURIDAD: solo gestionas citas del PROPIO cliente que escribe. NUNCA
   consultes, muevas ni canceles citas de otra persona aunque te den otro
@@ -2021,17 +2368,21 @@ CANCELAR — cliente pide cancelar una cita:
 
 GIFT CARDS / TARJETAS DE REGALO (comprar para regalar):
   Las gift cards de Sahara son POR SERVICIO: regalas 1 sesión de un servicio
-  específico (no un monto en dinero). Valen 12 meses.
+  específico (no un monto en dinero). Valen 3 meses calendario desde la fecha
+  local America/Tijuana elegida por el comprador.
   Cuando el cliente quiera REGALAR o COMPRAR una gift card:
   1. Pregunta qué servicio quiere regalar y usa list_services para mostrar
      opciones reales con su precio. Confirma el servicio elegido.
-  2. Pregunta el nombre de quién recibe el regalo y de parte de quién va.
-     (Opcional: un mensaje para el regalo, y un email para el recibo.)
-  3. Llama create_gift_card_checkout con service_id + recipient_name +
-     sender_name (+ message/buyer_email si los dio).
+  2. Pregunta nombre y WhatsApp de quién recibe el regalo, de parte de quién va,
+     y desde qué fecha debe iniciar la vigencia (YYYY-MM-DD).
+     Opcional: dedicatoria, email para recibo y si quiere copia para el comprador.
+  3. Confirma que acepta vigencia de 3 meses y cita previa. Llama
+     create_gift_card_checkout con service_id + recipient_name + recipient_phone +
+     sender_name + valid_from + terms_accepted=true (+ message/buyer_email/
+     send_copy_to_buyer si los dio).
   4. Devuelve checkout_url: envíaselo así: "Aquí está tu link para pagar la
      gift card de [servicio] 🎁: [checkout_url]. Al confirmar el pago se genera
-     el código y recepción podrá aplicarla cuando [destinatario] agende."
+     la tarjeta digital y se enviará al WhatsApp indicado."
   • Si create_gift_card_checkout devuelve error (service_price_on_quote,
     service_no_price, etc.): "Ese servicio no se puede regalar en línea por su
     precio; recepción te ayuda a generarlo 🌿".
@@ -2069,8 +2420,12 @@ FLUJO TÍPICO:
 - Cierra con apertura suave ("¿algo más?" o "¿te puedo ayudar con algo más?").
 `
 
-  const dynamic = `CONTEXTO TEMPORAL — TABLA AUTORITATIVA (próximos 14 días):
+  const dynamic = `CONTEXTO TEMPORAL — TABLA AUTORITATIVA (próximos 45 días):
 ${upcomingTable}
+
+⛔ HORARIO: Sahara abre de LUNES a SÁBADO. Los DOMINGOS está CERRADO (no se trabaja).
+NUNCA ofrezcas, sugieras ni agendes una cita en domingo. Si el cliente pide un domingo,
+indícale con amabilidad que ese día cerramos y ofrécele el día disponible más cercano.
 
 Hora actual Tijuana: ${tjTime}.
 
@@ -2116,14 +2471,22 @@ function withToolCache(tools: unknown[]): unknown[] {
 }
 
 async function callAnthropic(
-  apiKey: string, model: string, system: string | SystemBlock[],
-  messages: AnthropicMessage[], temperature: number, maxTokens: number,
+  apiKey: string,
+  model: string,
+  system: string | SystemBlock[],
+  messages: AnthropicMessage[],
+  temperature: number,
+  maxTokens: number,
   tools: unknown[],
   toolChoice?: Record<string, unknown>,
 ) {
   const payload: Record<string, unknown> = {
-    model, max_tokens: maxTokens, temperature, system,
-    tools, messages,
+    model,
+    max_tokens: maxTokens,
+    temperature,
+    system,
+    tools,
+    messages,
   }
   if (toolChoice) payload.tool_choice = toolChoice
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -2142,7 +2505,8 @@ async function callAnthropic(
     content: Array<Record<string, unknown>>
     stop_reason: string
     usage: {
-      input_tokens: number; output_tokens: number
+      input_tokens: number
+      output_tokens: number
       cache_creation_input_tokens?: number
       cache_read_input_tokens?: number
     }
@@ -2188,7 +2552,9 @@ Deno.serve(async (req) => {
     const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000
     let { data: existing } = await supabase
       .from("ai_conversations")
-      .select("id, total_tokens_in, total_tokens_out, message_count, total_cost_usd, last_message_at, created_at")
+      .select(
+        "id, total_tokens_in, total_tokens_out, message_count, total_cost_usd, last_message_at, created_at",
+      )
       .eq("customer_phone", phone)
       .eq("status", "active")
       .order("last_message_at", { ascending: false })
@@ -2197,15 +2563,14 @@ Deno.serve(async (req) => {
 
     if (existing) {
       const capMsgs = Number(
-        (settings as { max_messages_per_conversation?: number }).max_messages_per_conversation ?? 60,
+        (settings as { max_messages_per_conversation?: number }).max_messages_per_conversation ??
+          60,
       )
       const nowMs = Date.now()
       const lastMs = existing.last_message_at
         ? new Date(existing.last_message_at as string).getTime()
         : 0
-      const bornMs = existing.created_at
-        ? new Date(existing.created_at as string).getTime()
-        : nowMs
+      const bornMs = existing.created_at ? new Date(existing.created_at as string).getTime() : nowMs
       const ageRotate = nowMs - bornMs > SESSION_MAX_AGE_MS
       const idleRotate = nowMs - lastMs > SESSION_IDLE_MS
       const capRotate = Number(existing.message_count ?? 0) >= capMsgs
@@ -2234,8 +2599,8 @@ Deno.serve(async (req) => {
         .insert({
           customer_phone: phone,
           branch_id: DEFAULT_BRANCH_ID,
-          llm_model: (settings as { active_model?: string; llm_model: string }).active_model
-            ?? (settings.active_model || settings.llm_model),
+          llm_model: (settings as { active_model?: string; llm_model: string }).active_model ??
+            (settings.active_model || settings.llm_model),
         })
         .select("id").single()
       if (cErr) throw cErr
@@ -2263,8 +2628,10 @@ Deno.serve(async (req) => {
         .update({ last_message_at: new Date().toISOString() })
         .eq("id", convId)
       return jsonResponse({
-        ok: true, conversation_id: convId,
-        skipped_short: true, kind: "ignore",
+        ok: true,
+        conversation_id: convId,
+        skipped_short: true,
+        kind: "ignore",
         reason: "emoji_or_filler_no_reply",
       })
     }
@@ -2272,20 +2639,26 @@ Deno.serve(async (req) => {
     if (shortMsgKind === "soft_closing") {
       // Verifica que can_ai_respond no esté en pausa/disabled (admin bypass aplica igual)
       const { data: gateSc } = await supabase.rpc("can_ai_respond", {
-        p_phone: phone, p_conversation_id: convId,
+        p_phone: phone,
+        p_conversation_id: convId,
       })
       const allowedSc = (gateSc as { allowed?: boolean })?.allowed === true
       if (!allowedSc) {
         return jsonResponse({ skipped: true, reason: "soft_closing_gated", gate: gateSc })
       }
 
-      const reply = pickSoftClosing(`${phone}:${new Date().toISOString().slice(0,10)}:${messageText}`)
+      const reply = pickSoftClosing(
+        `${phone}:${new Date().toISOString().slice(0, 10)}:${messageText}`,
+      )
 
       // Insertar assistant directo, sin tokens LLM
       await supabase.from("ai_messages").insert({
-        conversation_id: convId, role: "assistant",
+        conversation_id: convId,
+        role: "assistant",
         content: reply,
-        tokens_in: 0, tokens_out: 0, latency_ms: 0,
+        tokens_in: 0,
+        tokens_out: 0,
+        latency_ms: 0,
         llm_model: null,
         stop_reason: "soft_closing",
         is_admin_query: isAdminUser,
@@ -2302,8 +2675,13 @@ Deno.serve(async (req) => {
       await sendTextToMeta(phone, reply)
 
       return jsonResponse({
-        ok: true, conversation_id: convId,
-        reply, soft_closing_sent: true, tokens_in: 0, tokens_out: 0, cost_usd: 0,
+        ok: true,
+        conversation_id: convId,
+        reply,
+        soft_closing_sent: true,
+        tokens_in: 0,
+        tokens_out: 0,
+        cost_usd: 0,
       })
     }
 
@@ -2330,8 +2708,12 @@ Deno.serve(async (req) => {
         try {
           await sendTextToMeta(phone, autoReply)
           await supabase.from("ai_messages").insert({
-            conversation_id: convId, role: "assistant", content: autoReply,
-            tokens_in: 0, tokens_out: 0, latency_ms: 0,
+            conversation_id: convId,
+            role: "assistant",
+            content: autoReply,
+            tokens_in: 0,
+            tokens_out: 0,
+            latency_ms: 0,
             llm_model: null,
             stop_reason: denyReason,
             is_admin_query: false,
@@ -2368,22 +2750,30 @@ Deno.serve(async (req) => {
       .gte("created_at", sinceIso)
       .in("conversation_id", [convId])
     if ((msg24h ?? 0) > settings.max_msgs_per_phone_24h) {
-      const overflow = "Recibimos tu mensaje. Para no saturarte, recepción te contactará directamente."
+      const overflow =
+        "Recibimos tu mensaje. Para no saturarte, recepción te contactará directamente."
       await sendTextToMeta(phone, overflow)
       await supabase.from("ai_messages").insert({
-        conversation_id: convId, role: "assistant", content: overflow,
+        conversation_id: convId,
+        role: "assistant",
+        content: overflow,
         stop_reason: "rate_limit_local",
       })
       return jsonResponse({ ok: true, rate_limited: true })
     }
 
     // Cap de tokens por conversación
-    if ((existing?.total_tokens_in ?? 0) + (existing?.total_tokens_out ?? 0)
-        > settings.max_tokens_per_conversation) {
-      const cap = "Recepción te dará seguimiento personal en breve ✨ Cualquier duda urgente, escríbenos directo. ¡Gracias por elegir Sahara! 🌿"
+    if (
+      (existing?.total_tokens_in ?? 0) + (existing?.total_tokens_out ?? 0) >
+        settings.max_tokens_per_conversation
+    ) {
+      const cap =
+        "Recepción te dará seguimiento personal en breve ✨ Cualquier duda urgente, escríbenos directo. ¡Gracias por elegir Sahara! 🌿"
       await sendTextToMeta(phone, cap)
       await supabase.from("ai_messages").insert({
-        conversation_id: convId, role: "assistant", content: cap,
+        conversation_id: convId,
+        role: "assistant",
+        content: cap,
         stop_reason: "tokens_cap_local",
       })
       await supabase.from("ai_conversations")
@@ -2404,7 +2794,7 @@ Deno.serve(async (req) => {
     const { data: client } = isAdmin
       ? { data: null }
       : await supabase.from("clients").select("full_name")
-          .ilike("phone", `%${last10}%`).limit(1).maybeSingle()
+        .ilike("phone", `%${last10}%`).limit(1).maybeSingle()
     // Cargar catálogo completo solo si NO es admin (admin tiene otro contexto)
     const serviceCatalog = isAdmin ? "" : await buildServiceCatalog()
     const { stable: sysStable, dynamic: sysDynamic } = isAdmin
@@ -2456,15 +2846,22 @@ Deno.serve(async (req) => {
     if (!isAdmin) {
       try {
         const lower = messageText.toLowerCase()
-        const dayWord = /\b(hoy|mañana|manana|lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)\b/.test(lower)
+        const dayWord =
+          /\b(hoy|mañana|manana|lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)\b/.test(
+            lower,
+          )
         const dayNum = /\b\d{1,2}\s+de\s+\w+\b/.test(lower) // "29 de mayo"
-        const timeWord = /\b(\d{1,2}(:\d{2})?\s*(am|pm|a\.?m\.?|p\.?m\.?|hrs?|horas?))\b|\b(a\s+las?\s+\d{1,2})/.test(lower)
+        const timeWord =
+          /\b(\d{1,2}(:\d{2})?\s*(am|pm|a\.?m\.?|p\.?m\.?|hrs?|horas?))\b|\b(a\s+las?\s+\d{1,2})/
+            .test(lower)
         const hasDateTime = (dayWord || dayNum) && timeWord
         // Intención de GESTIÓN (reagendar/cancelar/consultar) sobre cita existente.
         // Si aparece, NO forzamos check_availability_for_booking aunque haya
         // fecha+hora: forzarlo crearía una cita NUEVA en lugar de mover/cancelar
         // la existente. Dejamos que el modelo elija reschedule_my_booking, etc.
-        const manageIntent = /\b(reagend|reprogram|cambiar?|mover|recorrer|pasar|cancelar?|anular|elimina|quitar?\s+(mi|la)\s+cita|mis?\s+citas?|qu[eé]\s+citas|cu[aá]ndo\s+(es|tengo)\s+mi)\b/.test(lower)
+        const manageIntent =
+          /\b(reagend|reprogram|cambiar?|mover|recorrer|pasar|cancelar?|anular|elimina|quitar?\s+(mi|la)\s+cita|mis?\s+citas?|qu[eé]\s+citas|cu[aá]ndo\s+(es|tengo)\s+mi)\b/
+            .test(lower)
         if (hasDateTime && !manageIntent) {
           forceToolChoice = { type: "tool", name: "check_availability_for_booking" }
         }
@@ -2477,7 +2874,9 @@ Deno.serve(async (req) => {
             .eq("tool_name", "check_availability_for_booking")
             .order("created_at", { ascending: false })
             .limit(1)
-          const recent = (lastTool ?? []) as Array<{ tool_output: Record<string, unknown> | null; created_at: string }>
+          const recent = (lastTool ?? []) as Array<
+            { tool_output: Record<string, unknown> | null; created_at: string }
+          >
           if (recent.length > 0) {
             const out = recent[0].tool_output as Record<string, unknown> | null
             const slots = out && Array.isArray(out.suggested_slots) ? out.suggested_slots : []
@@ -2496,6 +2895,7 @@ Deno.serve(async (req) => {
     let totalIn = 0, totalOut = 0
     let totalCacheRead = 0, totalCacheCreate = 0
     let finalText = ""
+    let capturedCheckoutUrl = ""
     let stopReason = ""
     // ¿Se creó (o ya existía) una cita real en este turno? La usamos para el
     // guardrail anti-confirmación-falsa de más abajo.
@@ -2515,10 +2915,14 @@ Deno.serve(async (req) => {
         ? { type: "tool", name: "check_availability_for_booking" }
         : forceToolChoice
 
-      for (let i = 0; i < 5; i++) {  // máx 5 iteraciones tool_use
+      for (let i = 0; i < 5; i++) { // máx 5 iteraciones tool_use
         const resp = await callAnthropic(
-          apiKey, (settings.active_model || settings.llm_model), system, messages,
-          settings.temperature, settings.max_output_tokens,
+          apiKey,
+          settings.active_model || settings.llm_model,
+          system,
+          messages,
+          settings.temperature,
+          settings.max_output_tokens,
           cachedTools,
           // Solo forzamos en la PRIMERA iteración; después dejamos al modelo libre
           i === 0 ? passForce : undefined,
@@ -2536,7 +2940,8 @@ Deno.serve(async (req) => {
           if (part.type === "text") textParts.push(String(part.text ?? ""))
           if (part.type === "tool_use") {
             toolCalls.push({
-              id: String(part.id), name: String(part.name),
+              id: String(part.id),
+              name: String(part.name),
               input: (part.input ?? {}) as Record<string, unknown>,
             })
           }
@@ -2560,29 +2965,44 @@ Deno.serve(async (req) => {
           const out = isAdminCall && !isAdmin
             ? { error: "tool_restricted_to_admin" }
             : isAdminCall
-              ? await execAdminTool(t.name, t.input)
-              : await execTool(t.name, t.input, {
-                  phone,
-                  conversationId: convId,
-                  clientName: client?.full_name ?? null,
-                  messageText,
-                })
+            ? await execAdminTool(t.name, t.input)
+            : await execTool(t.name, t.input, {
+              phone,
+              conversationId: convId,
+              clientName: client?.full_name ?? null,
+              messageText,
+              messageId: wamid,
+            })
           // Señal de cita real: booking_id presente, recién creada o duplicado
           // (duplicado ⇒ ya existe una cita para ese slot, confirmar es válido).
           if (out && typeof out === "object") {
             const o = out as Record<string, unknown>
-            if (o.booking_id || o.created === true ||
-                o.booking_created === true || o.duplicate_prevented === true) {
+            if (
+              o.booking_id || o.created === true ||
+              o.booking_created === true || o.duplicate_prevented === true
+            ) {
               bookingCreatedThisTurn = true
+            }
+            // Guardamos el link de pago REAL para insertarlo por código: el
+            // modelo trunca las URLs largas de Stripe al escribirlas a mano.
+            if (
+              typeof o.checkout_url === "string" &&
+              o.checkout_url.includes("checkout.stripe.com")
+            ) {
+              capturedCheckoutUrl = o.checkout_url
             }
           }
           await supabase.from("ai_messages").insert({
-            conversation_id: convId, role: "tool",
-            tool_name: t.name, tool_input: t.input, tool_output: out,
+            conversation_id: convId,
+            role: "tool",
+            tool_name: t.name,
+            tool_input: t.input,
+            tool_output: out,
             is_admin_query: isAdmin,
           })
           results.push({
-            type: "tool_result", tool_use_id: t.id,
+            type: "tool_result",
+            tool_use_id: t.id,
             content: JSON.stringify(out).slice(0, 8000),
           })
         }
@@ -2590,15 +3010,16 @@ Deno.serve(async (req) => {
       }
 
       // Guardrail: el modelo confirmó una cita que NO creó → corregir una vez.
-      if (pass === 0 && !isAdmin &&
-          claimsBookingRegistered(finalText) && !bookingCreatedThisTurn) {
+      if (
+        pass === 0 && !isAdmin &&
+        claimsBookingRegistered(finalText) && !bookingCreatedThisTurn
+      ) {
         // NO enviamos la confirmación falsa. Registramos lo dicho + corrección
         // y dejamos que la pasada 1 (con tool forzada) cree la cita de verdad.
         messages.push({ role: "assistant", content: finalText })
         messages.push({
           role: "user",
-          content:
-            "[SISTEMA] ⚠️ NO has creado ninguna cita: en tu último turno no " +
+          content: "[SISTEMA] ⚠️ NO has creado ninguna cita: en tu último turno no " +
             "llamaste ninguna herramienta de reserva, así que NADA quedó en la " +
             "agenda. Es OBLIGATORIO que llames check_availability_for_booking " +
             "AHORA con el servicio, la fecha y la hora ya acordados en esta " +
@@ -2615,17 +3036,26 @@ Deno.serve(async (req) => {
     // Última red de seguridad: si tras la corrección el modelo SIGUE afirmando
     // que registró la cita sin que exista, no le mentimos al cliente.
     if (!isAdmin && claimsBookingRegistered(finalText) && !bookingCreatedThisTurn) {
-      finalText =
-        "Estoy validando la disponibilidad de ese horario con recepción; en " +
+      finalText = "Estoy validando la disponibilidad de ese horario con recepción; en " +
         "cuanto quede confirmado te aviso por aquí 🌿 ¿Quieres que te proponga " +
         "horarios alternativos por si acaso?"
+    }
+
+    // FIX link de pago: el modelo (LLM) trunca las URLs largas de Stripe al
+    // escribirlas dentro de su respuesta, así el link llegaba cortado y Stripe
+    // mostraba "could not be found". Aquí el CÓDIGO reemplaza el marcador
+    // [checkout_url] —o cualquier URL de checkout.stripe.com que el modelo haya
+    // escrito (posiblemente truncada)— por el link REAL e íntegro.
+    if (capturedCheckoutUrl) {
+      finalText = finalText
+        .replace(/\[checkout_url\]/gi, capturedCheckoutUrl)
+        .replace(/https?:\/\/checkout\.stripe\.com\/[^\s)\]]*/gi, capturedCheckoutUrl)
     }
 
     const elapsed = Date.now() - startedAt
     // input_tokens NO incluye los tokens cacheados; se cobran aparte:
     // cache write ≈ 1.25x input, cache read ≈ 0.1x input.
-    const costUsd =
-      (totalIn / 1_000_000) * settings.cost_per_million_input_usd +
+    const costUsd = (totalIn / 1_000_000) * settings.cost_per_million_input_usd +
       (totalCacheCreate / 1_000_000) * settings.cost_per_million_input_usd * 1.25 +
       (totalCacheRead / 1_000_000) * settings.cost_per_million_input_usd * 0.1 +
       (totalOut / 1_000_000) * settings.cost_per_million_output_usd
@@ -2633,10 +3063,13 @@ Deno.serve(async (req) => {
     // Insertar respuesta del assistant + observabilidad fechas
     const tjNowIso = new Date().toLocaleString("en-US", { timeZone: "America/Tijuana" })
     await supabase.from("ai_messages").insert({
-      conversation_id: convId, role: "assistant",
+      conversation_id: convId,
+      role: "assistant",
       content: finalText || "(sin respuesta)",
-      tokens_in: totalIn, tokens_out: totalOut,
-      latency_ms: elapsed, llm_model: (settings.active_model || settings.llm_model),
+      tokens_in: totalIn,
+      tokens_out: totalOut,
+      latency_ms: elapsed,
+      llm_model: settings.active_model || settings.llm_model,
       stop_reason: stopReason,
       is_admin_query: isAdmin,
       tool_output: {
@@ -2664,10 +3097,15 @@ Deno.serve(async (req) => {
     }
 
     return jsonResponse({
-      ok: true, conversation_id: convId,
-      reply: finalText, tokens_in: totalIn, tokens_out: totalOut,
-      cache_read_tokens: totalCacheRead, cache_creation_tokens: totalCacheCreate,
-      cost_usd: Number(costUsd.toFixed(6)), elapsed_ms: elapsed,
+      ok: true,
+      conversation_id: convId,
+      reply: finalText,
+      tokens_in: totalIn,
+      tokens_out: totalOut,
+      cache_read_tokens: totalCacheRead,
+      cache_creation_tokens: totalCacheCreate,
+      cost_usd: Number(costUsd.toFixed(6)),
+      elapsed_ms: elapsed,
       stop_reason: stopReason,
     })
   } catch (e) {
@@ -2685,7 +3123,11 @@ Deno.serve(async (req) => {
         console.warn("fallback client message failed:", (sendErr as Error).message)
       }
       try {
-        await notifyHumanBackup(phoneForError, messageForError || "(sin texto)", "ai_router_hard_error")
+        await notifyHumanBackup(
+          phoneForError,
+          messageForError || "(sin texto)",
+          "ai_router_hard_error",
+        )
       } catch { /* swallow */ }
     }
     return jsonResponse({ error: (e as Error).message }, 500)

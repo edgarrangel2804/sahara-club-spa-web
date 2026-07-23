@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Alerta interna para recepción (tabla `reception_alerts`).
-/// Eventos importantes originados por el cliente (sobre todo WhatsApp IA) que
-/// recepción debe ver de inmediato en el panel.
+/// Alerta interna para recepcion (tabla `reception_alerts`).
 class ReceptionAlert {
   const ReceptionAlert({
     required this.id,
@@ -19,11 +17,25 @@ class ReceptionAlert {
     this.bookingTime,
     this.message,
     this.amountMxn,
+    this.orderId,
+    this.orderItemId,
+    this.giftCardId,
+    this.paymentId,
+    this.buyerName,
+    this.buyerEmail,
+    this.buyerPhone,
+    this.productName,
+    this.faceValue,
+    this.amountPaid,
+    this.currency,
+    this.purchaseChannel,
+    this.occurredAt,
+    this.metadata = const <String, dynamic>{},
   });
 
   final String id;
-  final String eventType; // booking_pending_reception | booking_cancelled | reschedule_requested | deposit_paid | requires_reception
-  final String status; // unseen | seen | resolved
+  final String eventType;
+  final String status;
   final String channel;
   final DateTime createdAt;
   final String? bookingId;
@@ -32,12 +44,101 @@ class ReceptionAlert {
   final String? clientPhone;
   final String? serviceName;
   final DateTime? bookingDate;
-  final String? bookingTime; // HH:MM
+  final String? bookingTime;
   final String? message;
   final num? amountMxn;
+  final String? orderId;
+  final String? orderItemId;
+  final String? giftCardId;
+  final String? paymentId;
+  final String? buyerName;
+  final String? buyerEmail;
+  final String? buyerPhone;
+  final String? productName;
+  final num? faceValue;
+  final num? amountPaid;
+  final String? currency;
+  final String? purchaseChannel;
+  final DateTime? occurredAt;
+  final Map<String, dynamic> metadata;
 
   bool get isUnseen => status == 'unseen';
   bool get isResolved => status == 'resolved';
+  bool get isGiftCardPurchase => eventType == 'gift_card_purchased';
+
+  String get displayClientName {
+    final candidate = isGiftCardPurchase ? buyerName : clientName;
+    return _present(candidate) ??
+        _present(clientName) ??
+        (isGiftCardPurchase ? 'Comprador Gift Card' : 'Cliente WhatsApp');
+  }
+
+  String get recipientName =>
+      _present(clientName) ??
+      _present(metadata['recipient_name']) ??
+      'Invitada Sahara';
+
+  String? get displayProductName =>
+      _present(productName) ?? _present(serviceName);
+
+  String? get displayPhone {
+    final raw = isGiftCardPurchase
+        ? _present(metadata['recipient_phone_mask']) ?? _present(clientPhone)
+        : _present(clientPhone);
+    return maskDisplayPhone(raw);
+  }
+
+  String? get buyerPhoneMasked => maskDisplayPhone(buyerPhone);
+
+  String? get giftCardCodeLast4 => _present(metadata['gift_card_code_last4']);
+
+  String? get maskedGiftCardCode {
+    final last4 = giftCardCodeLast4;
+    if (last4 == null) return null;
+    return '****$last4';
+  }
+
+  String? get validFrom => _present(metadata['valid_from']);
+  String? get expiresOn => _present(metadata['expires_on']);
+  String get deliveryStatus =>
+      _present(metadata['delivery_status']) ?? 'pending';
+  String get digitalAssetStatus =>
+      _present(metadata['digital_asset_status']) ?? 'pending';
+  String? get adminNotificationStatus =>
+      _present(metadata['admin_notification_status']);
+  bool get buyerCopyRequested =>
+      _bool(metadata['buyer_copy_requested']) ||
+      _present(metadata['buyer_copy_delivered_at']) != null;
+
+  String get purchaseChannelLabel {
+    final value = (_present(purchaseChannel) ?? channel).toLowerCase();
+    switch (value) {
+      case 'whatsapp':
+        return 'WhatsApp';
+      case 'web':
+        return 'Pagina web';
+      case 'reception':
+        return 'Recepcion';
+      case 'manual':
+        return 'Venta manual';
+      case 'admin':
+        return 'Admin';
+      case 'app':
+        return 'App';
+      case 'external':
+        return 'Externo';
+      default:
+        return value.isEmpty ? 'Canal no identificado' : value;
+    }
+  }
+
+  String? get validityLabel {
+    final from = validFrom;
+    final to = expiresOn;
+    if (from == null && to == null) return null;
+    if (from != null && to != null) return '$from a $to';
+    return from ?? to;
+  }
 
   factory ReceptionAlert.fromMap(Map<String, dynamic> m) {
     DateTime? parseDate(dynamic v) {
@@ -49,6 +150,19 @@ class ReceptionAlert {
       if (v == null) return null;
       final s = v.toString();
       return s.length >= 5 ? s.substring(0, 5) : s;
+    }
+
+    num? parseNum(dynamic v) {
+      if (v is num) return v;
+      return num.tryParse(v?.toString() ?? '');
+    }
+
+    Map<String, dynamic> parseMetadata(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) {
+        return value.map((key, value) => MapEntry(key.toString(), value));
+      }
+      return const <String, dynamic>{};
     }
 
     return ReceptionAlert(
@@ -65,25 +179,38 @@ class ReceptionAlert {
       bookingDate: parseDate(m['booking_date']),
       bookingTime: parseTime(m['booking_time']),
       message: m['message']?.toString(),
-      amountMxn: m['amount_mxn'] is num
-          ? m['amount_mxn'] as num
-          : num.tryParse(m['amount_mxn']?.toString() ?? ''),
+      amountMxn: parseNum(m['amount_mxn']),
+      orderId: m['order_id']?.toString(),
+      orderItemId: m['order_item_id']?.toString(),
+      giftCardId: m['gift_card_id']?.toString(),
+      paymentId: m['payment_id']?.toString(),
+      buyerName: m['buyer_name']?.toString(),
+      buyerEmail: m['buyer_email']?.toString(),
+      buyerPhone: m['buyer_phone']?.toString(),
+      productName: m['product_name']?.toString(),
+      faceValue: parseNum(m['face_value']),
+      amountPaid: parseNum(m['amount_paid']),
+      currency: m['currency']?.toString(),
+      purchaseChannel: m['purchase_channel']?.toString(),
+      occurredAt: parseDate(m['occurred_at']),
+      metadata: parseMetadata(m['metadata']),
     );
   }
 
-  /// Título legible del evento.
   String get title {
     switch (eventType) {
       case 'booking_pending_reception':
         return 'Cita nueva por validar';
       case 'booking_cancelled':
-        return 'Cancelación';
+        return 'Cancelacion';
       case 'reschedule_requested':
         return 'Reagendamiento';
       case 'deposit_paid':
         return 'Pago de anticipo';
+      case 'gift_card_purchased':
+        return 'Gift Card adquirida';
       case 'requires_reception':
-        return 'Requiere recepción';
+        return 'Requiere recepcion';
       default:
         return 'Evento';
     }
@@ -99,6 +226,8 @@ class ReceptionAlert {
         return Icons.update_outlined;
       case 'deposit_paid':
         return Icons.payments_outlined;
+      case 'gift_card_purchased':
+        return Icons.card_giftcard_outlined;
       case 'requires_reception':
         return Icons.priority_high_rounded;
       default:
@@ -109,17 +238,38 @@ class ReceptionAlert {
   Color get accent {
     switch (eventType) {
       case 'booking_pending_reception':
-        return const Color(0xFF2D6CDF); // azul (acción: validar + asignar)
+        return const Color(0xFF2D6CDF);
       case 'booking_cancelled':
-        return const Color(0xFFD64545); // rojo
+        return const Color(0xFFD64545);
       case 'reschedule_requested':
-        return const Color(0xFFE08A00); // ámbar
+        return const Color(0xFFE08A00);
       case 'deposit_paid':
-        return const Color(0xFF1A9E65); // verde
+        return const Color(0xFF1A9E65);
+      case 'gift_card_purchased':
+        return const Color(0xFFB7791F);
       case 'requires_reception':
-        return const Color(0xFFB4232A); // rojo intenso (acción humana)
+        return const Color(0xFFB4232A);
       default:
         return Colors.black54;
     }
   }
+
+  static String? _present(dynamic value) {
+    final text = value?.toString().trim() ?? '';
+    return text.isEmpty ? null : text;
+  }
+
+  static bool _bool(dynamic value) {
+    if (value is bool) return value;
+    return value?.toString().toLowerCase() == 'true';
+  }
+}
+
+String? maskDisplayPhone(String? value) {
+  final raw = value?.trim() ?? '';
+  if (raw.isEmpty) return null;
+  if (raw.startsWith('***') || raw.startsWith('****')) return raw;
+  final digits = raw.replaceAll(RegExp(r'\D'), '');
+  if (digits.length <= 4) return digits.isEmpty ? null : '****$digits';
+  return '****${digits.substring(digits.length - 4)}';
 }

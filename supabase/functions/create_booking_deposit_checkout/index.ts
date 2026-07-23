@@ -11,52 +11,72 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import {
-  corsHeaders,
-  createAdminClient,
-  jsonResponse,
-  stripeApiRequest,
-  toMinorUnits,
-} from "../_shared/stripe_checkout.ts"
+  buildDepositVoucherSuccessUrl,
+  createDepositVoucherToken,
+  parseVoucherTokenTtl,
+  requireVoucherSigningSecret,
+} from "../_shared/deposit_receipts.ts"
+import { createAdminClient, stripeApiRequest, toMinorUnits } from "../_shared/stripe_checkout.ts"
+import {
+  checkRateLimit,
+  clientIpKey,
+  jsonResponseFor,
+  preflightResponse,
+  sanitizeTechnicalLog,
+} from "../_shared/runtime_security.ts"
 
 const DEFAULT_AMOUNT_MXN = 200
 const DEFAULT_CURRENCY = "mxn"
-const SUCCESS_URL = "https://saharaclubspa.com/anticipo-ok"
+// Tras pagar, Stripe redirige al comprobante (voucher) con el id de la sesión.
+const DEFAULT_SUCCESS_URL = "https://saharaclubspa.com/comprobante-anticipo.html"
 const CANCEL_URL = "https://saharaclubspa.com/anticipo-cancelado"
 
 type StripeSession = {
   id: string
   url: string
   payment_intent?: string | null
-  status?: string  // open, complete, expired
-  payment_status?: string  // unpaid, paid
+  status?: string // open, complete, expired
+  payment_status?: string // unpaid, paid
+  success_url?: string | null
+}
+
+function hasSignedVoucherSuccessUrl(session: StripeSession): boolean {
+  return String(session.success_url ?? "").includes("voucher_token=")
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
-  if (req.method !== "POST") return jsonResponse({ error: "method not allowed" }, 405)
+  const json = (body: unknown, status = 200) => jsonResponseFor(req, body, status)
+  if (req.method === "OPTIONS") return preflightResponse(req)
+  if (req.method !== "POST") return json({ error: "method not allowed" }, 405)
 
   try {
+    const rateLimit = checkRateLimit(`booking-deposit-checkout:${clientIpKey(req)}`, {
+      maxAttempts: 30,
+      windowMs: 10 * 60 * 1000,
+    })
+    if (!rateLimit.ok) return json({ ok: false, error: rateLimit.error }, rateLimit.status)
+
     const body = await req.json().catch(() => ({}))
     const bookingId = String(body.booking_id ?? "").trim()
     if (!bookingId) {
-      return jsonResponse({ ok: false, error: "booking_id requerido" }, 400)
+      return json({ ok: false, error: "booking_id requerido" }, 400)
     }
-    const amount = Number(body.amount ?? DEFAULT_AMOUNT_MXN)
-    const currency = String(body.currency ?? DEFAULT_CURRENCY).toLowerCase()
 
     const supabase = createAdminClient()
 
     // 1. Cargar booking y validar que esté en pending_payment
     const { data: booking, error: bErr } = await supabase
       .from("bookings")
-      .select("id, status, stripe_session_id, checkout_url, deposit_amount, " +
-        "booking_date, booking_time, service_id, client_record_id")
+      .select(
+        "id, status, stripe_session_id, checkout_url, deposit_amount, deposit_required_cents, " +
+          "booking_date, booking_time, service_id, client_record_id",
+      )
       .eq("id", bookingId)
       .maybeSingle()
     if (bErr) throw bErr
-    if (!booking) return jsonResponse({ ok: false, error: "booking_not_found" }, 404)
+    if (!booking) return json({ ok: false, error: "booking_not_found" }, 404)
     if (booking.status !== "pending_payment") {
-      return jsonResponse({
+      return json({
         ok: false,
         error: "booking_not_in_pending_payment",
         current_status: booking.status,
@@ -70,13 +90,18 @@ serve(async (req) => {
           `/checkout/sessions/${booking.stripe_session_id}`,
           { method: "GET" },
         )
-        if (existing.status === "open" && existing.payment_status === "unpaid") {
-          return jsonResponse({
+        if (
+          existing.status === "open" &&
+          existing.payment_status === "unpaid" &&
+          hasSignedVoucherSuccessUrl(existing)
+        ) {
+          const terms = await resolveDepositTerms(supabase, booking as Record<string, unknown>)
+          return json({
             ok: true,
             reused: true,
             checkout_url: existing.url ?? booking.checkout_url,
             stripe_session_id: existing.id,
-            amount: booking.deposit_amount ?? amount,
+            amount: terms.amount,
           })
         }
         // Si está expirada o ya pagada, seguimos al flujo de crear nueva.
@@ -99,14 +124,33 @@ serve(async (req) => {
       .maybeSingle()
 
     const serviceName = (service as { name?: string } | null)?.name ?? "Servicio Sahara"
-    const customerName = (client as { full_name?: string } | null)?.full_name ?? "Cliente Sahara"
     const customerPhone = (client as { phone?: string } | null)?.phone ?? ""
+    const paymentTerms = await resolveDepositTerms(supabase, booking as Record<string, unknown>)
+    const amount = paymentTerms.amount
+    const currency = paymentTerms.currency
 
     // 4. Crear nueva sesión Stripe
-    const description = `Anticipo cita: ${serviceName} · ${booking.booking_date} ${booking.booking_time}`
+    const description =
+      `Anticipo cita: ${serviceName} · ${booking.booking_date} ${booking.booking_time}`
+    const voucherSecret = requireVoucherSigningSecret(
+      Deno.env.get("DEPOSIT_VOUCHER_SIGNING_SECRET"),
+    )
+    const voucherTtlSeconds = parseVoucherTokenTtl(
+      Deno.env.get("DEPOSIT_VOUCHER_TOKEN_TTL_SECONDS"),
+    )
+    const { token: voucherToken } = await createDepositVoucherToken({
+      bookingId,
+      secret: voucherSecret,
+      ttlSeconds: voucherTtlSeconds,
+    })
+    const successUrl = buildDepositVoucherSuccessUrl({
+      baseUrl: Deno.env.get("DEPOSIT_VOUCHER_SUCCESS_BASE_URL") ?? DEFAULT_SUCCESS_URL,
+      voucherToken,
+    })
+
     const form: Record<string, string> = {
       mode: "payment",
-      success_url: SUCCESS_URL,
+      success_url: successUrl,
       cancel_url: CANCEL_URL,
       "metadata[booking_id]": bookingId,
       "metadata[payment_type]": "appointment_deposit",
@@ -139,7 +183,7 @@ serve(async (req) => {
       .eq("id", bookingId)
     if (updErr) throw updErr
 
-    return jsonResponse({
+    return json({
       ok: true,
       reused: false,
       checkout_url: session.url,
@@ -147,7 +191,39 @@ serve(async (req) => {
       amount,
     })
   } catch (e) {
-    console.error("create_booking_deposit_checkout error:", (e as Error).message)
-    return jsonResponse({ ok: false, error: (e as Error).message }, 500)
+    console.error("create_booking_deposit_checkout error:", sanitizeTechnicalLog(e))
+    return json({ ok: false, error: "checkout_unavailable" }, 500)
   }
 })
+
+async function resolveDepositTerms(
+  supabase: ReturnType<typeof createAdminClient>,
+  booking: Record<string, unknown>,
+): Promise<{ amount: number; currency: string }> {
+  const { data: settings } = await supabase
+    .from("ai_settings")
+    .select("appointment_deposit_amount, appointment_deposit_currency")
+    .eq("id", 1)
+    .maybeSingle()
+
+  const fallbackAmount = Number(
+    (settings as { appointment_deposit_amount?: number } | null)?.appointment_deposit_amount ??
+      DEFAULT_AMOUNT_MXN,
+  )
+  const amountFromRequiredCents = Number(booking.deposit_required_cents ?? 0) / 100
+  const amountFromBooking = Number(booking.deposit_amount ?? 0)
+  const amount = amountFromRequiredCents > 0
+    ? amountFromRequiredCents
+    : amountFromBooking > 0
+    ? amountFromBooking
+    : fallbackAmount
+  const currency = String(
+    (settings as { appointment_deposit_currency?: string } | null)?.appointment_deposit_currency ??
+      DEFAULT_CURRENCY,
+  ).toLowerCase()
+
+  return {
+    amount: Number.isFinite(amount) && amount > 0 ? amount : DEFAULT_AMOUNT_MXN,
+    currency: currency || DEFAULT_CURRENCY,
+  }
+}

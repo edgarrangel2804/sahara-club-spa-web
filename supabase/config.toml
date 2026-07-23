@@ -22,12 +22,40 @@ verify_jwt = false
 [functions.notify_unpaid_deposits]
 verify_jwt = false
 
+# Invocada por triggers/pg_net o jobs internos; el codigo exige service_role
+# Bearer o SAHARA_INTERNAL_FUNCTION_SECRET.
+[functions.notify_admins]
+verify_jwt = false
+
+# Job interno de auto-confirmacion; el codigo exige service_role Bearer o
+# SAHARA_INTERNAL_FUNCTION_SECRET antes de aceptar ?force=1.
+[functions.auto_confirm_bookings]
+verify_jwt = false
+
 # La página HTML de anticipo embebido la llama desde el browser sin JWT.
 # Validación interna: el booking debe existir y estar en pending_payment.
 [functions.create_appointment_deposit_payment_intent]
+verify_jwt = false
+
+# Comprobante de anticipo: Stripe lo invoca server-to-server y recepcion con JWT.
+# El codigo exige service_role, secreto interno o rol operativo.
+[functions.send_deposit_receipt]
 verify_jwt = false
 
 # Creador puntual de plantillas Meta. Sin JWT pero protegido por TEMPLATE_SETUP_KEY
 # (header x-setup-key / query ?k=). Se invoca server-to-server con la llave.
 [functions.create_meta_template]
 verify_jwt = false
+
+# Descarga publica autorizada por token firmado con proposito gift_card_download.
+[functions.gift_card_download]
+verify_jwt = false
+
+# Chat publico de landing; el codigo aplica allowlist CORS, tamano maximo y rate
+# limit antes de usar service_role internamente.
+[functions.web_concierge]
+verify_jwt = false
+
+# Acciones internas de recepcion para Gift Cards; requiere JWT y rol operativo.
+[functions.gift_card_reception_actions]
+verify_jwt = true

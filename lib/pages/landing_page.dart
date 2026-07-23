@@ -10,6 +10,7 @@ import '../widgets/experience_section.dart';
 import '../widgets/featured_section.dart';
 import '../widgets/contact_section.dart';
 import '../widgets/footer.dart';
+import '../widgets/concierge_chat.dart';
 
 class LandingPage extends StatefulWidget {
   const LandingPage({super.key});
@@ -24,11 +25,11 @@ class _LandingPageState extends State<LandingPage> {
   bool _isScrolled = false;
   bool _handledCheckoutReturn = false;
 
-  final GlobalKey _heroKey       = GlobalKey();
-  final GlobalKey _servicesKey   = GlobalKey();
+  final GlobalKey _heroKey = GlobalKey();
+  final GlobalKey _servicesKey = GlobalKey();
   final GlobalKey _experienceKey = GlobalKey();
-  final GlobalKey _newsKey       = GlobalKey();
-  final GlobalKey _contactKey    = GlobalKey();
+  final GlobalKey _newsKey = GlobalKey();
+  final GlobalKey _contactKey = GlobalKey();
 
   @override
   void initState() {
@@ -37,7 +38,9 @@ class _LandingPageState extends State<LandingPage> {
       final scrolled = _scrollController.offset > 80;
       if (scrolled != _isScrolled) setState(() => _isScrolled = scrolled);
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) => _handleCheckoutReturn());
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _handleCheckoutReturn(),
+    );
   }
 
   @override
@@ -65,7 +68,9 @@ class _LandingPageState extends State<LandingPage> {
 
     if (checkoutStatus == 'cancel') {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('El pago fue cancelado. Tu carrito sigue disponible.')),
+        const SnackBar(
+          content: Text('El pago fue cancelado. Tu carrito sigue disponible.'),
+        ),
       );
       return;
     }
@@ -75,7 +80,9 @@ class _LandingPageState extends State<LandingPage> {
     }
 
     try {
-      final result = await _checkoutService.confirmOrderPayment(sessionId: sessionId);
+      final result = await _checkoutService.confirmOrderPayment(
+        sessionId: sessionId,
+      );
       if (!mounted) return;
 
       if (result.paymentStatus == 'paid' || result.status == 'paid') {
@@ -86,13 +93,17 @@ class _LandingPageState extends State<LandingPage> {
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Stripe regresó con estado ${result.paymentStatus}.')),
+          SnackBar(
+            content: Text('Stripe regresó con estado ${result.paymentStatus}.'),
+          ),
         );
       }
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No pudimos confirmar el pago automaticamente.')),
+        const SnackBar(
+          content: Text('No pudimos confirmar el pago automaticamente.'),
+        ),
       );
     }
   }
@@ -157,14 +168,20 @@ class _LandingPageState extends State<LandingPage> {
             isScrolled: _isScrolled,
             onTap: (index) {
               switch (index) {
-                case 0: _scrollTo(_heroKey);
-                case 1: _scrollTo(_servicesKey);
-                case 2: _scrollTo(_experienceKey);
-                case 3: _scrollTo(_newsKey);
-                case 4: _scrollTo(_contactKey);
+                case 0:
+                  _scrollTo(_heroKey);
+                case 1:
+                  _scrollTo(_servicesKey);
+                case 2:
+                  _scrollTo(_experienceKey);
+                case 3:
+                  _scrollTo(_newsKey);
+                case 4:
+                  _scrollTo(_contactKey);
               }
             },
           ),
+          const ConciergeChat(),
         ],
       ),
     );

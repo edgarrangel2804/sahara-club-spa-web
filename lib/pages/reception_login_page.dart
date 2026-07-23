@@ -13,6 +13,14 @@ class _ReceptionLoginPageState extends State<ReceptionLoginPage> {
   final _passwordController = TextEditingController();
   bool _isLoading = false;
 
+  void _goHome() {
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    } else {
+      Navigator.pushReplacementNamed(context, '/');
+    }
+  }
+
   Future<void> _signIn() async {
     setState(() => _isLoading = true);
     final supa = Supabase.instance.client;
@@ -39,7 +47,10 @@ class _ReceptionLoginPageState extends State<ReceptionLoginPage> {
       final role = staff?['role']?.toString();
       const allowedRoles = {'admin', 'reception', 'therapist'};
 
-      if (staff == null || !isActive || !canLogin || !allowedRoles.contains(role)) {
+      if (staff == null ||
+          !isActive ||
+          !canLogin ||
+          !allowedRoles.contains(role)) {
         await supa.auth.signOut();
         throw Exception(
           'Tu cuenta no tiene acceso al portal de staff. Contacta al administrador.',
@@ -52,7 +63,10 @@ class _ReceptionLoginPageState extends State<ReceptionLoginPage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -64,7 +78,10 @@ class _ReceptionLoginPageState extends State<ReceptionLoginPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0B0B0B),
-      appBar: AppBar(backgroundColor: Colors.transparent, iconTheme: const IconThemeData(color: Colors.white)),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
       body: Center(
         child: Container(
           width: 450,
@@ -72,7 +89,9 @@ class _ReceptionLoginPageState extends State<ReceptionLoginPage> {
           decoration: BoxDecoration(
             color: const Color(0xFF141414),
             borderRadius: BorderRadius.circular(0),
-            border: Border.all(color: const Color(0xFFC6A76A).withValues(alpha: 0.3)),
+            border: Border.all(
+              color: const Color(0xFFC6A76A).withValues(alpha: 0.3),
+            ),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -97,11 +116,20 @@ class _ReceptionLoginPageState extends State<ReceptionLoginPage> {
                 controller: _emailController,
                 style: const TextStyle(color: Colors.white),
                 decoration: const InputDecoration(
-                  filled: false, // Forzamos a que no use el fondo blanco del tema
+                  filled:
+                      false, // Forzamos a que no use el fondo blanco del tema
                   labelText: "EMAIL",
-                  labelStyle: TextStyle(color: Colors.white38, fontSize: 12, letterSpacing: 2),
-                  enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
-                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFFC6A76A))),
+                  labelStyle: TextStyle(
+                    color: Colors.white38,
+                    fontSize: 12,
+                    letterSpacing: 2,
+                  ),
+                  enabledBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white10),
+                  ),
+                  focusedBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Color(0xFFC6A76A)),
+                  ),
                 ),
               ),
               const SizedBox(height: 20),
@@ -110,11 +138,20 @@ class _ReceptionLoginPageState extends State<ReceptionLoginPage> {
                 obscureText: true,
                 style: const TextStyle(color: Colors.white),
                 decoration: const InputDecoration(
-                  filled: false, // Forzamos a que no use el fondo blanco del tema
+                  filled:
+                      false, // Forzamos a que no use el fondo blanco del tema
                   labelText: "PASSWORD",
-                  labelStyle: TextStyle(color: Colors.white38, fontSize: 12, letterSpacing: 2),
-                  enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white10)),
-                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFFC6A76A))),
+                  labelStyle: TextStyle(
+                    color: Colors.white38,
+                    fontSize: 12,
+                    letterSpacing: 2,
+                  ),
+                  enabledBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white10),
+                  ),
+                  focusedBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Color(0xFFC6A76A)),
+                  ),
                 ),
               ),
               const SizedBox(height: 40),
@@ -126,13 +163,40 @@ class _ReceptionLoginPageState extends State<ReceptionLoginPage> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFFC6A76A),
                     foregroundColor: Colors.black,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(0),
+                    ),
                   ),
                   child: _isLoading
                       ? const CircularProgressIndicator(color: Colors.black)
-                      : const Text("ENTRAR", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 2)),
+                      : const Text(
+                          "ENTRAR",
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 2,
+                          ),
+                        ),
                 ),
-              )
+              ),
+              const SizedBox(height: 20),
+              Center(
+                child: TextButton.icon(
+                  onPressed: _isLoading ? null : _goHome,
+                  icon: const Icon(
+                    Icons.arrow_back,
+                    size: 16,
+                    color: Colors.white54,
+                  ),
+                  label: const Text(
+                    "Volver a la página principal",
+                    style: TextStyle(
+                      color: Colors.white54,
+                      fontSize: 13,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),

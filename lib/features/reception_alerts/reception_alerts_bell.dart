@@ -4,8 +4,6 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../theme/sahara_theme.dart';
 import 'reception_alert.dart';
 
-/// Campana de alertas para recepción + panel desplegable.
-/// Visible en la barra de navegación global (todos los módulos).
 class ReceptionAlertsBell extends StatefulWidget {
   const ReceptionAlertsBell({
     super.key,
@@ -37,7 +35,6 @@ class _ReceptionAlertsBellState extends State<ReceptionAlertsBell> {
   @override
   void didUpdateWidget(covariant ReceptionAlertsBell oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Si llegan alertas nuevas mientras el panel está abierto, redibuja.
     _entry?.markNeedsBuild();
   }
 
@@ -65,7 +62,6 @@ class _ReceptionAlertsBellState extends State<ReceptionAlertsBell> {
       builder: (context) {
         return Stack(
           children: [
-            // Capa para cerrar al hacer clic fuera.
             Positioned.fill(
               child: GestureDetector(
                 behavior: HitTestBehavior.translucent,
@@ -90,9 +86,9 @@ class _ReceptionAlertsBellState extends State<ReceptionAlertsBell> {
                     widget.onMarkResolved(id);
                     _entry?.markNeedsBuild();
                   },
-                  onOpenAlert: (a) {
+                  onOpenAlert: (alert) {
                     _removePanel();
-                    widget.onOpenAlert(a);
+                    widget.onOpenAlert(alert);
                   },
                 ),
               ),
@@ -109,7 +105,7 @@ class _ReceptionAlertsBellState extends State<ReceptionAlertsBell> {
     return CompositedTransformTarget(
       link: _link,
       child: Tooltip(
-        message: 'Alertas de recepción',
+        message: 'Alertas de recepcion',
         child: InkWell(
           onTap: _togglePanel,
           borderRadius: BorderRadius.circular(8),
@@ -143,7 +139,9 @@ class _ReceptionAlertsBellState extends State<ReceptionAlertsBell> {
                         border: Border.all(color: Colors.white, width: 1.5),
                       ),
                       child: Text(
-                        widget.unseenCount > 99 ? '99+' : '${widget.unseenCount}',
+                        widget.unseenCount > 99
+                            ? '99+'
+                            : '${widget.unseenCount}',
                         textAlign: TextAlign.center,
                         style: GoogleFonts.inter(
                           color: Colors.white,
@@ -180,10 +178,9 @@ class _AlertsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Pendientes (no resueltas) arriba; las resueltas como historial debajo.
-    final pending = alerts.where((a) => !a.isResolved).toList();
-    final resolved = alerts.where((a) => a.isResolved).toList();
-    final unseen = alerts.where((a) => a.isUnseen).length;
+    final pending = alerts.where((alert) => !alert.isResolved).toList();
+    final resolved = alerts.where((alert) => alert.isResolved).toList();
+    final unseen = alerts.where((alert) => alert.isUnseen).length;
 
     return Material(
       color: Colors.transparent,
@@ -205,7 +202,6 @@ class _AlertsPanel extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Header
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 14, 8, 10),
               child: Row(
@@ -265,7 +261,6 @@ class _AlertsPanel extends StatelessWidget {
               ),
             ),
             const Divider(height: 1, color: Color(0xFFE0DDD8)),
-            // Lista
             Flexible(
               child: alerts.isEmpty
                   ? _empty()
@@ -274,10 +269,10 @@ class _AlertsPanel extends StatelessWidget {
                       shrinkWrap: true,
                       children: [
                         ...pending.map(
-                          (a) => _AlertTile(
-                            alert: a,
-                            onMarkResolved: () => onMarkResolved(a.id),
-                            onTap: () => onOpenAlert(a),
+                          (alert) => _AlertTile(
+                            alert: alert,
+                            onMarkResolved: () => onMarkResolved(alert.id),
+                            onTap: () => onOpenAlert(alert),
                           ),
                         ),
                         if (resolved.isNotEmpty) ...[
@@ -294,10 +289,10 @@ class _AlertsPanel extends StatelessWidget {
                             ),
                           ),
                           ...resolved.map(
-                            (a) => _AlertTile(
-                              alert: a,
+                            (alert) => _AlertTile(
+                              alert: alert,
                               onMarkResolved: null,
-                              onTap: () => onOpenAlert(a),
+                              onTap: () => onOpenAlert(alert),
                             ),
                           ),
                         ],
@@ -311,19 +306,22 @@ class _AlertsPanel extends StatelessWidget {
   }
 
   Widget _empty() => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
-        child: Column(
-          children: [
-            Icon(Icons.notifications_none_rounded,
-                size: 40, color: Colors.black.withValues(alpha: 0.18)),
-            const SizedBox(height: 10),
-            Text(
-              'Sin alertas por ahora',
-              style: GoogleFonts.inter(fontSize: 13, color: Colors.black54),
-            ),
-          ],
+    padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+    child: Column(
+      children: [
+        Icon(
+          Icons.notifications_none_rounded,
+          size: 40,
+          color: Colors.black.withValues(alpha: 0.18),
         ),
-      );
+        const SizedBox(height: 10),
+        Text(
+          'Sin alertas por ahora',
+          style: GoogleFonts.inter(fontSize: 13, color: Colors.black54),
+        ),
+      ],
+    ),
+  );
 }
 
 class _AlertTile extends StatelessWidget {
@@ -345,15 +343,29 @@ class _AlertTile extends StatelessWidget {
     return 'hace ${diff.inDays} d';
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final dateLine = [
+  String _money(num value, String? currency) {
+    return '\$${value.toStringAsFixed(2)} ${(currency ?? 'MXN').toUpperCase()}';
+  }
+
+  String _dateLine() {
+    if (alert.isGiftCardPurchase) {
+      return [
+        alert.displayProductName,
+        if (alert.validityLabel != null) 'Vigencia ${alert.validityLabel}',
+      ].whereType<String>().where((value) => value.isNotEmpty).join('  |  ');
+    }
+    return [
       if (alert.serviceName != null) alert.serviceName,
       if (alert.bookingDate != null)
         '${alert.bookingDate!.day.toString().padLeft(2, '0')}/'
             '${alert.bookingDate!.month.toString().padLeft(2, '0')}'
-            '${alert.bookingTime != null ? ' · ${alert.bookingTime}' : ''}',
-    ].whereType<String>().join('  ·  ');
+            '${alert.bookingTime != null ? ' | ${alert.bookingTime}' : ''}',
+    ].whereType<String>().join('  |  ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dateLine = _dateLine();
 
     return InkWell(
       onTap: onTap,
@@ -363,14 +375,11 @@ class _AlertTile extends StatelessWidget {
           color: alert.isUnseen
               ? alert.accent.withValues(alpha: 0.05)
               : Colors.white,
-          border: const Border(
-            bottom: BorderSide(color: Color(0xFFEFece8)),
-          ),
+          border: const Border(bottom: BorderSide(color: Color(0xFFEFece8))),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Punto sin ver + icono
             Padding(
               padding: const EdgeInsets.only(top: 2),
               child: Container(
@@ -401,15 +410,17 @@ class _AlertTile extends StatelessWidget {
                         ),
                         const SizedBox(width: 6),
                       ],
-                      Text(
-                        alert.title,
-                        style: GoogleFonts.inter(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.black87,
+                      Flexible(
+                        child: Text(
+                          alert.title,
+                          style: GoogleFonts.inter(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.black87,
+                          ),
                         ),
                       ),
-                      const Spacer(),
+                      const SizedBox(width: 8),
                       Text(
                         _timeAgo(alert.createdAt),
                         style: GoogleFonts.inter(
@@ -421,7 +432,7 @@ class _AlertTile extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    alert.clientName ?? 'Cliente WhatsApp',
+                    alert.displayClientName,
                     style: GoogleFonts.inter(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
@@ -436,7 +447,39 @@ class _AlertTile extends StatelessWidget {
                         color: Colors.black54,
                       ),
                     ),
-                  if (alert.amountMxn != null)
+                  if (alert.isGiftCardPurchase) ...[
+                    Text(
+                      'Destinataria: ${alert.recipientName}',
+                      style: GoogleFonts.inter(
+                        fontSize: 11,
+                        color: Colors.black54,
+                      ),
+                    ),
+                    if (alert.displayPhone != null)
+                      Text(
+                        'Telefono: ${alert.displayPhone}',
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          color: Colors.black54,
+                        ),
+                      ),
+                    if (alert.amountPaid != null)
+                      Text(
+                        'Pagado: ${_money(alert.amountPaid!, alert.currency)}',
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF1A9E65),
+                        ),
+                      ),
+                    Text(
+                      'Entrega: ${alert.deliveryStatus} | PDF: ${alert.digitalAssetStatus}',
+                      style: GoogleFonts.inter(
+                        fontSize: 11,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ] else if (alert.amountMxn != null)
                     Text(
                       'Monto: \$${alert.amountMxn} MXN',
                       style: GoogleFonts.inter(
@@ -445,7 +488,8 @@ class _AlertTile extends StatelessWidget {
                         color: const Color(0xFF1A9E65),
                       ),
                     ),
-                  if ((alert.message ?? '').isNotEmpty)
+                  if (!alert.isGiftCardPurchase &&
+                      (alert.message ?? '').isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 3),
                       child: Text(
@@ -460,11 +504,20 @@ class _AlertTile extends StatelessWidget {
                   const SizedBox(height: 6),
                   Row(
                     children: [
-                      Icon(Icons.chat_outlined,
-                          size: 11, color: Colors.black38),
+                      Icon(
+                        alert.isGiftCardPurchase
+                            ? Icons.storefront_outlined
+                            : Icons.chat_outlined,
+                        size: 11,
+                        color: Colors.black38,
+                      ),
                       const SizedBox(width: 3),
                       Text(
-                        alert.channel == 'whatsapp' ? 'WhatsApp' : alert.channel,
+                        alert.isGiftCardPurchase
+                            ? alert.purchaseChannelLabel
+                            : (alert.channel == 'whatsapp'
+                                  ? 'WhatsApp'
+                                  : alert.channel),
                         style: GoogleFonts.inter(
                           fontSize: 10,
                           color: Colors.black38,
@@ -480,7 +533,9 @@ class _AlertTile extends StatelessWidget {
                               vertical: 0,
                             ),
                             minimumSize: const Size(0, 28),
-                            backgroundColor: alert.accent.withValues(alpha: 0.10),
+                            backgroundColor: alert.accent.withValues(
+                              alpha: 0.10,
+                            ),
                           ),
                           child: Text(
                             'Atendida',
@@ -494,10 +549,13 @@ class _AlertTile extends StatelessWidget {
                       else
                         Row(
                           children: [
-                            Icon(Icons.check_circle,
-                                size: 12,
-                                color: const Color(0xFF1A9E65)
-                                    .withValues(alpha: 0.7)),
+                            Icon(
+                              Icons.check_circle,
+                              size: 12,
+                              color: const Color(
+                                0xFF1A9E65,
+                              ).withValues(alpha: 0.7),
+                            ),
                             const SizedBox(width: 3),
                             Text(
                               'Atendida',

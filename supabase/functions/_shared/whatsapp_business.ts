@@ -9,7 +9,10 @@ export const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 }
 
-export type AdminClient = ReturnType<typeof createClient>
+// The recovered runtime does not ship generated Supabase DB types. Keep this
+// client loose so Deno can type-check the Edge Functions without inventing a
+// partial schema that would drift from production.
+export type AdminClient = any
 
 export type BusinessWhatsAppRow = {
   id: string
@@ -37,7 +40,7 @@ export type BusinessWhatsAppRow = {
   webhook_last_error: string | null
 }
 
-export function createAdminClient() {
+export function createAdminClient(): AdminClient {
   return createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
@@ -175,8 +178,13 @@ export function maskSecret(value: string, keep = 4) {
  * - cualquier otro    → tal cual
  */
 export function normalizePhone(phone: string) {
-  const clean = (phone || "").replace(/\D/g, "")
+  let clean = (phone || "").replace(/\D/g, "")
   if (clean.length === 0) return clean
+  // Números del extranjero guardados con prefijo de marcación internacional "00"
+  // (ej. "001 602 587 7771" = EE.UU.). Meta/WhatsApp exige E.164 SIN el "00".
+  // Se lo quitamos solo al enviar; en la ficha el número se conserva con "00"
+  // para poder marcar por teléfono desde México.
+  if (clean.startsWith("00")) clean = clean.slice(2)
   if (clean.length === 13 && clean.startsWith("521")) return clean
   if (clean.length === 12 && clean.startsWith("52")) return `521${clean.slice(2)}`
   if (clean.length === 10) return `521${clean}`
@@ -384,7 +392,7 @@ export async function sendMetaTextMessage(
   phone: string,
   message: string,
 ) {
-  return callMetaApi<Record<string, unknown>>(
+  return await callMetaApi<Record<string, unknown>>(
     `${phoneNumberId}/messages`,
     accessToken,
     {
@@ -408,4 +416,43 @@ export function renderTemplate(body: string, vars: Record<string, unknown>) {
     result = result.replaceAll(`[[${key}]]`, String(raw ?? ""))
   }
   return result
+}
+
+// Registra en whatsapp_logs CADA mensaje saliente, para trazabilidad total.
+// Best-effort: nunca lanza (si el log falla, no debe romper el envío al cliente).
+// Usar en toda función que mande WhatsApp a un cliente fuera del whatsapp-worker.
+export async function logOutbound(
+  sb: AdminClient,
+  opts: {
+    phone: string
+    body: string
+    eventType: string
+    status?: string // sent | failed
+    reservationId?: string | null
+    customerId?: string | null
+    windowType?: string // free_text | template | session | document
+    metaTemplateName?: string | null
+    payload?: unknown
+    errorMessage?: string | null
+  },
+): Promise<void> {
+  try {
+    await sb.from("whatsapp_logs").insert({
+      phone: normalizePhone(opts.phone),
+      message_rendered: opts.body,
+      event_type: opts.eventType,
+      type: opts.eventType,
+      status: opts.status ?? "sent",
+      reservation_id: opts.reservationId ?? null,
+      customer_id: opts.customerId ?? null,
+      window_type: opts.windowType ?? "free_text",
+      meta_template_name: opts.metaTemplateName ?? null,
+      provider: "meta",
+      payload_sent: (opts.payload ?? null) as never,
+      error_message: opts.errorMessage ?? null,
+      sent_at: new Date().toISOString(),
+    })
+  } catch (e) {
+    console.warn("logOutbound failed:", (e as Error).message)
+  }
 }

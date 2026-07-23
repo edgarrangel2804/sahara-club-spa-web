@@ -9,6 +9,36 @@ import {
   verifyStripeSignature,
 } from "../_shared/stripe_checkout.ts"
 
+// Trazabilidad (auditoría): registra en whatsapp_logs cada mensaje saliente.
+// Best-effort: nunca lanza, no debe romper el flujo del webhook si el log falla.
+async function logOutbound(
+  sb: ReturnType<typeof createAdminClient>,
+  opts: {
+    phone: string
+    body: string
+    eventType: string
+    status?: string
+    reservationId?: string | null
+    windowType?: string
+  },
+): Promise<void> {
+  try {
+    await sb.from("whatsapp_logs").insert({
+      phone: String(opts.phone ?? "").replace(/\D/g, ""),
+      message_rendered: opts.body,
+      event_type: opts.eventType,
+      type: opts.eventType,
+      status: opts.status ?? "sent",
+      reservation_id: opts.reservationId ?? null,
+      window_type: opts.windowType ?? "free_text",
+      provider: "meta",
+      sent_at: new Date().toISOString(),
+    })
+  } catch (e) {
+    console.warn("logOutbound failed:", (e as Error).message)
+  }
+}
+
 // Si Meta entrega webhook con metadata.payment_type='appointment_deposit',
 // rutea al flujo de booking deposit. Si no, sigue el flujo legacy de orders.
 async function handleBookingDepositPayment(
@@ -32,8 +62,8 @@ async function handleBookingDepositPayment(
   const amountTotal = typeof object.amount_total === "number"
     ? object.amount_total / 100
     : (typeof (object as { amount?: number }).amount === "number"
-        ? ((object as { amount?: number }).amount as number) / 100
-        : null)
+      ? ((object as { amount?: number }).amount as number) / 100
+      : null)
 
   if (
     event.type === "checkout.session.completed" ||
@@ -56,11 +86,14 @@ async function handleBookingDepositPayment(
     }
 
     const finalAmount = booking.deposit_amount ?? amountTotal ?? 200
+    // Nuevo flujo: el pago CONFIRMA la cita y la mete a la agenda. Lo único
+    // que queda pendiente es asignar terapeuta (therapist_id puede ir null).
     await supabase
       .from("bookings")
       .update({
-        status: "payment_received",
+        status: "confirmed",
         payment_status: "paid",
+        payment_requirement: "paid",
         deposit_paid_at: new Date().toISOString(),
         stripe_payment_intent_id: paymentIntentId || null,
         deposit_amount: finalAmount,
@@ -93,11 +126,31 @@ async function handleBookingDepositPayment(
       await supabase.rpc("log_reception_alert", {
         p_event_type: "deposit_paid",
         p_booking_id: bookingId,
-        p_message: "Anticipo pagado. Pendiente de confirmar en agenda.",
+        p_message: "Anticipo pagado. Cita confirmada en agenda — falta asignar terapeuta.",
         p_amount_mxn: finalAmount,
       })
     } catch (e) {
       console.warn("reception alert (deposit_paid) failed:", (e as Error).message)
+    }
+
+    // Comprobante PDF al cliente por WhatsApp. Lo genera y envía la edge
+    // function send_deposit_receipt (best-effort, server-to-server). Nunca
+    // debe romper el flujo de pago: si falla, el pago ya quedó registrado.
+    try {
+      const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send_deposit_receipt`
+      const res = await fetch(fnUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        },
+        body: JSON.stringify({ booking_id: bookingId }),
+      })
+      if (!res.ok) {
+        console.warn("deposit receipt dispatch non-200:", res.status)
+      }
+    } catch (e) {
+      console.warn("deposit receipt dispatch failed:", (e as Error).message)
     }
 
     // Notificar a backup humanos + admins IA (los 3 números admin + el backup
@@ -109,9 +162,13 @@ async function handleBookingDepositPayment(
         .select("human_backup_numbers, human_backup_enabled, ai_admin_numbers")
         .eq("id", 1)
         .maybeSingle()
-      const enabled = (settings as { human_backup_enabled?: boolean } | null)?.human_backup_enabled === true
-      const backups = ((settings as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
-      const admins = ((settings as { ai_admin_numbers?: string[] } | null)?.ai_admin_numbers ?? []) as string[]
+      const enabled =
+        (settings as { human_backup_enabled?: boolean } | null)?.human_backup_enabled === true
+      const backups =
+        ((settings as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ??
+          []) as string[]
+      const admins =
+        ((settings as { ai_admin_numbers?: string[] } | null)?.ai_admin_numbers ?? []) as string[]
       // Dedup por últimos 10 dígitos
       const seen = new Set<string>()
       const targets: string[] = []
@@ -125,32 +182,55 @@ async function handleBookingDepositPayment(
         }
       }
       if (enabled && targets.length > 0) {
-        // Cargar detalles
+        // Cargar detalles completos del booking + cliente
         const { data: full } = await supabase
           .from("bookings")
-          .select("id, booking_date, booking_time, " +
-            "service:services(name), client:clients(full_name, phone)")
+          .select(
+            "id, booking_date, booking_time, therapist_id, client_record_id, " +
+              "service:services(name), client:clients(full_name, phone, email)",
+          )
           .eq("id", bookingId)
           .maybeSingle()
         const f = full as {
-          booking_date: string; booking_time: string;
-          service: { name?: string } | null;
-          client: { full_name?: string; phone?: string } | null;
+          booking_date: string
+          booking_time: string
+          therapist_id: string | null
+          client_record_id: string | null
+          service: { name?: string } | null
+          client: { full_name?: string; phone?: string; email?: string } | null
         } | null
         const customerName = f?.client?.full_name ?? "Cliente"
         const phone = f?.client?.phone ?? "(sin teléfono)"
+        const email = f?.client?.email ?? "(sin email)"
         const svc = f?.service?.name ?? "Servicio"
+        const hasTherapist = !!f?.therapist_id
+
+        // ¿Cliente nuevo? Lo es si esta es su única cita registrada.
+        let isNew = false
+        if (f?.client_record_id) {
+          const { count } = await supabase
+            .from("bookings")
+            .select("id", { count: "exact", head: true })
+            .eq("client_record_id", f.client_record_id)
+          isNew = (count ?? 0) <= 1
+        }
+
+        const fechaLarga = fmtDateLong(String(f?.booking_date ?? ""))
+        const horaAmPm = fmtTime(String(f?.booking_time ?? ""))
         const message = [
-          "💰 *Pago anticipo recibido*",
+          "✅ *Cita confirmada · anticipo pagado*",
           "",
-          `*Cliente:* ${customerName}`,
-          `*Teléfono:* ${phone}`,
+          `*Cliente:* ${customerName}${isNew ? "  — 🆕 NUEVO (crear/completar ficha)" : ""}`,
+          `*Email:* ${email}`,
+          `*Celular:* ${phone}`,
           `*Servicio:* ${svc}`,
-          `*Fecha:* ${f?.booking_date}`,
-          `*Hora:* ${f?.booking_time}`,
-          `*Monto:* $${finalAmount} MXN`,
+          `*Fecha:* ${fechaLarga}`,
+          `*Hora:* ${horaAmPm}`,
+          `*Anticipo:* $${finalAmount} MXN (pago parcial)`,
           "",
-          "Pendiente de confirmar en agenda Sahara.",
+          hasTherapist
+            ? "La cita ya tiene terapeuta asignado."
+            : "🔔 *Falta asignar terapeuta* en la agenda.",
         ].join("\n")
         // Invocamos send_whatsapp_template_message via función shared… o más
         // simple: usamos Meta API directo. Aquí usamos la URL del webhook send.
@@ -189,24 +269,63 @@ async function handleBookingDepositPayment(
   }
 }
 
-// Helper interno para mandar texto libre a backup vía Meta API.
+// Fecha YYYY-MM-DD → "2 de julio de 2026"
+function fmtDateLong(dateStr: string): string {
+  try {
+    const [y, m, d] = dateStr.split("-").map((n) => parseInt(n, 10))
+    const meses = [
+      "enero",
+      "febrero",
+      "marzo",
+      "abril",
+      "mayo",
+      "junio",
+      "julio",
+      "agosto",
+      "septiembre",
+      "octubre",
+      "noviembre",
+      "diciembre",
+    ]
+    return `${d} de ${meses[(m - 1) % 12]} de ${y}`
+  } catch {
+    return dateStr
+  }
+}
+
+// Hora HH:MM[:SS] → "11:00 AM"
+function fmtTime(timeStr: string): string {
+  if (!timeStr) return ""
+  const [hStr, min] = timeStr.split(":")
+  let h = parseInt(hStr, 10)
+  const ampm = h >= 12 ? "PM" : "AM"
+  h = h % 12
+  if (h === 0) h = 12
+  return `${h}:${min} ${ampm}`
+}
+
+// Manda texto libre vía Meta API y lo REGISTRA en whatsapp_logs (trazabilidad).
+// Cubre avisos a números de respaldo y mensajes al cliente (p.ej. gift card).
 async function sendBackupText(phone: string, text: string) {
-  const accessToken = Deno.env.get("META_ACCESS_TOKEN")
-  const phoneNumberId = Deno.env.get("META_PHONE_NUMBER_ID")
+  const supabase = createAdminClient()
+  let accessToken = Deno.env.get("META_ACCESS_TOKEN") ?? ""
+  let phoneNumberId = Deno.env.get("META_PHONE_NUMBER_ID") ?? ""
   if (!accessToken || !phoneNumberId) {
     // Caemos a buscar settings de DB si no están en env
-    const supabase = createAdminClient()
     const { data } = await supabase
       .from("business_whatsapp_settings")
       .select("access_token, phone_number_id")
       .eq("is_active", true)
       .maybeSingle()
-    const t = (data as { access_token?: string; phone_number_id?: string } | null)?.access_token
-    const p = (data as { phone_number_id?: string } | null)?.phone_number_id
-    if (!t || !p) return
-    await fetch(`https://graph.facebook.com/v21.0/${p}/messages`, {
+    accessToken = (data as { access_token?: string } | null)?.access_token ?? accessToken
+    phoneNumberId = (data as { phone_number_id?: string } | null)?.phone_number_id ?? phoneNumberId
+  }
+  if (!accessToken || !phoneNumberId) return
+  let ok = false
+  try {
+    const res = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
       method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${t}` },
+      headers: { "content-type": "application/json", Authorization: `Bearer ${accessToken}` },
       body: JSON.stringify({
         messaging_product: "whatsapp",
         to: phone,
@@ -214,17 +333,15 @@ async function sendBackupText(phone: string, text: string) {
         text: { body: text },
       }),
     })
-    return
+    ok = res.ok
+  } catch (_) {
+    ok = false
   }
-  await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
-    method: "POST",
-    headers: { "content-type": "application/json", Authorization: `Bearer ${accessToken}` },
-    body: JSON.stringify({
-      messaging_product: "whatsapp",
-      to: phone,
-      type: "text",
-      text: { body: text },
-    }),
+  await logOutbound(supabase, {
+    phone,
+    body: text,
+    eventType: "webhook_text",
+    status: ok ? "sent" : "failed",
   })
 }
 
@@ -267,8 +384,8 @@ serve(async (req) => {
     if (paymentType === "appointment_deposit") {
       const bookingId = String(
         object.metadata?.booking_id ??
-        object.client_reference_id ??
-        "",
+          object.client_reference_id ??
+          "",
       ).trim()
       if (!bookingId) {
         console.warn("appointment_deposit webhook without booking_id")
@@ -281,8 +398,8 @@ serve(async (req) => {
     // FLUJO LEGACY de orders (tienda virtual, productos físicos/digitales) — sin cambios.
     const orderId = String(
       object.metadata?.order_id ??
-      object.client_reference_id ??
-      "",
+        object.client_reference_id ??
+        "",
     ).trim()
 
     if (!orderId) {
@@ -304,12 +421,6 @@ serve(async (req) => {
         paymentPayload: object,
       })
       await fulfillOrder(supabase, orderId)
-      // Entrega la(s) gift card(s) al comprador por WhatsApp (best-effort).
-      try {
-        await deliverGiftCardsWhatsApp(supabase, orderId)
-      } catch (e) {
-        console.warn("gift card whatsapp delivery failed:", (e as Error).message)
-      }
     }
 
     if (event.type === "checkout.session.expired") {
@@ -329,57 +440,6 @@ serve(async (req) => {
     return jsonResponse({ error: "No se pudo procesar el webhook de Stripe." }, 400)
   }
 })
-
-// Manda la tarjeta de regalo (código + link a la tarjeta con QR) al teléfono del
-// comprador por WhatsApp. Best-effort: si el comprador no tiene ventana de 24h
-// abierta, Meta puede rechazar el texto libre (futuro: plantilla aprobada).
-async function deliverGiftCardsWhatsApp(
-  supabase: ReturnType<typeof createAdminClient>,
-  orderId: string,
-) {
-  const { data: order } = await supabase
-    .from("orders")
-    .select("customer_phone")
-    .eq("id", orderId)
-    .maybeSingle()
-  const phone = (order as { customer_phone?: string } | null)?.customer_phone?.trim()
-  if (!phone) return
-
-  const { data: cards } = await supabase
-    .from("gift_cards")
-    .select("code, service_name, recipient_name, expires_at")
-    .eq("order_id", orderId)
-
-  for (
-    const c of (cards ?? []) as Array<{
-      code?: string; service_name?: string
-      recipient_name?: string; expires_at?: string
-    }>
-  ) {
-    if (!c.code) continue
-    const link = `https://saharaclubspa.com/tarjeta-regalo?code=${encodeURIComponent(c.code)}`
-    const exp = c.expires_at
-      ? new Date(c.expires_at).toLocaleDateString("es-MX")
-      : ""
-    const msg = [
-      "🎁 *Tu tarjeta de regalo Sahara Club Spa*",
-      "",
-      c.service_name ? `*Servicio:* ${c.service_name}` : "",
-      c.recipient_name ? `*A nombre de:* ${c.recipient_name}` : "",
-      `*Código:* ${c.code}`,
-      exp ? `*Vence:* ${exp}` : "",
-      "",
-      `Ver tu tarjeta con QR: ${link}`,
-      "",
-      "Preséntala en recepción para agendar tu servicio 🌿",
-    ].filter(Boolean).join("\n")
-    try {
-      await sendBackupText(phone, msg)
-    } catch (e) {
-      console.warn("gift card send failed:", (e as Error).message)
-    }
-  }
-}
 
 function serve(handler: (req: Request) => Promise<Response>) {
   return Deno.serve(handler)

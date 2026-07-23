@@ -35,31 +35,30 @@ class _Metrics {
   final int adminQueriesToday;
 
   _Metrics.fromMap(Map<String, dynamic> m)
-      : aiEnabled = (m['ai_enabled'] as bool?) ?? false,
-        aiMode = (m['ai_mode'] as String?) ?? 'pilot',
-        activeModel = (m['active_model'] as String?) ?? '',
-        allowedNumbers = ((m['allowed_test_numbers'] as List?) ?? [])
-            .map((e) => e.toString())
-            .toList(),
-        adminNumbers = ((m['ai_admin_numbers'] as List?) ?? [])
-            .map((e) => e.toString())
-            .toList(),
-        pauseAll = (m['ai_pause_all_conversations'] as bool?) ?? false,
-        handoffPriority = (m['handoff_human_priority'] as bool?) ?? true,
-        allowAfterHours = (m['allow_after_hours_responses'] as bool?) ?? false,
-        maxDailyCost = (m['max_daily_cost_usd'] as num?) ?? 25,
-        maxAdminDailyCost = (m['max_admin_daily_cost_usd'] as num?) ?? 5,
-        adminReportEnabled = (m['admin_daily_report_enabled'] as bool?) ?? false,
-        costToday = (m['cost_today_usd'] as num?) ?? 0,
-        activeConversations =
-            (m['active_conversations_24h'] as num?)?.toInt() ?? 0,
-        userMessagesToday = (m['user_messages_today'] as num?)?.toInt() ?? 0,
-        assistantMessagesToday =
-            (m['assistant_messages_today'] as num?)?.toInt() ?? 0,
-        avgLatencyMs = (m['avg_latency_ms_24h'] as num?)?.toInt(),
-        escalatedTotal = (m['escalated_total'] as num?)?.toInt() ?? 0,
-        adminQueriesToday =
-            (m['admin_queries_today'] as num?)?.toInt() ?? 0;
+    : aiEnabled = (m['ai_enabled'] as bool?) ?? false,
+      aiMode = (m['ai_mode'] as String?) ?? 'pilot',
+      activeModel = (m['active_model'] as String?) ?? '',
+      allowedNumbers = ((m['allowed_test_numbers'] as List?) ?? [])
+          .map((e) => e.toString())
+          .toList(),
+      adminNumbers = ((m['ai_admin_numbers'] as List?) ?? [])
+          .map((e) => e.toString())
+          .toList(),
+      pauseAll = (m['ai_pause_all_conversations'] as bool?) ?? false,
+      handoffPriority = (m['handoff_human_priority'] as bool?) ?? true,
+      allowAfterHours = (m['allow_after_hours_responses'] as bool?) ?? false,
+      maxDailyCost = (m['max_daily_cost_usd'] as num?) ?? 25,
+      maxAdminDailyCost = (m['max_admin_daily_cost_usd'] as num?) ?? 5,
+      adminReportEnabled = (m['admin_daily_report_enabled'] as bool?) ?? false,
+      costToday = (m['cost_today_usd'] as num?) ?? 0,
+      activeConversations =
+          (m['active_conversations_24h'] as num?)?.toInt() ?? 0,
+      userMessagesToday = (m['user_messages_today'] as num?)?.toInt() ?? 0,
+      assistantMessagesToday =
+          (m['assistant_messages_today'] as num?)?.toInt() ?? 0,
+      avgLatencyMs = (m['avg_latency_ms_24h'] as num?)?.toInt(),
+      escalatedTotal = (m['escalated_total'] as num?)?.toInt() ?? 0,
+      adminQueriesToday = (m['admin_queries_today'] as num?)?.toInt() ?? 0;
 }
 
 class _AuditRow {
@@ -70,12 +69,12 @@ class _AuditRow {
   final String? newV;
   _AuditRow(this.at, this.email, this.field, this.oldV, this.newV);
   factory _AuditRow.fromMap(Map<String, dynamic> m) => _AuditRow(
-        DateTime.parse(m['changed_at'] as String),
-        m['changed_by_email'] as String?,
-        m['field'] as String,
-        m['old_value'] as String?,
-        m['new_value'] as String?,
-      );
+    DateTime.parse(m['changed_at'] as String),
+    m['changed_by_email'] as String?,
+    m['field'] as String,
+    m['old_value'] as String?,
+    m['new_value'] as String?,
+  );
 }
 
 class _AiControlPanelState extends State<AiControlPanel> {
@@ -139,10 +138,15 @@ class _AiControlPanelState extends State<AiControlPanel> {
           '¿Confirmas?',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFB32D2D)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFB32D2D),
+            ),
             child: const Text('DETENER IA'),
           ),
         ],
@@ -169,7 +173,10 @@ class _AiControlPanelState extends State<AiControlPanel> {
           decoration: const InputDecoration(hintText: 'Ej. 6462882480'),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
             child: const Text('Agregar'),
@@ -211,9 +218,14 @@ class _AiControlPanelState extends State<AiControlPanel> {
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFB32D2D)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFB32D2D),
+            ),
             onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
             child: const Text('Agregar admin'),
           ),
@@ -239,13 +251,21 @@ class _AiControlPanelState extends State<AiControlPanel> {
     String label;
     Color color;
     if (!_metrics!.aiEnabled || _metrics!.aiMode == 'disabled') {
-      emoji = '🔴'; label = 'IA APAGADA'; color = const Color(0xFFB32D2D);
+      emoji = '🔴';
+      label = 'IA APAGADA';
+      color = const Color(0xFFB32D2D);
     } else if (_metrics!.pauseAll) {
-      emoji = '🟠'; label = 'IA PAUSADA'; color = const Color(0xFFC68A17);
+      emoji = '🟠';
+      label = 'IA PAUSADA';
+      color = const Color(0xFFC68A17);
     } else if (_metrics!.aiMode == 'pilot') {
-      emoji = '🟡'; label = 'MODO PILOTO'; color = const Color(0xFFC68A17);
+      emoji = '🟡';
+      label = 'MODO PILOTO';
+      color = const Color(0xFFC68A17);
     } else {
-      emoji = '🟢'; label = 'IA ACTIVA'; color = const Color(0xFF1A9E65);
+      emoji = '🟢';
+      label = 'IA ACTIVA';
+      color = const Color(0xFF1A9E65);
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -276,7 +296,10 @@ class _AiControlPanelState extends State<AiControlPanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: GoogleFonts.inter(fontSize: 11, color: Colors.black54)),
+          Text(
+            label,
+            style: GoogleFonts.inter(fontSize: 11, color: Colors.black54),
+          ),
           const SizedBox(height: 4),
           Text(
             value,
@@ -306,7 +329,8 @@ class _AiControlPanelState extends State<AiControlPanel> {
           Text(
             title,
             style: GoogleFonts.inter(
-              fontSize: 14, fontWeight: FontWeight.w800,
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
               color: SaharaTheme.grisCarbon,
             ),
           ),
@@ -339,8 +363,10 @@ class _AiControlPanelState extends State<AiControlPanel> {
                 color: SaharaTheme.gold.withValues(alpha: 0.18),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Icon(Icons.smart_toy_outlined,
-                  color: Color(0xFFC6A76A)),
+              child: const Icon(
+                Icons.smart_toy_outlined,
+                color: Color(0xFFC6A76A),
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -357,7 +383,10 @@ class _AiControlPanelState extends State<AiControlPanel> {
                   ),
                   Text(
                     'La recepcionista SIEMPRE tiene prioridad sobre la IA.',
-                    style: GoogleFonts.inter(fontSize: 12, color: Colors.black54),
+                    style: GoogleFonts.inter(
+                      fontSize: 12,
+                      color: Colors.black54,
+                    ),
                   ),
                 ],
               ),
@@ -390,14 +419,18 @@ class _AiControlPanelState extends State<AiControlPanel> {
                 : const Color(0xFFB32D2D).withValues(alpha: 0.06),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: m.pauseAll ? const Color(0xFFC68A17) : const Color(0xFFB32D2D),
+              color: m.pauseAll
+                  ? const Color(0xFFC68A17)
+                  : const Color(0xFFB32D2D),
             ),
           ),
           child: Row(
             children: [
               Icon(
                 m.pauseAll ? Icons.pause_circle : Icons.power_settings_new,
-                color: m.pauseAll ? const Color(0xFFC68A17) : const Color(0xFFB32D2D),
+                color: m.pauseAll
+                    ? const Color(0xFFC68A17)
+                    : const Color(0xFFB32D2D),
                 size: 32,
               ),
               const SizedBox(width: 14),
@@ -416,7 +449,10 @@ class _AiControlPanelState extends State<AiControlPanel> {
                       m.pauseAll
                           ? 'Los inbounds se siguen guardando. Recepción opera normal.'
                           : 'Pulsa para detener todas las respuestas automáticas.',
-                      style: GoogleFonts.inter(fontSize: 12, color: Colors.black54),
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: Colors.black54,
+                      ),
                     ),
                   ],
                 ),
@@ -467,7 +503,10 @@ class _AiControlPanelState extends State<AiControlPanel> {
             _kpi('Conv. activas 24h', '${m.activeConversations}'),
             _kpi('Msgs entrantes hoy', '${m.userMessagesToday}'),
             _kpi('Msgs IA hoy', '${m.assistantMessagesToday}'),
-            _kpi('Latencia avg', m.avgLatencyMs == null ? '—' : '${m.avgLatencyMs}ms'),
+            _kpi(
+              'Latencia avg',
+              m.avgLatencyMs == null ? '—' : '${m.avgLatencyMs}ms',
+            ),
             _kpi('Escaladas a recepción', '${m.escalatedTotal}'),
           ],
         ),
@@ -479,8 +518,10 @@ class _AiControlPanelState extends State<AiControlPanel> {
           child: SwitchListTile(
             value: m.aiEnabled,
             onChanged: (v) => _updateField({'ai_enabled': v}),
-            title: Text('IA Activada (master switch)',
-                style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+            title: Text(
+              'IA Activada (master switch)',
+              style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+            ),
             subtitle: Text(
               'Si está OFF, todos los inbounds se guardan pero la IA no responde.',
               style: GoogleFonts.inter(fontSize: 12, color: Colors.black54),
@@ -491,17 +532,34 @@ class _AiControlPanelState extends State<AiControlPanel> {
         // ----- Modo
         _section(
           title: 'Modo de operación',
-          child: Wrap(
-            spacing: 8,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              for (final mode in const ['disabled', 'pilot', 'read_only', 'assisted'])
-                ChoiceChip(
-                  label: Text(mode),
-                  selected: m.aiMode == mode,
-                  onSelected: mode == 'assisted'
-                      ? null
-                      : (sel) => _updateField({'ai_mode': mode}),
-                ),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final opt in const [
+                    ('disabled', 'Apagado'),
+                    ('pilot', 'Piloto'),
+                    ('read_only', 'Publico'),
+                  ])
+                    ChoiceChip(
+                      label: Text(opt.$2),
+                      selected:
+                          m.aiMode == opt.$1 ||
+                          (opt.$1 == 'read_only' && m.aiMode == 'assisted'),
+                      onSelected: (sel) => _updateField({'ai_mode': opt.$1}),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Apagado: el bot no responde. Piloto: solo tus numeros de prueba son '
+                'atendidos y pueden agendar. Publico: el bot atiende y agenda a todo '
+                'el que escriba. En Piloto y Publico el bot nunca cancela ni reembolsa: '
+                'esas solicitudes las deriva a administracion.',
+                style: GoogleFonts.inter(fontSize: 11, color: Colors.black54),
+              ),
             ],
           ),
         ),
@@ -516,10 +574,10 @@ class _AiControlPanelState extends State<AiControlPanel> {
                 spacing: 6,
                 runSpacing: 6,
                 children: [
-                  ...m.allowedNumbers.map((n) => Chip(
-                        label: Text(n),
-                        onDeleted: () => _removeNumber(n),
-                      )),
+                  ...m.allowedNumbers.map(
+                    (n) =>
+                        Chip(label: Text(n), onDeleted: () => _removeNumber(n)),
+                  ),
                   ActionChip(
                     avatar: const Icon(Icons.add, size: 16),
                     label: const Text('Agregar'),
@@ -529,8 +587,8 @@ class _AiControlPanelState extends State<AiControlPanel> {
               ),
               const SizedBox(height: 6),
               Text(
-                'En modo PILOT solo estos números reciben respuesta de la IA. '
-                'En READ_ONLY responde a todos.',
+                'En modo PILOTO solo estos numeros son atendidos por el bot y pueden '
+                'agendar. En PUBLICO el bot atiende a todos.',
                 style: GoogleFonts.inter(fontSize: 11, color: Colors.black54),
               ),
             ],
@@ -555,8 +613,11 @@ class _AiControlPanelState extends State<AiControlPanel> {
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.shield_outlined,
-                        size: 18, color: Color(0xFFB32D2D)),
+                    const Icon(
+                      Icons.shield_outlined,
+                      size: 18,
+                      color: Color(0xFFB32D2D),
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -576,17 +637,20 @@ class _AiControlPanelState extends State<AiControlPanel> {
                 spacing: 6,
                 runSpacing: 6,
                 children: [
-                  ...m.adminNumbers.map((n) => Chip(
-                        avatar: const Icon(
-                          Icons.admin_panel_settings_outlined,
-                          size: 16,
-                          color: Color(0xFFB32D2D),
-                        ),
-                        label: Text(n),
-                        onDeleted: () => _removeAdminNumber(n),
-                        backgroundColor:
-                            const Color(0xFFB32D2D).withValues(alpha: 0.10),
-                      )),
+                  ...m.adminNumbers.map(
+                    (n) => Chip(
+                      avatar: const Icon(
+                        Icons.admin_panel_settings_outlined,
+                        size: 16,
+                        color: Color(0xFFB32D2D),
+                      ),
+                      label: Text(n),
+                      onDeleted: () => _removeAdminNumber(n),
+                      backgroundColor: const Color(
+                        0xFFB32D2D,
+                      ).withValues(alpha: 0.10),
+                    ),
+                  ),
                   ActionChip(
                     avatar: const Icon(Icons.add, size: 16),
                     label: const Text('Agregar admin'),
@@ -601,14 +665,16 @@ class _AiControlPanelState extends State<AiControlPanel> {
                     child: Text(
                       'Consultas admin hoy: ${m.adminQueriesToday}',
                       style: GoogleFonts.inter(
-                        fontSize: 11, color: Colors.black54,
+                        fontSize: 11,
+                        color: Colors.black54,
                       ),
                     ),
                   ),
                   Text(
                     'Cap admin: \$${m.maxAdminDailyCost.toStringAsFixed(2)} USD/día',
                     style: GoogleFonts.inter(
-                      fontSize: 11, color: Colors.black54,
+                      fontSize: 11,
+                      color: Colors.black54,
                     ),
                   ),
                 ],
@@ -632,7 +698,8 @@ class _AiControlPanelState extends State<AiControlPanel> {
               ),
               SwitchListTile(
                 value: m.allowAfterHours,
-                onChanged: (v) => _updateField({'allow_after_hours_responses': v}),
+                onChanged: (v) =>
+                    _updateField({'allow_after_hours_responses': v}),
                 title: const Text('Permitir respuestas fuera de horario'),
                 subtitle: const Text(
                   'Si OFF, la IA solo responde dentro del horario operativo del spa.',
@@ -646,8 +713,10 @@ class _AiControlPanelState extends State<AiControlPanel> {
         _section(
           title: 'Últimos cambios (auditoría)',
           child: _audit.isEmpty
-              ? Text('Sin cambios registrados.',
-                  style: GoogleFonts.inter(color: Colors.black54, fontSize: 12))
+              ? Text(
+                  'Sin cambios registrados.',
+                  style: GoogleFonts.inter(color: Colors.black54, fontSize: 12),
+                )
               : Column(
                   children: _audit.map((a) {
                     return Padding(
@@ -655,25 +724,37 @@ class _AiControlPanelState extends State<AiControlPanel> {
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(Icons.history, size: 14, color: Colors.black45),
+                          const Icon(
+                            Icons.history,
+                            size: 14,
+                            color: Colors.black45,
+                          ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: RichText(
                               text: TextSpan(
                                 style: GoogleFonts.inter(
-                                  fontSize: 11, color: Colors.black87,
+                                  fontSize: 11,
+                                  color: Colors.black87,
                                 ),
                                 children: [
                                   TextSpan(
-                                    text: '${a.at.toLocal().toString().substring(0, 16)} · ',
-                                    style: const TextStyle(color: Colors.black45),
+                                    text:
+                                        '${a.at.toLocal().toString().substring(0, 16)} · ',
+                                    style: const TextStyle(
+                                      color: Colors.black45,
+                                    ),
                                   ),
                                   TextSpan(text: '${a.email ?? "sistema"} '),
                                   TextSpan(
                                     text: 'cambió ${a.field} ',
-                                    style: const TextStyle(fontWeight: FontWeight.w600),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
-                                  TextSpan(text: 'de "${a.oldV}" a "${a.newV}"'),
+                                  TextSpan(
+                                    text: 'de "${a.oldV}" a "${a.newV}"',
+                                  ),
                                 ],
                               ),
                             ),

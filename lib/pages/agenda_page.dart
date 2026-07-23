@@ -21,15 +21,18 @@ import '../features/reception_alerts/reception_alert.dart';
 import '../features/reception_alerts/reception_alerts_service.dart';
 import '../features/reception_alerts/reception_alerts_bell.dart';
 import '../features/reception_alerts/reception_alert_banner.dart';
+import '../features/reception_alerts/gift_card_reception_actions.dart';
+import '../features/receipts/deposit_receipt_actions.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 // Altura de una hora completa en la grilla (px). Todas las alturas y posiciones
 // se calculan como: top = minutosDesdeInicio / 60 * _kHourHeight
 //                  height = duracionMinutos  / 60 * _kHourHeight
-const _kHourHeight = 96.0;          // 96 px = 1 hora (era 64 — más espacio visual)
-const _kSnapMinutes = 15;            // precisión interna de drag/resize
-const _kShowSubdivisionLines = false; // false = solo líneas por hora (Agenda Pro)
+const _kHourHeight = 96.0; // 96 px = 1 hora (era 64 — más espacio visual)
+const _kSnapMinutes = 15; // precisión interna de drag/resize
+const _kShowSubdivisionLines =
+    false; // false = solo líneas por hora (Agenda Pro)
 // Más ancho que antes para que la etiqueta de hora quepa sin envolverse.
 const _kTimeColWidth = 76.0;
 const _kSidebarWidth = 224.0;
@@ -39,11 +42,10 @@ const _kDefaultCalendarEndMinute = (24 * 60) - 1;
 // negras y bold para que la jornada laboral salte a la vista en la columna
 // de horas. Si en el futuro cambian las horas del spa, ajustar aquí.
 const _kBusinessHoursStartMinute = 10 * 60; // 10:00
-const _kBusinessHoursEndMinute = 19 * 60;   // 19:00
+const _kBusinessHoursEndMinute = 19 * 60; // 19:00
 
 bool _isBusinessHour(int minute) =>
-    minute >= _kBusinessHoursStartMinute &&
-    minute < _kBusinessHoursEndMinute;
+    minute >= _kBusinessHoursStartMinute && minute < _kBusinessHoursEndMinute;
 
 // ── Spanish month/day names ───────────────────────────────────────────────────
 const _kMonths = [
@@ -140,22 +142,18 @@ class _StaffTimeOff {
   factory _StaffTimeOff.fromMap(Map<String, dynamic> map) {
     return _StaffTimeOff(
       staffId: map['staff_id']?.toString() ?? '',
-      startsAt: DateTime.tryParse(map['starts_at']?.toString() ?? '') ??
+      startsAt:
+          DateTime.tryParse(map['starts_at']?.toString() ?? '') ??
           DateTime.now(),
-      endsAt: DateTime.tryParse(map['ends_at']?.toString() ?? '') ??
-          DateTime.now(),
+      endsAt:
+          DateTime.tryParse(map['ends_at']?.toString() ?? '') ?? DateTime.now(),
       reason: map['reason']?.toString() ?? '',
       type: map['type']?.toString() ?? 'blocked',
     );
   }
 }
 
-enum _TherapistLiveStatus {
-  available,
-  breakTime,
-  busy,
-  off,
-}
+enum _TherapistLiveStatus { available, breakTime, busy, off }
 
 class _Booking {
   final String id;
@@ -209,23 +207,24 @@ class _Booking {
   final String? branchName;
   final String? branchAddress;
   final String? branchMaps;
-  final String? paymentRequirement;  // deposit_required | waived | paid
-  final String? waiverReason;        // gift_card | membership | admin_override
+  final String? paymentRequirement; // deposit_required | waived | paid
+  final String? waiverReason; // gift_card | membership | admin_override
   final String? giftCardId;
   final String? membershipId;
-  final int?    depositRequiredCents;
-  final int?    depositPaidCents;
+  final int? depositRequiredCents;
+  final int? depositPaidCents;
   // De dónde nació la cita: reception | mobile_app | whatsapp_ai | web | landing.
   // Se muestra como chip en la tarjeta para que recepción identifique de un
   // vistazo el origen.
   final String? bookingSource;
 
-
   factory _Booking.fromMap(Map<String, dynamic> m) {
     try {
       final t = (m['booking_time'] as String? ?? '09:00:00').split(':');
-      final dateStr = m['booking_date'] as String? ?? DateTime.now().toIso8601String().split('T')[0];
-      
+      final dateStr =
+          m['booking_date'] as String? ??
+          DateTime.now().toIso8601String().split('T')[0];
+
       return _Booking(
         id: m['id'] as String? ?? '',
         clientId:
@@ -238,26 +237,32 @@ class _Booking {
             'Cliente',
         serviceId: m['service_id'] as String? ?? '',
         serviceName: (m['services'] as Map?)?['name'] as String? ?? 'Servicio',
-        servicePrice: ((m['services'] as Map?)?['price'] as num?)?.toDouble() ?? 0,
+        servicePrice:
+            ((m['services'] as Map?)?['price'] as num?)?.toDouble() ?? 0,
         therapistId: m['therapist_id'] as String? ?? '',
         therapistName:
-            (m['therapist'] as Map?)?['full_name'] as String? ??
-            'Sin asignar',
+            (m['therapist'] as Map?)?['full_name'] as String? ?? 'Sin asignar',
         date: DateTime.tryParse(dateStr) ?? DateTime.now(),
-        startMinute: t.length >= 2 ? (int.tryParse(t[0]) ?? 9) * 60 + (int.tryParse(t[1]) ?? 0) : 540,
+        startMinute: t.length >= 2
+            ? (int.tryParse(t[0]) ?? 9) * 60 + (int.tryParse(t[1]) ?? 0)
+            : 540,
         durationMinutes: (m['duration_min'] as int?) ?? 60,
         status: m['status'] as String? ?? 'pending',
         notes: m['client_notes'] as String? ?? '',
-        clientPhone: (m['client_record'] as Map?)?['phone'] as String? ??
-                     (m['client'] as Map?)?['phone'] as String?,
-        sucursalId: (m['sucursal_id'] as String?) ??
+        clientPhone:
+            (m['client_record'] as Map?)?['phone'] as String? ??
+            (m['client'] as Map?)?['phone'] as String?,
+        sucursalId:
+            (m['sucursal_id'] as String?) ??
             (kEnableMultiBranch ? null : kDefaultBranchId),
-        branchName: (m['sucursales'] as Map?)?['nombre'] as String? ??
+        branchName:
+            (m['sucursales'] as Map?)?['nombre'] as String? ??
             (kEnableMultiBranch ? null : kDefaultBranchName),
         branchAddress:
             (m['sucursales'] as Map?)?['direccion_completa'] as String? ??
             (kEnableMultiBranch ? null : kDefaultBranchAddress),
-        branchMaps: (m['sucursales'] as Map?)?['link_maps'] as String? ??
+        branchMaps:
+            (m['sucursales'] as Map?)?['link_maps'] as String? ??
             (kEnableMultiBranch ? null : kDefaultBranchMaps),
         paymentRequirement: m['payment_requirement'] as String?,
         waiverReason: m['waiver_reason'] as String?,
@@ -272,11 +277,18 @@ class _Booking {
       // Return a minimal valid booking to avoid crashing the entire list
       return _Booking(
         id: m['id'] as String? ?? 'error',
-        clientId: '', clientName: 'Error de datos',
-        serviceId: '', serviceName: 'Error', servicePrice: 0,
-        therapistId: '', therapistName: '',
-        date: DateTime.now(), startMinute: 0, durationMinutes: 30,
-        status: 'error', notes: '',
+        clientId: '',
+        clientName: 'Error de datos',
+        serviceId: '',
+        serviceName: 'Error',
+        servicePrice: 0,
+        therapistId: '',
+        therapistName: '',
+        date: DateTime.now(),
+        startMinute: 0,
+        durationMinutes: 30,
+        status: 'error',
+        notes: '',
       );
     }
   }
@@ -377,7 +389,10 @@ class _AgendaCalendarHours {
   final int endMinuteInclusive;
 
   int get lastSlotMinute {
-    final normalizedEnd = endMinuteInclusive.clamp(0, _kDefaultCalendarEndMinute);
+    final normalizedEnd = endMinuteInclusive.clamp(
+      0,
+      _kDefaultCalendarEndMinute,
+    );
     final snapped = (normalizedEnd ~/ 15) * 15;
     return snapped.clamp(startMinute, _kDefaultCalendarEndMinute);
   }
@@ -411,9 +426,12 @@ class _AgendaCalendarHours {
 
   List<int> selectableMinutesForHour(int hour) {
     final baseMinute = hour * 60;
-    final values = [0, 15, 30, 45]
-        .where((minute) => containsMinute(baseMinute + minute))
-        .toList();
+    final values = [
+      0,
+      15,
+      30,
+      45,
+    ].where((minute) => containsMinute(baseMinute + minute)).toList();
     return values.isEmpty ? const [0] : values;
   }
 
@@ -427,7 +445,10 @@ class _AgendaCalendarHours {
     var expandedEnd = endMinuteInclusive;
 
     for (final booking in bookings) {
-      final bookingStart = booking.startMinute.clamp(0, _kDefaultCalendarEndMinute);
+      final bookingStart = booking.startMinute.clamp(
+        0,
+        _kDefaultCalendarEndMinute,
+      );
       final bookingEnd = booking.endMinute.clamp(0, 24 * 60);
       if (bookingStart < expandedStart) {
         expandedStart = max(0, (bookingStart ~/ 60) * 60);
@@ -520,8 +541,7 @@ class _ScheduleBlock {
       startMinute: start.clamp(0, _kDefaultCalendarEndMinute),
       endMinute: rawEnd.clamp(start + 15, 24 * 60),
       scope: (map['scope'] as String? ?? 'day').toLowerCase(),
-      title:
-          (map['title'] as String?)?.trim().isNotEmpty == true
+      title: (map['title'] as String?)?.trim().isNotEmpty == true
           ? (map['title'] as String).trim()
           : 'Horario bloqueado',
       notes: (map['notes'] as String? ?? '').trim(),
@@ -533,7 +553,8 @@ class _ScheduleBlock {
   bool get appliesWholeWeek => scope == 'week';
   int get durationMinutes => max(15, endMinute - startMinute);
 
-  String get scopeLabel => appliesWholeWeek ? 'Toda la semana' : 'Solo este día';
+  String get scopeLabel =>
+      appliesWholeWeek ? 'Toda la semana' : 'Solo este día';
 
   String get timeLabel =>
       '${_minuteLabel24(startMinute)} - ${_minuteLabel24(endMinute)}';
@@ -545,7 +566,8 @@ class _ScheduleBlock {
     }
     final weekStart = _mondayOf(blockDate);
     final weekEnd = weekStart.add(const Duration(days: 6));
-    return !normalizedDay.isBefore(weekStart) && !normalizedDay.isAfter(weekEnd);
+    return !normalizedDay.isBefore(weekStart) &&
+        !normalizedDay.isAfter(weekEnd);
   }
 
   bool overlaps(DateTime day, int slotStartMinute, int slotEndMinute) {
@@ -562,7 +584,8 @@ class _ScheduleBlock {
     }
     final weekStart = _mondayOf(blockDate);
     final weekEnd = weekStart.add(const Duration(days: 6));
-    return !weekEnd.isBefore(normalizedStart) && !weekStart.isAfter(normalizedEnd);
+    return !weekEnd.isBefore(normalizedStart) &&
+        !weekStart.isAfter(normalizedEnd);
   }
 }
 
@@ -604,8 +627,8 @@ String _minuteLabel24(int minute) {
   final hour12 = hour24 == 0
       ? 12
       : hour24 > 12
-          ? hour24 - 12
-          : hour24;
+      ? hour24 - 12
+      : hour24;
   final mm = mins.toString().padLeft(2, '0');
   return '$hour12:$mm ${isPm ? 'PM' : 'AM'}';
 }
@@ -809,14 +832,11 @@ class _AgendaPageState extends State<AgendaPage> {
       channelName: 'agenda-bookings-realtime',
       onChanged: () {
         _bookingsReloadDebounce?.cancel();
-        _bookingsReloadDebounce = Timer(
-          const Duration(milliseconds: 350),
-          () {
-            if (mounted) {
-              _loadBookings();
-            }
-          },
-        );
+        _bookingsReloadDebounce = Timer(const Duration(milliseconds: 350), () {
+          if (mounted) {
+            _loadBookings();
+          }
+        });
       },
     );
   }
@@ -875,12 +895,11 @@ class _AgendaPageState extends State<AgendaPage> {
   }
 
   void _startPendingConfirmPolling() {
-    _pendingConfirmPollTimer ??= Timer.periodic(
-      const Duration(seconds: 30),
-      (_) {
-        if (mounted) _loadPendingConfirmCount();
-      },
-    );
+    _pendingConfirmPollTimer ??= Timer.periodic(const Duration(seconds: 30), (
+      _,
+    ) {
+      if (mounted) _loadPendingConfirmCount();
+    });
   }
 
   void _showNewPaymentToast(String bookingId) {
@@ -896,7 +915,10 @@ class _AgendaPageState extends State<AgendaPage> {
             const Expanded(
               child: Text(
                 'Nuevo pago de anticipo recibido. Revisa la agenda y confirma la cita.',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
             TextButton(
@@ -1007,6 +1029,13 @@ class _AgendaPageState extends State<AgendaPage> {
       } catch (_) {}
     }
     if (!mounted) return;
+    if (alert.isGiftCardPurchase) {
+      setState(() => _activeModule = 'ventas');
+      await _loadAlerts();
+      if (!mounted) return;
+      await showGiftCardReceptionDialog(context, alert);
+      return;
+    }
     if (alert.bookingId != null) {
       setState(() {
         _activeModule = 'agenda';
@@ -1059,14 +1088,11 @@ class _AgendaPageState extends State<AgendaPage> {
 
   void _scheduleUnreadMessagesRefresh() {
     _messagesReloadDebounce?.cancel();
-    _messagesReloadDebounce = Timer(
-      const Duration(milliseconds: 250),
-      () {
-        if (mounted) {
-          _loadUnreadMessagesCount();
-        }
-      },
-    );
+    _messagesReloadDebounce = Timer(const Duration(milliseconds: 250), () {
+      if (mounted) {
+        _loadUnreadMessagesCount();
+      }
+    });
   }
 
   void _startMessagesPolling() {
@@ -1155,7 +1181,9 @@ class _AgendaPageState extends State<AgendaPage> {
 
   bool _isSlotBlocked(DateTime day, int startMinute, int durationMinutes) {
     final slotEnd = startMinute + max(15, durationMinutes).toInt();
-    return _scheduleBlocks.any((block) => block.overlaps(day, startMinute, slotEnd));
+    return _scheduleBlocks.any(
+      (block) => block.overlaps(day, startMinute, slotEnd),
+    );
   }
 
   List<_Booking> get _upcomingBookings {
@@ -1244,7 +1272,64 @@ class _AgendaPageState extends State<AgendaPage> {
     }
   }
 
+  // Estados cuyo cambio dispara un WhatsApp AUTOMÁTICO al cliente (trigger
+  // handle_booking_whatsapp_events). Se usa para avisar a recepción antes de
+  // ejecutar la acción, para que sepa qué se le enviará al cliente.
+  static const Map<String, String> _statusNotifiesClient = {
+    'confirmed': 'Confirmación de la cita ("tu cita ha sido confirmada")',
+    'cancelled': 'Aviso de cancelación ("tu cita fue cancelada")',
+    'payment_received': 'Aviso de cita agendada',
+    '__reschedule__': 'Aviso de reagendado ("tu cita fue reagendada")',
+  };
+
+  // Nivel 1 de la auditoría (control de disparadores): avisa a recepción que la
+  // acción enviará un WhatsApp automático al cliente y pide confirmar.
+  Future<bool> _confirmClientNotification(String newStatus) async {
+    final desc = _statusNotifiesClient[newStatus];
+    if (desc == null) return true; // esta acción no notifica al cliente
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(
+              Icons.chat_bubble_outline,
+              color: Color(0xFF128C7E),
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Se enviará un WhatsApp al cliente',
+                style: GoogleFonts.inter(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          'Esta acción enviará automáticamente un WhatsApp al cliente:\n\n• $desc\n\n¿Deseas continuar?',
+          style: GoogleFonts.inter(fontSize: 13.5, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Sí, continuar'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   Future<bool> _updateBookingStatus(_Booking booking, String newStatus) async {
+    if (!await _confirmClientNotification(newStatus)) return false;
     try {
       final finalStatus = await _persistBookingStatusFlow(booking, newStatus);
 
@@ -1269,7 +1354,10 @@ class _AgendaPageState extends State<AgendaPage> {
     }
   }
 
-  Future<String> _persistBookingStatusFlow(_Booking booking, String newStatus) async {
+  Future<String> _persistBookingStatusFlow(
+    _Booking booking,
+    String newStatus,
+  ) async {
     final currentUserId = Supabase.instance.client.auth.currentUser?.id;
 
     Future<void> updateStatus(String status) {
@@ -1334,7 +1422,9 @@ class _AgendaPageState extends State<AgendaPage> {
               ? 'Reserva: ${booking.serviceName}'
               : 'Seguimiento de reserva',
           customerId: booking.profileClientId,
-          professionalId: booking.therapistId.isEmpty ? null : booking.therapistId,
+          professionalId: booking.therapistId.isEmpty
+              ? null
+              : booking.therapistId,
           reservationId: booking.id,
         ),
       );
@@ -1380,10 +1470,10 @@ class _AgendaPageState extends State<AgendaPage> {
           'anita bolanos': 4,
         };
         int orderOf(_Therapist therapist) {
-          final normalized = therapist.name
-              .trim()
-              .toLowerCase()
-              .replaceAll('ñ', 'n');
+          final normalized = therapist.name.trim().toLowerCase().replaceAll(
+            'ñ',
+            'n',
+          );
           return receptionOrder[normalized] ?? 999;
         }
 
@@ -1410,7 +1500,8 @@ class _AgendaPageState extends State<AgendaPage> {
         if (!kEnableMultiBranch) {
           branches = branches.isEmpty ? [defaultBranchMap()] : branches;
         }
-        final hasSelectedBranch = _selectedBranchId != null &&
+        final hasSelectedBranch =
+            _selectedBranchId != null &&
             branches.any((b) => b['id'] == _selectedBranchId);
         setState(() {
           _branches = branches;
@@ -1566,250 +1657,268 @@ class _AgendaPageState extends State<AgendaPage> {
     return Stack(
       children: [
         Scaffold(
-      backgroundColor: SaharaTheme.blancoAlmendra,
-      body: Column(
-        children: [
-          _ModuleNav(
-            activeModule: effectiveModule,
-            userRole: _userRole,
-            messagesUnreadCount: _messagesUnreadCount,
-            pendingConfirmCount: _pendingConfirmCount,
-            alertsUnseenCount: _alertsUnseenCount,
-            alerts: _alerts,
-            onAlertMarkSeen: (id) async {
-              await _alertsService.markSeen(id);
-              await _loadAlerts();
-            },
-            onAlertMarkResolved: _markAlertResolved,
-            onAlertMarkAllSeen: _markAllAlertsSeen,
-            onAlertOpen: _openAlertTarget,
-            onModuleTap: (m) {
-              setState(() => _activeModule = m);
-              // Al volver a la agenda, recargamos: editar un cliente en el
-              // módulo Clientes no dispara la suscripción realtime de bookings
-              // (escucha otra tabla), así que sin esto el nombre del join
-              // quedaría obsoleto en las tarjetas en memoria.
-              if (m == 'agenda') _loadBookings();
-            },
-            onLogout: _logout,
-          ),
-          Expanded(
-            child: visibleModules.isEmpty
-                ? _PlaceholderModule(module: 'sin_acceso')
-                : effectiveModule == 'clientes'
-                ? const ClientsModule()
-                : effectiveModule == 'ventas'
-                ? SalesModule(initialSaleId: _salesFocusId)
-                : effectiveModule == 'mensajes'
-                ? MensajesModule(
-                    initialConversationId: _messagesFocusConversationId,
-                  )
-                : effectiveModule == 'productos'
-                ? const ProductosModule()
-                : effectiveModule == 'finanzas'
-                ? const FinanzasModule()
-                : effectiveModule == 'reportes'
-                ? const ReportesModule()
-                : effectiveModule == 'admin'
-                ? AdminModule(currentRole: _userRole)
-                : effectiveModule != 'agenda'
-                ? _PlaceholderModule(module: effectiveModule)
-                : LayoutBuilder(
-                    builder: (context, constraints) {
-                      final isCompact = constraints.maxWidth < 960;
-                      if (isCompact) {
-                        return _MobileAgendaView(
-                          title: _topBarTitle,
-                          selectedDay: _selectedDay,
-                          therapists: _therapists,
-                          therapistId: _therapistId,
-                          statusFilter: _statusFilter,
-                          dayBookings: _bookingsForDay(_selectedDay),
-                          upcomingBookings: _upcomingBookings,
-                          onPrevDay: _prevDay,
-                          onNextDay: _nextDay,
-                          onPickDate: () async {
-                            final picked = await showDatePicker(
-                              context: context,
-                              initialDate: _selectedDay,
-                              firstDate: DateTime(2024),
-                              lastDate: DateTime(2035),
+          backgroundColor: SaharaTheme.blancoAlmendra,
+          body: Column(
+            children: [
+              _ModuleNav(
+                activeModule: effectiveModule,
+                userRole: _userRole,
+                messagesUnreadCount: _messagesUnreadCount,
+                pendingConfirmCount: _pendingConfirmCount,
+                alertsUnseenCount: _alertsUnseenCount,
+                alerts: _alerts,
+                onAlertMarkSeen: (id) async {
+                  await _alertsService.markSeen(id);
+                  await _loadAlerts();
+                },
+                onAlertMarkResolved: _markAlertResolved,
+                onAlertMarkAllSeen: _markAllAlertsSeen,
+                onAlertOpen: _openAlertTarget,
+                onModuleTap: (m) {
+                  setState(() => _activeModule = m);
+                  // Al volver a la agenda, recargamos: editar un cliente en el
+                  // módulo Clientes no dispara la suscripción realtime de bookings
+                  // (escucha otra tabla), así que sin esto el nombre del join
+                  // quedaría obsoleto en las tarjetas en memoria.
+                  if (m == 'agenda') _loadBookings();
+                },
+                onLogout: _logout,
+              ),
+              Expanded(
+                child: visibleModules.isEmpty
+                    ? _PlaceholderModule(module: 'sin_acceso')
+                    : effectiveModule == 'clientes'
+                    ? const ClientsModule()
+                    : effectiveModule == 'ventas'
+                    ? SalesModule(initialSaleId: _salesFocusId)
+                    : effectiveModule == 'mensajes'
+                    ? MensajesModule(
+                        initialConversationId: _messagesFocusConversationId,
+                      )
+                    : effectiveModule == 'productos'
+                    ? const ProductosModule()
+                    : effectiveModule == 'finanzas'
+                    ? const FinanzasModule()
+                    : effectiveModule == 'reportes'
+                    ? const ReportesModule()
+                    : effectiveModule == 'admin'
+                    ? AdminModule(currentRole: _userRole)
+                    : effectiveModule != 'agenda'
+                    ? _PlaceholderModule(module: effectiveModule)
+                    : LayoutBuilder(
+                        builder: (context, constraints) {
+                          final isCompact = constraints.maxWidth < 960;
+                          if (isCompact) {
+                            return _MobileAgendaView(
+                              title: _topBarTitle,
+                              selectedDay: _selectedDay,
+                              therapists: _therapists,
+                              therapistId: _therapistId,
+                              statusFilter: _statusFilter,
+                              dayBookings: _bookingsForDay(_selectedDay),
+                              upcomingBookings: _upcomingBookings,
+                              onPrevDay: _prevDay,
+                              onNextDay: _nextDay,
+                              onPickDate: () async {
+                                final picked = await showDatePicker(
+                                  context: context,
+                                  initialDate: _selectedDay,
+                                  firstDate: DateTime(2024),
+                                  lastDate: DateTime(2035),
+                                );
+                                if (picked != null) _goToDate(picked);
+                              },
+                              onToday: _goToToday,
+                              onTherapist: (v) {
+                                setState(() => _therapistId = v);
+                                _loadBookings();
+                              },
+                              onStatus: (v) {
+                                setState(() => _statusFilter = v);
+                                _loadBookings();
+                              },
+                              onNew: () =>
+                                  _showNewDialog(context, date: _selectedDay),
+                              onBookingTap: (booking) =>
+                                  _showBookingDetail(context, booking),
+                              onConfirm: (booking) =>
+                                  _updateBookingStatus(booking, 'confirmed'),
+                              onCancel: (booking) =>
+                                  _updateBookingStatus(booking, 'cancelled'),
+                              onReschedule: (booking) =>
+                                  _showEditDialog(context, booking),
+                              statusLabel: _statusLabel,
+                              statusColor: _statusColor,
                             );
-                            if (picked != null) _goToDate(picked);
-                          },
-                          onToday: _goToToday,
-                          onTherapist: (v) {
-                            setState(() => _therapistId = v);
-                            _loadBookings();
-                          },
-                          onStatus: (v) {
-                            setState(() => _statusFilter = v);
-                            _loadBookings();
-                          },
-                          onNew: () => _showNewDialog(context, date: _selectedDay),
-                          onBookingTap: (booking) =>
-                              _showBookingDetail(context, booking),
-                          onConfirm: (booking) =>
-                              _updateBookingStatus(booking, 'confirmed'),
-                          onCancel: (booking) =>
-                              _updateBookingStatus(booking, 'cancelled'),
-                          onReschedule: (booking) =>
-                              _showEditDialog(context, booking),
-                          statusLabel: _statusLabel,
-                          statusColor: _statusColor,
-                        );
-                      }
+                          }
 
-                      return Stack(
-                        children: [
-                          Row(
+                          return Stack(
                             children: [
-                              _Sidebar(
-                                therapists: _therapists,
-                                therapistId: _therapistId,
-                                branches: _branches,
-                                selectedBranchId: _selectedBranchId,
-                                statusFilter: _statusFilter,
-                                weekStart: _weekStart,
-                                userDisplayName: _userDisplayName,
-                                onBranch: (v) async {
-                                  setState(() => _selectedBranchId = v);
-                                  await _loadCalendarSettings();
-                                  await _loadBookings();
-                                },
-                                onTherapist: (v) {
-                                  setState(() => _therapistId = v);
-                                  _loadBookings();
-                                },
-                                onStatus: (v) {
-                                  setState(() => _statusFilter = v!);
-                                  _loadBookings();
-                                },
-                                onDateTap: _goToDate,
-                                onLogout: _logout,
+                              Row(
+                                children: [
+                                  _Sidebar(
+                                    therapists: _therapists,
+                                    therapistId: _therapistId,
+                                    branches: _branches,
+                                    selectedBranchId: _selectedBranchId,
+                                    statusFilter: _statusFilter,
+                                    weekStart: _weekStart,
+                                    userDisplayName: _userDisplayName,
+                                    onBranch: (v) async {
+                                      setState(() => _selectedBranchId = v);
+                                      await _loadCalendarSettings();
+                                      await _loadBookings();
+                                    },
+                                    onTherapist: (v) {
+                                      setState(() => _therapistId = v);
+                                      _loadBookings();
+                                    },
+                                    onStatus: (v) {
+                                      setState(() => _statusFilter = v!);
+                                      _loadBookings();
+                                    },
+                                    onDateTap: _goToDate,
+                                    onLogout: _logout,
+                                  ),
+                                  Expanded(
+                                    child: Column(
+                                      children: [
+                                        _TopBar(
+                                          title: _topBarTitle,
+                                          viewMode: _viewMode,
+                                          onPrev: _viewMode == 'day'
+                                              ? _prevDay
+                                              : _viewMode == 'month'
+                                              ? _prevMonth
+                                              : _prevWeek,
+                                          onNext: _viewMode == 'day'
+                                              ? _nextDay
+                                              : _viewMode == 'month'
+                                              ? _nextMonth
+                                              : _nextWeek,
+                                          onToday: _goToToday,
+                                          onNew: () => _showNewDialog(
+                                            context,
+                                            date: _viewMode == 'day'
+                                                ? _selectedDay
+                                                : _weekStart,
+                                          ),
+                                          onViewMode: (v) {
+                                            setState(() {
+                                              _viewMode = v;
+                                              if (v == 'day') {
+                                                _therapistId = null;
+                                              }
+                                            });
+                                            _loadBookings();
+                                          },
+                                        ),
+                                        Expanded(
+                                          child: _loading && !_hasLoadedOnce
+                                              ? const Center(
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                        color: SaharaTheme.gold,
+                                                      ),
+                                                )
+                                              : _viewMode == 'week'
+                                              ? _WeekGrid(
+                                                  calendarHours:
+                                                      _visibleCalendarHours,
+                                                  weekStart: _weekStart,
+                                                  bookings: _bookings,
+                                                  scheduleBlocks:
+                                                      _scheduleBlocks,
+                                                  now: _now,
+                                                  onBookingTap:
+                                                      _showBookingDetail,
+                                                  onScheduleBlockTap:
+                                                      _showScheduleBlockDetail,
+                                                  onReschedule:
+                                                      _rescheduleBooking,
+                                                  isSlotBlocked: _isSlotBlocked,
+                                                  onSlotTap: _onSlotTap,
+                                                )
+                                              : _viewMode == 'day'
+                                              ? _DayByTherapistGrid(
+                                                  calendarHours:
+                                                      _visibleCalendarHours,
+                                                  day: _selectedDay,
+                                                  bookings: _bookings.where((
+                                                    b,
+                                                  ) {
+                                                    return _sameDay(
+                                                      b.date,
+                                                      _selectedDay,
+                                                    );
+                                                  }).toList(),
+                                                  scheduleBlocks:
+                                                      _scheduleBlocksForDay(
+                                                        _selectedDay,
+                                                      ),
+                                                  therapists: _therapists,
+                                                  staffWorkingHours:
+                                                      _staffWorkingHours,
+                                                  staffTimeOff: _staffTimeOff,
+                                                  now: _now,
+                                                  onBookingTap:
+                                                      _showBookingDetail,
+                                                  onScheduleBlockTap:
+                                                      _showScheduleBlockDetail,
+                                                  onSlotTap: _onSlotTap,
+                                                  currentRole: _userRole,
+                                                )
+                                              : _MonthGrid(
+                                                  monthStart: _monthStart,
+                                                  bookings: _bookings,
+                                                  onDayTap: _onMonthDayTap,
+                                                ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ),
-                              Expanded(
-                                child: Column(
-                                  children: [
-                                    _TopBar(
-                                      title: _topBarTitle,
-                                      viewMode: _viewMode,
-                                      onPrev: _viewMode == 'day'
-                                          ? _prevDay
-                                          : _viewMode == 'month'
-                                          ? _prevMonth
-                                          : _prevWeek,
-                                      onNext: _viewMode == 'day'
-                                          ? _nextDay
-                                          : _viewMode == 'month'
-                                          ? _nextMonth
-                                          : _nextWeek,
-                                      onToday: _goToToday,
-                                      onNew: () => _showNewDialog(
-                                        context,
-                                        date: _viewMode == 'day'
-                                            ? _selectedDay
-                                            : _weekStart,
+                              if (_agendaChatConversationId != null &&
+                                  _agendaChatBooking != null) ...[
+                                Positioned.fill(
+                                  child: GestureDetector(
+                                    onTap: _closeAgendaChat,
+                                    child: Container(
+                                      color: Colors.black.withValues(
+                                        alpha: 0.12,
                                       ),
-                                      onViewMode: (v) {
-                                        setState(() {
-                                          _viewMode = v;
-                                          if (v == 'day') {
-                                            _therapistId = null;
-                                          }
-                                        });
-                                        _loadBookings();
-                                      },
                                     ),
-                                    Expanded(
-                                      child: _loading && !_hasLoadedOnce
-                                          ? const Center(
-                                              child: CircularProgressIndicator(
-                                                color: SaharaTheme.gold,
-                                              ),
-                                            )
-                                          : _viewMode == 'week'
-                                          ? _WeekGrid(
-                                              calendarHours:
-                                                  _visibleCalendarHours,
-                                              weekStart: _weekStart,
-                                              bookings: _bookings,
-                                              scheduleBlocks: _scheduleBlocks,
-                                              now: _now,
-                                              onBookingTap: _showBookingDetail,
-                                              onScheduleBlockTap:
-                                                  _showScheduleBlockDetail,
-                                              onReschedule: _rescheduleBooking,
-                                              isSlotBlocked: _isSlotBlocked,
-                                              onSlotTap: _onSlotTap,
-                                            )
-                                          : _viewMode == 'day'
-                                          ? _DayByTherapistGrid(
-                                              calendarHours:
-                                                  _visibleCalendarHours,
-                                              day: _selectedDay,
-                                              bookings: _bookings.where((b) {
-                                                return _sameDay(b.date, _selectedDay);
-                                              }).toList(),
-                                              scheduleBlocks:
-                                                  _scheduleBlocksForDay(_selectedDay),
-                                              therapists: _therapists,
-                                              staffWorkingHours:
-                                                  _staffWorkingHours,
-                                              staffTimeOff: _staffTimeOff,
-                                              now: _now,
-                                              onBookingTap: _showBookingDetail,
-                                              onScheduleBlockTap:
-                                                  _showScheduleBlockDetail,
-                                              onSlotTap: _onSlotTap,
-                                              currentRole: _userRole,
-                                            )
-                                          : _MonthGrid(
-                                              monthStart: _monthStart,
-                                              bookings: _bookings,
-                                              onDayTap: _onMonthDayTap,
-                                            ),
-                                    ),
-                                  ],
+                                  ),
                                 ),
-                              ),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: _AgendaReservationChatDrawer(
+                                    booking: _agendaChatBooking!,
+                                    conversationId: _agendaChatConversationId!,
+                                    onClose: _closeAgendaChat,
+                                    onViewReservation: () {
+                                      final booking = _agendaChatBooking;
+                                      _closeAgendaChat();
+                                      if (booking != null) {
+                                        Future.microtask(
+                                          () => _showBookingDetail(
+                                            context,
+                                            booking,
+                                          ),
+                                        );
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ],
                             ],
-                          ),
-                          if (_agendaChatConversationId != null &&
-                              _agendaChatBooking != null) ...[
-                            Positioned.fill(
-                              child: GestureDetector(
-                                onTap: _closeAgendaChat,
-                                child: Container(
-                                  color: Colors.black.withValues(alpha: 0.12),
-                                ),
-                              ),
-                            ),
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: _AgendaReservationChatDrawer(
-                                booking: _agendaChatBooking!,
-                                conversationId: _agendaChatConversationId!,
-                                onClose: _closeAgendaChat,
-                                onViewReservation: () {
-                                  final booking = _agendaChatBooking;
-                                  _closeAgendaChat();
-                                  if (booking != null) {
-                                    Future.microtask(
-                                      () => _showBookingDetail(context, booking),
-                                    );
-                                  }
-                                },
-                              ),
-                            ),
-                          ],
-                        ],
-                      );
-                    },
-                  ),
+                          );
+                        },
+                      ),
+              ),
+            ],
           ),
-        ],
-      ),
         ),
         _buildFloatingAlerts(),
       ],
@@ -1872,28 +1981,29 @@ class _AgendaPageState extends State<AgendaPage> {
         selectedDate: date,
         initialStartMinute: (time.hour * 60) + time.minute,
         initialBlock: initialBlock,
-        onSave: ({
-          required DateTime blockDate,
-          required int startMinute,
-          required int endMinute,
-          required String scope,
-          required String title,
-          required String notes,
-        }) async {
-          final saved = await _saveScheduleBlock(
-            existing: initialBlock,
-            blockDate: blockDate,
-            startMinute: startMinute,
-            endMinute: endMinute,
-            scope: scope,
-            title: title,
-            notes: notes,
-            staffId: staffId ?? initialBlock?.staffId,
-          );
-          if (!saved || !mounted) return false;
-          Navigator.pop(ctx);
-          return true;
-        },
+        onSave:
+            ({
+              required DateTime blockDate,
+              required int startMinute,
+              required int endMinute,
+              required String scope,
+              required String title,
+              required String notes,
+            }) async {
+              final saved = await _saveScheduleBlock(
+                existing: initialBlock,
+                blockDate: blockDate,
+                startMinute: startMinute,
+                endMinute: endMinute,
+                scope: scope,
+                title: title,
+                notes: notes,
+                staffId: staffId ?? initialBlock?.staffId,
+              );
+              if (!saved || !mounted) return false;
+              Navigator.pop(ctx);
+              return true;
+            },
         onDelete: initialBlock == null
             ? null
             : () async {
@@ -2156,9 +2266,9 @@ class _AgendaPageState extends State<AgendaPage> {
       if (!mounted) return true;
       await _loadBookings();
       if (!mounted) return true;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Bloqueo eliminado.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Bloqueo eliminado.')));
       return true;
     } catch (error) {
       if (!mounted) return false;
@@ -2172,7 +2282,8 @@ class _AgendaPageState extends State<AgendaPage> {
     }
   }
 
-  String _isoDateOnly(DateTime value) => value.toIso8601String().split('T').first;
+  String _isoDateOnly(DateTime value) =>
+      value.toIso8601String().split('T').first;
 
   String _isoTimeOnly(int minute) {
     final h = minute ~/ 60;
@@ -2206,7 +2317,9 @@ class _AgendaPageState extends State<AgendaPage> {
           .from('business_settings')
           .select('calendar_start_hour, calendar_end_hour');
 
-      final branchId = kEnableMultiBranch ? _selectedBranchId : kDefaultBranchId;
+      final branchId = kEnableMultiBranch
+          ? _selectedBranchId
+          : kDefaultBranchId;
       if (branchId != null && branchId.isNotEmpty) {
         query = query.eq('branch_id', branchId);
       }
@@ -2306,6 +2419,13 @@ class _AgendaPageState extends State<AgendaPage> {
     DateTime newDate,
     int newMinute,
   ) async {
+    // Mover una cita ya confirmada/reagendada dispara un WhatsApp de reagendado
+    // al cliente. Avisamos a recepción antes; si cancela, revertimos el movimiento.
+    if ((b.status == 'confirmed' || b.status == 'rescheduled') &&
+        !await _confirmClientNotification('__reschedule__')) {
+      await _loadBookings();
+      return false;
+    }
     final bookingDate = _isoDateOnly(newDate);
     final bookingTime = _isoTimeOnly(newMinute);
     try {
@@ -2356,7 +2476,9 @@ class _AgendaPageState extends State<AgendaPage> {
       }
       return true;
     } on PostgrestException catch (e) {
-      debugPrint('reschedule postgres error: code=${e.code} message=${e.message}');
+      debugPrint(
+        'reschedule postgres error: code=${e.code} message=${e.message}',
+      );
       if (mounted) {
         var errorMsg = e.message.isNotEmpty ? e.message : e.toString();
         if (e.code == '42501' || e.code == 'RLS_NO_ROW') {
@@ -2425,12 +2547,19 @@ class _AgendaPageState extends State<AgendaPage> {
     );
   }
 
-  Future<void> _openSaleFromBooking(BuildContext context, _Booking booking) async {
+  Future<void> _openSaleFromBooking(
+    BuildContext context,
+    _Booking booking,
+  ) async {
     var sale = await _agendaSalesService.findSaleForBooking(booking.id);
     if (!mounted) return;
 
     if (sale == null &&
-        const ['completed', 'awaiting_payment', 'paid'].contains(booking.status)) {
+        const [
+          'completed',
+          'awaiting_payment',
+          'paid',
+        ].contains(booking.status)) {
       try {
         sale = await _agendaSalesService.ensureSaleForBooking(
           _saleDraftFromBooking(booking),
@@ -2440,7 +2569,9 @@ class _AgendaPageState extends State<AgendaPage> {
 
     if (sale == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Todavia no existe un ticket para esta cita.')),
+        const SnackBar(
+          content: Text('Todavia no existe un ticket para esta cita.'),
+        ),
       );
       return;
     }
@@ -2471,7 +2602,9 @@ class _AgendaPageState extends State<AgendaPage> {
     if (sale == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('No se pudo generar el ticket de esta cita para cobrarla.'),
+          content: Text(
+            'No se pudo generar el ticket de esta cita para cobrarla.',
+          ),
         ),
       );
       return;
@@ -2496,7 +2629,10 @@ class _AgendaPageState extends State<AgendaPage> {
     }
   }
 
-  Future<void> _openChatFromBooking(BuildContext context, _Booking booking) async {
+  Future<void> _openChatFromBooking(
+    BuildContext context,
+    _Booking booking,
+  ) async {
     try {
       if ((booking.profileClientId ?? '').isEmpty) {
         throw const ChatException(
@@ -2794,10 +2930,7 @@ class _AgendaReservationChatDrawer extends StatelessWidget {
 }
 
 class _ReservationMetaChip extends StatelessWidget {
-  const _ReservationMetaChip({
-    required this.icon,
-    required this.label,
-  });
+  const _ReservationMetaChip({required this.icon, required this.label});
 
   final IconData icon;
   final String label;
@@ -2861,12 +2994,12 @@ class _TopBar extends StatelessWidget {
         children: [
           // View mode chips
           if (viewMode == '__legacy_day_therapist__') ...[
-          _OutlineChip(
-            label: 'DÍA · TERAPEUTAS',
-            active: viewMode == 'day_therapist',
-            onTap: () => onViewMode('day_therapist'),
-          ),
-          const SizedBox(width: 6),
+            _OutlineChip(
+              label: 'DÍA · TERAPEUTAS',
+              active: viewMode == 'day_therapist',
+              onTap: () => onViewMode('day_therapist'),
+            ),
+            const SizedBox(width: 6),
           ],
           _OutlineChip(
             label: 'DÍA',
@@ -3052,7 +3185,10 @@ class _MobileAgendaView extends StatelessWidget {
                       style: FilledButton.styleFrom(
                         backgroundColor: SaharaTheme.gold,
                         foregroundColor: Colors.black,
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
                       ),
                       child: const Icon(Icons.add, size: 18),
                     ),
@@ -3067,7 +3203,10 @@ class _MobileAgendaView extends StatelessWidget {
                     Expanded(
                       child: OutlinedButton.icon(
                         onPressed: onPickDate,
-                        icon: const Icon(Icons.calendar_today_outlined, size: 16),
+                        icon: const Icon(
+                          Icons.calendar_today_outlined,
+                          size: 16,
+                        ),
                         label: Text(
                           '${selectedDay.day}/${selectedDay.month}/${selectedDay.year}',
                           style: GoogleFonts.inter(fontSize: 12),
@@ -3085,9 +3224,15 @@ class _MobileAgendaView extends StatelessWidget {
                       child: _SideDropdown<String?>(
                         value: therapistId,
                         items: [
-                          const DropdownMenuItem(value: null, child: Text('Todos los terapeutas')),
+                          const DropdownMenuItem(
+                            value: null,
+                            child: Text('Todos los terapeutas'),
+                          ),
                           ...therapists.map(
-                            (t) => DropdownMenuItem(value: t.id, child: Text(t.name)),
+                            (t) => DropdownMenuItem(
+                              value: t.id,
+                              child: Text(t.name),
+                            ),
                           ),
                         ],
                         onChanged: onTherapist,
@@ -3098,13 +3243,34 @@ class _MobileAgendaView extends StatelessWidget {
                       child: _SideDropdown<String>(
                         value: statusFilter,
                         items: const [
-                          DropdownMenuItem(value: 'active', child: Text('Activas')),
-                          DropdownMenuItem(value: 'pending', child: Text('Pendientes')),
-                          DropdownMenuItem(value: 'confirmed', child: Text('Confirmadas')),
-                          DropdownMenuItem(value: 'completed', child: Text('Completadas')),
-                          DropdownMenuItem(value: 'awaiting_payment', child: Text('Pendientes de cobro')),
-                          DropdownMenuItem(value: 'paid', child: Text('Pagadas')),
-                          DropdownMenuItem(value: 'cancelled', child: Text('Canceladas')),
+                          DropdownMenuItem(
+                            value: 'active',
+                            child: Text('Activas'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'pending',
+                            child: Text('Pendientes'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'confirmed',
+                            child: Text('Confirmadas'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'completed',
+                            child: Text('Completadas'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'awaiting_payment',
+                            child: Text('Pendientes de cobro'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'paid',
+                            child: Text('Pagadas'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'cancelled',
+                            child: Text('Canceladas'),
+                          ),
                           DropdownMenuItem(value: 'all', child: Text('Todas')),
                         ],
                         onChanged: (value) {
@@ -3128,7 +3294,8 @@ class _MobileAgendaView extends StatelessWidget {
                 const SizedBox(height: 10),
                 if (dayBookings.isEmpty)
                   _MobileEmptyState(
-                    message: 'No hay citas para este dia con los filtros actuales.',
+                    message:
+                        'No hay citas para este dia con los filtros actuales.',
                   )
                 else
                   ...dayBookings.map(
@@ -3137,11 +3304,18 @@ class _MobileAgendaView extends StatelessWidget {
                       statusLabel: statusLabel,
                       statusColor: statusColor,
                       onTap: () => onBookingTap(booking),
-                      onConfirm: booking.status == 'pending' || booking.status == 'scheduled'
+                      onConfirm:
+                          booking.status == 'pending' ||
+                              booking.status == 'scheduled'
                           ? () => onConfirm(booking)
                           : null,
-                      onCancel: !const ['completed', 'awaiting_payment', 'paid', 'cancelled']
-                              .contains(booking.status)
+                      onCancel:
+                          !const [
+                            'completed',
+                            'awaiting_payment',
+                            'paid',
+                            'cancelled',
+                          ].contains(booking.status)
                           ? () => onCancel(booking)
                           : null,
                       onReschedule: () => onReschedule(booking),
@@ -3155,7 +3329,8 @@ class _MobileAgendaView extends StatelessWidget {
                 const SizedBox(height: 10),
                 if (upcomingBookings.isEmpty)
                   _MobileEmptyState(
-                    message: 'No hay proximas citas activas en el rango cargado.',
+                    message:
+                        'No hay proximas citas activas en el rango cargado.',
                   )
                 else
                   ...upcomingBookings.map(
@@ -3165,11 +3340,18 @@ class _MobileAgendaView extends StatelessWidget {
                       statusLabel: statusLabel,
                       statusColor: statusColor,
                       onTap: () => onBookingTap(booking),
-                      onConfirm: booking.status == 'pending' || booking.status == 'scheduled'
+                      onConfirm:
+                          booking.status == 'pending' ||
+                              booking.status == 'scheduled'
                           ? () => onConfirm(booking)
                           : null,
-                      onCancel: !const ['completed', 'awaiting_payment', 'paid', 'cancelled']
-                              .contains(booking.status)
+                      onCancel:
+                          !const [
+                            'completed',
+                            'awaiting_payment',
+                            'paid',
+                            'cancelled',
+                          ].contains(booking.status)
                           ? () => onCancel(booking)
                           : null,
                       onReschedule: () => onReschedule(booking),
@@ -3282,7 +3464,10 @@ class _MobileBookingCard extends StatelessWidget {
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
                 decoration: BoxDecoration(
                   color: badgeColor.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(999),
@@ -3474,7 +3659,10 @@ class _SidebarState extends State<_Sidebar> {
                     _SideDropdown<String?>(
                       value: widget.selectedBranchId,
                       items: [
-                        const DropdownMenuItem(value: null, child: Text('Todas')),
+                        const DropdownMenuItem(
+                          value: null,
+                          child: Text('Todas'),
+                        ),
                         ...widget.branches.map(
                           (b) => DropdownMenuItem(
                             value: b['id'],
@@ -3529,15 +3717,15 @@ class _SidebarState extends State<_Sidebar> {
                         value: 'awaiting_payment',
                         child: Text('Pendientes de cobro'),
                       ),
-                      DropdownMenuItem(
-                        value: 'paid',
-                        child: Text('Pagadas'),
-                      ),
+                      DropdownMenuItem(value: 'paid', child: Text('Pagadas')),
                       DropdownMenuItem(
                         value: 'cancelled',
                         child: Text('Canceladas'),
                       ),
-                      DropdownMenuItem(value: 'no_show', child: Text('No show')),
+                      DropdownMenuItem(
+                        value: 'no_show',
+                        child: Text('No show'),
+                      ),
                       DropdownMenuItem(value: 'all', child: Text('Todas')),
                     ],
                     onChanged: widget.onStatus,
@@ -3898,13 +4086,16 @@ class _WeekGridState extends State<_WeekGrid> {
   void didUpdateWidget(covariant _WeekGrid oldWidget) {
     super.didUpdateWidget(oldWidget);
     final hoursChanged =
-        oldWidget.calendarHours.startMinute != widget.calendarHours.startMinute ||
+        oldWidget.calendarHours.startMinute !=
+            widget.calendarHours.startMinute ||
         oldWidget.calendarHours.endMinuteInclusive !=
             widget.calendarHours.endMinuteInclusive;
     final weekChanged = !_sameDay(oldWidget.weekStart, widget.weekStart);
     if (hoursChanged || weekChanged) {
       _didInitialScroll = false;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToPreferredHour());
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _jumpToPreferredHour(),
+      );
     }
   }
 
@@ -3919,7 +4110,8 @@ class _WeekGridState extends State<_WeekGrid> {
     if (_dayWidth <= 0 || local.dx < 0 || local.dy < 0) return null;
     final dayIdx = (local.dx / _dayWidth).floor().clamp(0, 6);
     final rawMin =
-        (local.dy / _kHourHeight * 60).round() + widget.calendarHours.startMinute;
+        (local.dy / _kHourHeight * 60).round() +
+        widget.calendarHours.startMinute;
     final snapped = (rawMin / 15).round() * 15;
     if (!widget.calendarHours.containsMinute(snapped)) return null;
     return (dayIdx, snapped);
@@ -3948,10 +4140,12 @@ class _WeekGridState extends State<_WeekGrid> {
     final focusMinute = (todayIdx >= 0 && todayIdx < 7)
         ? nowMinute
         : max(widget.calendarHours.startMinute, 8 * 60);
-    final clampedMinute = focusMinute.clamp(
-      widget.calendarHours.startMinute,
-      widget.calendarHours.lastSlotMinute,
-    ).toInt();
+    final clampedMinute = focusMinute
+        .clamp(
+          widget.calendarHours.startMinute,
+          widget.calendarHours.lastSlotMinute,
+        )
+        .toInt();
     final target = max(
       0.0,
       _topForMinute(clampedMinute) - (_kHourHeight * 1.5),
@@ -4095,7 +4289,8 @@ class _WeekGridState extends State<_WeekGrid> {
             size: Size(_dayWidth * 7, gridHeight),
             painter: _GridPainter(
               startMinute: widget.calendarHours.startMinute,
-              endMinuteExclusive: widget.calendarHours.displayEndMinuteExclusive,
+              endMinuteExclusive:
+                  widget.calendarHours.displayEndMinuteExclusive,
               dayWidth: _dayWidth,
               hourHeight: _kHourHeight,
               today: today,
@@ -4551,13 +4746,16 @@ class _DayGridState extends State<_DayGrid> {
   void didUpdateWidget(covariant _DayGrid oldWidget) {
     super.didUpdateWidget(oldWidget);
     final hoursChanged =
-        oldWidget.calendarHours.startMinute != widget.calendarHours.startMinute ||
+        oldWidget.calendarHours.startMinute !=
+            widget.calendarHours.startMinute ||
         oldWidget.calendarHours.endMinuteInclusive !=
             widget.calendarHours.endMinuteInclusive;
     final dayChanged = !_sameDay(oldWidget.day, widget.day);
     if (hoursChanged || dayChanged) {
       _didInitialScroll = false;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToPreferredHour());
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _jumpToPreferredHour(),
+      );
     }
   }
 
@@ -4570,7 +4768,8 @@ class _DayGridState extends State<_DayGrid> {
   int? _slotMinute(Offset local) {
     if (_colWidth <= 0 || local.dy < 0) return null;
     final rawMin =
-        (local.dy / _kHourHeight * 60).round() + widget.calendarHours.startMinute;
+        (local.dy / _kHourHeight * 60).round() +
+        widget.calendarHours.startMinute;
     final snapped = (rawMin / 15).round() * 15;
     if (!widget.calendarHours.containsMinute(snapped)) return null;
     return snapped;
@@ -4592,10 +4791,12 @@ class _DayGridState extends State<_DayGrid> {
     final focusMinute = _sameDay(widget.day, widget.now)
         ? nowMinute
         : max(widget.calendarHours.startMinute, 8 * 60);
-    final clampedMinute = focusMinute.clamp(
-      widget.calendarHours.startMinute,
-      widget.calendarHours.lastSlotMinute,
-    ).toInt();
+    final clampedMinute = focusMinute
+        .clamp(
+          widget.calendarHours.startMinute,
+          widget.calendarHours.lastSlotMinute,
+        )
+        .toInt();
     final target = max(
       0.0,
       _topForMinute(clampedMinute) - (_kHourHeight * 1.5),
@@ -4679,33 +4880,35 @@ class _DayGridState extends State<_DayGrid> {
                           children: [
                             for (final minute
                                 in widget.calendarHours.hourLabelMinutes)
-                              Builder(builder: (_) {
-                                final inBusiness = _isBusinessHour(minute);
-                                return SizedBox(
-                                  height: _kHourHeight,
-                                  child: Align(
-                                    alignment: Alignment.topRight,
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(
-                                        right: 10,
-                                        top: 4,
-                                      ),
-                                      child: Text(
-                                        _minuteLabel(minute),
-                                        style: GoogleFonts.inter(
-                                          color: inBusiness
-                                              ? Colors.black
-                                              : Colors.grey,
-                                          fontSize: 11,
-                                          fontWeight: inBusiness
-                                              ? FontWeight.w700
-                                              : FontWeight.w500,
+                              Builder(
+                                builder: (_) {
+                                  final inBusiness = _isBusinessHour(minute);
+                                  return SizedBox(
+                                    height: _kHourHeight,
+                                    child: Align(
+                                      alignment: Alignment.topRight,
+                                      child: Padding(
+                                        padding: const EdgeInsets.only(
+                                          right: 10,
+                                          top: 4,
+                                        ),
+                                        child: Text(
+                                          _minuteLabel(minute),
+                                          style: GoogleFonts.inter(
+                                            color: inBusiness
+                                                ? Colors.black
+                                                : Colors.grey,
+                                            fontSize: 11,
+                                            fontWeight: inBusiness
+                                                ? FontWeight.w700
+                                                : FontWeight.w500,
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                                );
-                              }),
+                                  );
+                                },
+                              ),
                           ],
                         ),
                       ),
@@ -4722,8 +4925,9 @@ class _DayGridState extends State<_DayGrid> {
                               size: Size(_colWidth, gridHeight),
                               painter: _DayPainter(
                                 startMinute: widget.calendarHours.startMinute,
-                                endMinuteExclusive:
-                                    widget.calendarHours.displayEndMinuteExclusive,
+                                endMinuteExclusive: widget
+                                    .calendarHours
+                                    .displayEndMinuteExclusive,
                                 hourHeight: _kHourHeight,
                                 isToday: isToday,
                               ),
@@ -5428,7 +5632,9 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
     final dayChanged = !_sameDay(old.day, widget.day);
     if (hoursChanged || dayChanged) {
       _didInitialScroll = false;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToPreferredHour());
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _jumpToPreferredHour(),
+      );
     }
   }
 
@@ -5448,12 +5654,16 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
     final focusMinute = _sameDay(widget.day, widget.now)
         ? nowMinute
         : max(widget.calendarHours.startMinute, 8 * 60);
-    final clampedMinute = focusMinute.clamp(
-      widget.calendarHours.startMinute,
-      widget.calendarHours.lastSlotMinute,
-    ).toInt();
-    final target =
-        max(0.0, _topForMinute(clampedMinute) - (_kHourHeight * 1.5));
+    final clampedMinute = focusMinute
+        .clamp(
+          widget.calendarHours.startMinute,
+          widget.calendarHours.lastSlotMinute,
+        )
+        .toInt();
+    final target = max(
+      0.0,
+      _topForMinute(clampedMinute) - (_kHourHeight * 1.5),
+    );
     _vScroll.jumpTo(target);
     _didInitialScroll = true;
   }
@@ -5467,7 +5677,11 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
   }
 
   List<_StaffTimeOff> _timeOffFor(String staffId) {
-    final dayStart = DateTime(widget.day.year, widget.day.month, widget.day.day);
+    final dayStart = DateTime(
+      widget.day.year,
+      widget.day.month,
+      widget.day.day,
+    );
     final dayEnd = dayStart.add(const Duration(days: 1));
     return widget.staffTimeOff.where((row) {
       if (row.staffId != staffId) return false;
@@ -5589,9 +5803,7 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
     // pero por si acaso reforzamos).
     final therapists = widget.therapists.where((t) => t.id.isNotEmpty).toList();
     // ¿Hay bookings sin terapeuta? Mostrar columna "Sin asignar".
-    final hasUnassigned = widget.bookings.any(
-      (b) => b.therapistId.isEmpty,
-    );
+    final hasUnassigned = widget.bookings.any((b) => b.therapistId.isEmpty);
     final columnIds = <String>[
       ...therapists.map((t) => t.id),
       if (hasUnassigned) '__unassigned__',
@@ -5617,150 +5829,159 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
     final hourRows = max(1, (totalMinutes / 60).ceil());
     final gridHeight = hourRows * _kHourHeight;
 
-    return LayoutBuilder(builder: (context, constraints) {
-      final available =
-          constraints.maxWidth - _kHourLabelWidth;
-      final naturalColWidth =
-          available / columnIds.length;
-      final colWidth = naturalColWidth < _kColMinWidth
-          ? _kColMinWidth
-          : naturalColWidth;
-      final totalWidth = _kHourLabelWidth + colWidth * columnIds.length;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final available = constraints.maxWidth - _kHourLabelWidth;
+        final naturalColWidth = available / columnIds.length;
+        final colWidth = naturalColWidth < _kColMinWidth
+            ? _kColMinWidth
+            : naturalColWidth;
+        final totalWidth = _kHourLabelWidth + colWidth * columnIds.length;
 
-      return Column(
-        children: [
-          // Header: nombres de terapeutas
-          SizedBox(
-            height: _kHeaderHeight,
-            child: Row(
-              children: [
-                Container(
-                  width: _kHourLabelWidth,
-                  height: _kHeaderHeight,
-                  decoration: const BoxDecoration(
-                    border: Border(
-                      right: BorderSide(color: Color(0xFFE0DDD8)),
-                      bottom: BorderSide(color: Color(0xFFE0DDD8)),
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    controller: _hScroll,
-                    child: SizedBox(
-                      width: colWidth * columnIds.length,
-                      child: Row(
-                        children: List.generate(columnIds.length, (i) {
-                          final isUnassigned =
-                              columnIds[i] == '__unassigned__';
-                          final liveStatus = _liveStatusFor(
-                            isUnassigned ? null : columnIds[i],
-                          );
-                          return Container(
-                            width: colWidth,
-                            decoration: const BoxDecoration(
-                              border: Border(
-                                right: BorderSide(color: Color(0xFFE0DDD8)),
-                                bottom: BorderSide(color: Color(0xFFE0DDD8)),
-                              ),
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 8),
-                            child: Row(children: [
-                              Expanded(
-                                child: Text(
-                                  columnLabels[i],
-                                  style: GoogleFonts.inter(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: isUnassigned
-                                        ? const Color(0xFFC68A17)
-                                        : Colors.black87,
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              // Chip de estado en vivo (siempre visible al
-                              // hacer scroll porque vive en el header sticky).
-                              if (!isUnassigned)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    color: _liveStatusBg(liveStatus),
-                                    borderRadius: BorderRadius.circular(999),
-                                    border: Border.all(
-                                      color: _liveStatusColor(liveStatus)
-                                          .withValues(alpha: 0.55),
-                                    ),
-                                  ),
-                                  child: Text(
-                                    _liveStatusLabel(liveStatus),
-                                    style: GoogleFonts.inter(
-                                      fontSize: 10.5,
-                                      fontWeight: FontWeight.w700,
-                                      color: _liveStatusColor(liveStatus),
-                                    ),
-                                  ),
-                                )
-                              else
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFFFF1D6),
-                                    borderRadius: BorderRadius.circular(999),
-                                    border: Border.all(
-                                      color: const Color(0xFFC68A17)
-                                          .withValues(alpha: 0.55),
-                                    ),
-                                  ),
-                                  child: Text(
-                                    'Sin asignar',
-                                    style: GoogleFonts.inter(
-                                      fontSize: 10.5,
-                                      fontWeight: FontWeight.w700,
-                                      color: const Color(0xFFC68A17),
-                                    ),
-                                  ),
-                                ),
-                            ]),
-                          );
-                        }),
+        return Column(
+          children: [
+            // Header: nombres de terapeutas
+            SizedBox(
+              height: _kHeaderHeight,
+              child: Row(
+                children: [
+                  Container(
+                    width: _kHourLabelWidth,
+                    height: _kHeaderHeight,
+                    decoration: const BoxDecoration(
+                      border: Border(
+                        right: BorderSide(color: Color(0xFFE0DDD8)),
+                        bottom: BorderSide(color: Color(0xFFE0DDD8)),
                       ),
                     ),
                   ),
-                ),
-              ],
+                  Expanded(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      controller: _hScroll,
+                      child: SizedBox(
+                        width: colWidth * columnIds.length,
+                        child: Row(
+                          children: List.generate(columnIds.length, (i) {
+                            final isUnassigned =
+                                columnIds[i] == '__unassigned__';
+                            final liveStatus = _liveStatusFor(
+                              isUnassigned ? null : columnIds[i],
+                            );
+                            return Container(
+                              width: colWidth,
+                              decoration: const BoxDecoration(
+                                border: Border(
+                                  right: BorderSide(color: Color(0xFFE0DDD8)),
+                                  bottom: BorderSide(color: Color(0xFFE0DDD8)),
+                                ),
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 8,
+                              ),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      columnLabels[i],
+                                      style: GoogleFonts.inter(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: isUnassigned
+                                            ? const Color(0xFFC68A17)
+                                            : Colors.black87,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  // Chip de estado en vivo (siempre visible al
+                                  // hacer scroll porque vive en el header sticky).
+                                  if (!isUnassigned)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 3,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: _liveStatusBg(liveStatus),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                        border: Border.all(
+                                          color: _liveStatusColor(
+                                            liveStatus,
+                                          ).withValues(alpha: 0.55),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        _liveStatusLabel(liveStatus),
+                                        style: GoogleFonts.inter(
+                                          fontSize: 10.5,
+                                          fontWeight: FontWeight.w700,
+                                          color: _liveStatusColor(liveStatus),
+                                        ),
+                                      ),
+                                    )
+                                  else
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 3,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFFF1D6),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                        border: Border.all(
+                                          color: const Color(
+                                            0xFFC68A17,
+                                          ).withValues(alpha: 0.55),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        'Sin asignar',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 10.5,
+                                          fontWeight: FontWeight.w700,
+                                          color: const Color(0xFFC68A17),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            );
+                          }),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          // Body: scroll vertical compartido + horas a la izq + columnas con cards
-          Expanded(
-            child: SingleChildScrollView(
-              controller: _vScroll,
-              scrollDirection: Axis.vertical,
-              child: SizedBox(
-                height: gridHeight,
-                width: totalWidth,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Columna de horas — solo etiquetas por hora completa
-                    SizedBox(
-                      width: _kHourLabelWidth,
-                      child: Column(
-                        children: List.generate(
-                          hourRows,
-                          (i) {
-                            final m =
-                                widget.calendarHours.startMinute + i * 60;
+            // Body: scroll vertical compartido + horas a la izq + columnas con cards
+            Expanded(
+              child: SingleChildScrollView(
+                controller: _vScroll,
+                scrollDirection: Axis.vertical,
+                child: SizedBox(
+                  height: gridHeight,
+                  width: totalWidth,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Columna de horas — solo etiquetas por hora completa
+                      SizedBox(
+                        width: _kHourLabelWidth,
+                        child: Column(
+                          children: List.generate(hourRows, (i) {
+                            final m = widget.calendarHours.startMinute + i * 60;
                             final inBusiness = _isBusinessHour(m);
                             return Container(
                               height: _kHourHeight,
-                              padding: const EdgeInsets.only(
-                                  right: 6, top: 4),
+                              padding: const EdgeInsets.only(right: 6, top: 4),
                               decoration: const BoxDecoration(
                                 border: Border(
                                   right: BorderSide(color: Color(0xFFE0DDD8)),
@@ -5780,81 +6001,81 @@ class _DayByTherapistGridState extends State<_DayByTherapistGrid> {
                                 ),
                               ),
                             );
-                          },
+                          }),
                         ),
                       ),
-                    ),
-                    // Columnas por terapeuta (con scroll horizontal sincronizado)
-                    Expanded(
-                      child: SingleChildScrollView(
-                        controller: _hScroll,
-                        scrollDirection: Axis.horizontal,
-                        child: SizedBox(
-                          width: colWidth * columnIds.length,
-                          height: gridHeight,
-                          child: Row(
-                            children: List.generate(columnIds.length, (i) {
-                              final tId = columnIds[i];
-                              final colBookings = widget.bookings.where((b) {
-                                if (tId == '__unassigned__') {
-                                  return b.therapistId.isEmpty;
-                                }
-                                return b.therapistId == tId;
-                              }).toList();
-                              return _TherapistColumn(
-                                width: colWidth,
-                                staffId: tId == '__unassigned__' ? null : tId,
-                                gridHeight: gridHeight,
-                                calendarHours: widget.calendarHours,
-                                bookings: colBookings,
-                                scheduleBlocks: tId == '__unassigned__'
-                                    ? const <_ScheduleBlock>[]
-                                    : widget.scheduleBlocks.where((block) {
-                                        final blockStaffId =
-                                            block.staffId?.trim() ?? '';
-                                        return blockStaffId.isEmpty ||
-                                            blockStaffId == tId;
-                                      }).toList(),
-                                workingHours: tId == '__unassigned__'
-                                    ? null
-                                    : _hoursFor(tId),
-                                timeOff: tId == '__unassigned__'
-                                    ? const <_StaffTimeOff>[]
-                                    : _timeOffFor(tId),
-                                onBookingTap: widget.onBookingTap,
-                                onScheduleBlockTap: widget.onScheduleBlockTap,
-                                now: widget.now,
-                                day: widget.day,
-                                isUnassigned: tId == '__unassigned__',
-                                onSlotTap: widget.onSlotTap,
-                                bypassWorkingHours:
-                                    RolePermissions.isAdminLevel(
-                                            widget.currentRole) ||
-                                        (tId != '__unassigned__' &&
-                                            widget.therapists
-                                                .firstWhere(
-                                                  (t) => t.id == tId,
-                                                  orElse: () =>
-                                                      const _Therapist(
-                                                    id: '',
-                                                    name: '',
-                                                  ),
-                                                )
-                                                .allowOffHoursBooking),
-                              );
-                            }),
+                      // Columnas por terapeuta (con scroll horizontal sincronizado)
+                      Expanded(
+                        child: SingleChildScrollView(
+                          controller: _hScroll,
+                          scrollDirection: Axis.horizontal,
+                          child: SizedBox(
+                            width: colWidth * columnIds.length,
+                            height: gridHeight,
+                            child: Row(
+                              children: List.generate(columnIds.length, (i) {
+                                final tId = columnIds[i];
+                                final colBookings = widget.bookings.where((b) {
+                                  if (tId == '__unassigned__') {
+                                    return b.therapistId.isEmpty;
+                                  }
+                                  return b.therapistId == tId;
+                                }).toList();
+                                return _TherapistColumn(
+                                  width: colWidth,
+                                  staffId: tId == '__unassigned__' ? null : tId,
+                                  gridHeight: gridHeight,
+                                  calendarHours: widget.calendarHours,
+                                  bookings: colBookings,
+                                  scheduleBlocks: tId == '__unassigned__'
+                                      ? const <_ScheduleBlock>[]
+                                      : widget.scheduleBlocks.where((block) {
+                                          final blockStaffId =
+                                              block.staffId?.trim() ?? '';
+                                          return blockStaffId.isEmpty ||
+                                              blockStaffId == tId;
+                                        }).toList(),
+                                  workingHours: tId == '__unassigned__'
+                                      ? null
+                                      : _hoursFor(tId),
+                                  timeOff: tId == '__unassigned__'
+                                      ? const <_StaffTimeOff>[]
+                                      : _timeOffFor(tId),
+                                  onBookingTap: widget.onBookingTap,
+                                  onScheduleBlockTap: widget.onScheduleBlockTap,
+                                  now: widget.now,
+                                  day: widget.day,
+                                  isUnassigned: tId == '__unassigned__',
+                                  onSlotTap: widget.onSlotTap,
+                                  bypassWorkingHours:
+                                      RolePermissions.isAdminLevel(
+                                        widget.currentRole,
+                                      ) ||
+                                      (tId != '__unassigned__' &&
+                                          widget.therapists
+                                              .firstWhere(
+                                                (t) => t.id == tId,
+                                                orElse: () => const _Therapist(
+                                                  id: '',
+                                                  name: '',
+                                                ),
+                                              )
+                                              .allowOffHoursBooking),
+                                );
+                              }),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
-      );
-    });
+          ],
+        );
+      },
+    );
   }
 }
 
@@ -5904,9 +6125,9 @@ class _TherapistColumn extends StatelessWidget {
   }
 
   void _showSlotMessage(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   int? _slotMinute(Offset local) {
@@ -5986,7 +6207,8 @@ class _TherapistColumn extends StatelessWidget {
   Widget build(BuildContext context) {
     final isToday = _sameDay(now, day);
     final nowMinute = now.hour * 60 + now.minute;
-    final showNowLine = isToday &&
+    final showNowLine =
+        isToday &&
         nowMinute >= calendarHours.startMinute &&
         nowMinute <= calendarHours.endMinuteInclusive;
     final isOffDay =
@@ -5999,32 +6221,24 @@ class _TherapistColumn extends StatelessWidget {
         color: isOffDay
             ? const Color(0xFFF0F0F0)
             : isUnassigned
-                ? const Color(0xFFFFF8EC)
-                : Colors.white,
-        border: const Border(
-          right: BorderSide(color: Color(0xFFE0DDD8)),
-        ),
+            ? const Color(0xFFFFF8EC)
+            : Colors.white,
+        border: const Border(right: BorderSide(color: Color(0xFFE0DDD8))),
       ),
       child: Stack(
         children: [
           // Líneas horizontales por hora completa (Agenda Pro style).
           // _kShowSubdivisionLines = false → no se dibujan medias horas.
           // La precisión interna de snap (_kSnapMinutes = 15) no cambia.
-          ...List.generate(
-            max(1, (gridHeight / _kHourHeight).ceil()),
-            (i) {
-              final m = calendarHours.startMinute + i * 60;
-              return Positioned(
-                top: _topForMinute(m),
-                left: 0,
-                right: 0,
-                child: Container(
-                  height: 1,
-                  color: const Color(0xFFE0DDD8),
-                ),
-              );
-            },
-          ),
+          ...List.generate(max(1, (gridHeight / _kHourHeight).ceil()), (i) {
+            final m = calendarHours.startMinute + i * 60;
+            return Positioned(
+              top: _topForMinute(m),
+              left: 0,
+              right: 0,
+              child: Container(height: 1, color: const Color(0xFFE0DDD8)),
+            );
+          }),
           if (!isOffDay)
             Positioned.fill(
               child: GestureDetector(
@@ -6062,8 +6276,9 @@ class _TherapistColumn extends StatelessWidget {
               workingHours?.breakStartsAt != null &&
               workingHours?.breakEndsAt != null)
             Positioned(
-              top: _topForMinute(workingHours!.breakStartsAt!)
-                  .clamp(0.0, gridHeight),
+              top: _topForMinute(
+                workingHours!.breakStartsAt!,
+              ).clamp(0.0, gridHeight),
               left: 2,
               right: 2,
               height: max(
@@ -6078,8 +6293,7 @@ class _TherapistColumn extends StatelessWidget {
                   border: Border.all(color: const Color(0xFFE2B95F)),
                   borderRadius: BorderRadius.circular(3),
                 ),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                 child: Text(
                   'Comida / receso',
                   style: GoogleFonts.inter(
@@ -6094,8 +6308,9 @@ class _TherapistColumn extends StatelessWidget {
           ...timeOff.map((off) {
             final dayStart = DateTime(day.year, day.month, day.day);
             final dayEnd = dayStart.add(const Duration(days: 1));
-            final start =
-                off.startsAt.isBefore(dayStart) ? dayStart : off.startsAt;
+            final start = off.startsAt.isBefore(dayStart)
+                ? dayStart
+                : off.startsAt;
             final end = off.endsAt.isAfter(dayEnd) ? dayEnd : off.endsAt;
             final startMinute = start.hour * 60 + start.minute;
             final endMinute = end.hour * 60 + end.minute;
@@ -6113,8 +6328,7 @@ class _TherapistColumn extends StatelessWidget {
                   border: Border.all(color: const Color(0xFFD7A1A1)),
                   borderRadius: BorderRadius.circular(3),
                 ),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                 child: Text(
                   'No disponible · ${off.reason.isEmpty ? off.type : off.reason}',
                   style: GoogleFonts.inter(
@@ -6137,7 +6351,9 @@ class _TherapistColumn extends StatelessWidget {
               22.0,
               (sb.endMinute - sb.startMinute) * (_kHourHeight / 60) - 4,
             );
-            final reason = sb.notes.trim().isNotEmpty ? sb.notes.trim() : sb.title;
+            final reason = sb.notes.trim().isNotEmpty
+                ? sb.notes.trim()
+                : sb.title;
             return Positioned(
               top: top,
               left: 2,
@@ -6154,7 +6370,9 @@ class _TherapistColumn extends StatelessWidget {
                       borderRadius: BorderRadius.circular(3),
                     ),
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 6, vertical: 3),
+                      horizontal: 6,
+                      vertical: 3,
+                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -6186,10 +6404,7 @@ class _TherapistColumn extends StatelessWidget {
           // Citas posicionadas
           ...bookings.map((b) {
             final top = _topForMinute(b.startMinute).clamp(0.0, gridHeight);
-            final h = max(
-              28.0,
-              b.durationMinutes * (_kHourHeight / 60) - 4,
-            );
+            final h = max(28.0, b.durationMinutes * (_kHourHeight / 60) - 4);
             return Positioned(
               top: top,
               left: 4,
@@ -6222,10 +6437,7 @@ class _TherapistColumn extends StatelessWidget {
               top: _topForMinute(nowMinute),
               left: 0,
               right: 0,
-              child: Container(
-                height: 2,
-                color: const Color(0xFFFF5252),
-              ),
+              child: Container(height: 2, color: const Color(0xFFFF5252)),
             ),
         ],
       ),
@@ -6339,9 +6551,9 @@ enum _BookingOrigin {
       case _BookingOrigin.whatsappAi:
         return 'WhatsApp';
       case _BookingOrigin.web:
-        return 'Web';
+        return 'Página web';
       case _BookingOrigin.landing:
-        return 'Landing';
+        return 'Página web';
     }
   }
 
@@ -6670,7 +6882,10 @@ class _BookingDetailDialog extends StatelessWidget {
               const Divider(color: Color(0xFFECECEC)),
               const SizedBox(height: 16),
               // Details
-              _DetailRow(icon: Icons.schedule, text: '${b.timeLabel} - ${b.endTimeLabel}'),
+              _DetailRow(
+                icon: Icons.schedule,
+                text: '${b.timeLabel} - ${b.endTimeLabel}',
+              ),
               _DetailRow(icon: Icons.timer, text: '${b.durationMinutes} min'),
               // Precio del servicio (total), distinto del anticipo. Recepción lo
               // necesita de un vistazo para cobrar el resto.
@@ -6701,7 +6916,8 @@ class _BookingDetailDialog extends StatelessWidget {
                   text: _paymentLineLabel(b),
                   color: _paymentLineColor(b),
                 ),
-                if (b.depositRequiredCents != null && b.depositRequiredCents! > 0)
+                if (b.depositRequiredCents != null &&
+                    b.depositRequiredCents! > 0)
                   _DetailRow(
                     icon: Icons.attach_money_rounded,
                     text:
@@ -6736,8 +6952,12 @@ class _BookingDetailDialog extends StatelessWidget {
                       color: const Color(0xFF5DAA6E),
                       onTap: () => _updateStatus(context, 'confirmed'),
                     ),
-                  if (!const ['completed', 'awaiting_payment', 'paid', 'cancelled']
-                      .contains(b.status))
+                  if (!const [
+                    'completed',
+                    'awaiting_payment',
+                    'paid',
+                    'cancelled',
+                  ].contains(b.status))
                     _DialogBtn(
                       label: 'Cancelar',
                       color: const Color(0xFFB32D2D),
@@ -6802,6 +7022,23 @@ class _BookingDetailDialog extends StatelessWidget {
                       color: const Color(0xFF4A4A4A),
                       onTap: onViewTicket,
                     ),
+                  // Comprobante del anticipo: visible en citas que ya pagaron
+                  // el anticipo. Genera/reenvía el PDF y deja abrirlo para
+                  // compartirlo si el WhatsApp no llegó.
+                  if (const [
+                    'confirmed',
+                    'payment_received',
+                    'rescheduled',
+                    'in_progress',
+                    'completed',
+                    'paid',
+                  ].contains(b.status))
+                    _DialogBtn(
+                      label: 'Comprobante',
+                      color: const Color(0xFFC6A76A),
+                      textColor: Colors.black87,
+                      onTap: () => showDepositReceiptDialog(context, b.id),
+                    ),
                   _DialogBtn(
                     // Abre el formulario completo de la cita (prellenado):
                     // servicio, terapeuta, fecha, hora, duración, estatus y
@@ -6839,18 +7076,24 @@ class _BookingDetailDialog extends StatelessWidget {
                       // interno para que caiga directo en el WhatsApp de Edgar.
                       final raw = b.clientPhone ?? '';
                       var phone = raw.replaceAll(RegExp(r'\D'), '');
-                      if (phone.length == 10) phone = '52$phone'; // MX por defecto
+                      if (phone.length == 10)
+                        phone = '52$phone'; // MX por defecto
                       if (phone.isEmpty) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                            content: Text('El cliente no tiene teléfono registrado'),
+                            content: Text(
+                              'El cliente no tiene teléfono registrado',
+                            ),
                           ),
                         );
                         return;
                       }
                       Navigator.pop(context);
                       final url = Uri.parse('https://wa.me/$phone');
-                      await launchUrl(url, mode: LaunchMode.externalApplication);
+                      await launchUrl(
+                        url,
+                        mode: LaunchMode.externalApplication,
+                      );
                     },
                   ),
                   if (b.status == 'paid')
@@ -6945,16 +7188,13 @@ class _BookingDetailDialog extends StatelessWidget {
     try {
       final res = await Supabase.instance.client.rpc(
         'whatsapp_send_template_to_booking',
-        params: {
-          'p_booking_id': booking.id,
-          'p_template_key': templateKey,
-        },
+        params: {'p_booking_id': booking.id, 'p_template_key': templateKey},
       );
       final map = Map<String, dynamic>.from(res as Map);
       final ok = map['ok'] == true;
       final pendingTemplate = map['pending_template'] == true;
-      final msg =
-          (map['message'] ?? map['error'] ?? 'Acción ejecutada').toString();
+      final msg = (map['message'] ?? map['error'] ?? 'Acción ejecutada')
+          .toString();
       if (!ctx.mounted) return;
       ScaffoldMessenger.of(ctx).showSnackBar(
         SnackBar(
@@ -6962,8 +7202,8 @@ class _BookingDetailDialog extends StatelessWidget {
           backgroundColor: ok
               ? const Color(0xFF5DAA6E)
               : pendingTemplate
-                  ? const Color(0xFFC68A17)
-                  : const Color(0xFFB32D2D),
+              ? const Color(0xFFC68A17)
+              : const Color(0xFFB32D2D),
           duration: const Duration(seconds: 5),
         ),
       );
@@ -6982,10 +7222,8 @@ class _BookingDetailDialog extends StatelessWidget {
   void _showClientHistory(BuildContext context, _Booking booking) {
     showDialog(
       context: context,
-      builder: (_) => _ClientHistoryDialog(
-        booking: booking,
-        statusLabel: statusLabel,
-      ),
+      builder: (_) =>
+          _ClientHistoryDialog(booking: booking, statusLabel: statusLabel),
     );
   }
 }
@@ -7007,7 +7245,9 @@ class _ChargeBookingDialog extends StatefulWidget {
 
 class _ChargeBookingDialogState extends State<_ChargeBookingDialog> {
   final TextEditingController _tipController = TextEditingController(text: '0');
-  final TextEditingController _discountController = TextEditingController(text: '0');
+  final TextEditingController _discountController = TextEditingController(
+    text: '0',
+  );
   final TextEditingController _notesController = TextEditingController();
   String _paymentMethod = 'efectivo';
   bool _saving = false;
@@ -7022,7 +7262,8 @@ class _ChargeBookingDialogState extends State<_ChargeBookingDialog> {
 
   double get _tip => double.tryParse(_tipController.text.trim()) ?? 0;
   double get _discount => double.tryParse(_discountController.text.trim()) ?? 0;
-  double get _total => max(0.0, widget.sale.total - _discount + _tip).toDouble();
+  double get _total =>
+      max(0.0, widget.sale.total - _discount + _tip).toDouble();
 
   InputDecoration _paymentDeco(String label, IconData? icon) {
     return InputDecoration(
@@ -7080,8 +7321,14 @@ class _ChargeBookingDialogState extends State<_ChargeBookingDialog> {
               const SizedBox(height: 16),
               _DetailRow(icon: Icons.person, text: booking.clientName),
               _DetailRow(icon: Icons.spa_outlined, text: booking.serviceName),
-              _DetailRow(icon: Icons.badge_outlined, text: booking.therapistName),
-              _DetailRow(icon: Icons.timer_outlined, text: '${booking.durationMinutes} min'),
+              _DetailRow(
+                icon: Icons.badge_outlined,
+                text: booking.therapistName,
+              ),
+              _DetailRow(
+                icon: Icons.timer_outlined,
+                text: '${booking.durationMinutes} min',
+              ),
               const SizedBox(height: 16),
               Row(
                 children: [
@@ -7120,10 +7367,22 @@ class _ChargeBookingDialogState extends State<_ChargeBookingDialog> {
                   DropdownMenuItem(value: 'efectivo', child: Text('Efectivo')),
                   DropdownMenuItem(value: 'tarjeta', child: Text('Tarjeta')),
                   DropdownMenuItem(value: 'stripe', child: Text('Stripe')),
-                  DropdownMenuItem(value: 'transferencia', child: Text('Transferencia')),
-                  DropdownMenuItem(value: 'gift_card', child: Text('Gift card')),
-                  DropdownMenuItem(value: 'membresia', child: Text('Membresia')),
-                  DropdownMenuItem(value: 'saldo_cliente', child: Text('Saldo cliente')),
+                  DropdownMenuItem(
+                    value: 'transferencia',
+                    child: Text('Transferencia'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'gift_card',
+                    child: Text('Gift card'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'membresia',
+                    child: Text('Membresia'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'saldo_cliente',
+                    child: Text('Saldo cliente'),
+                  ),
                 ],
                 onChanged: (value) {
                   if (value != null) setState(() => _paymentMethod = value);
@@ -7134,7 +7393,10 @@ class _ChargeBookingDialogState extends State<_ChargeBookingDialog> {
                 controller: _notesController,
                 minLines: 2,
                 maxLines: 3,
-                decoration: _paymentDeco('Notas de cobro', Icons.notes_outlined),
+                decoration: _paymentDeco(
+                  'Notas de cobro',
+                  Icons.notes_outlined,
+                ),
               ),
               const SizedBox(height: 20),
               Container(
@@ -7146,9 +7408,18 @@ class _ChargeBookingDialogState extends State<_ChargeBookingDialog> {
                 ),
                 child: Column(
                   children: [
-                    _SummaryLine(label: 'Servicio', value: '\$${widget.sale.total.toStringAsFixed(2)}'),
-                    _SummaryLine(label: 'Propina', value: '\$${_tip.toStringAsFixed(2)}'),
-                    _SummaryLine(label: 'Descuento', value: '-\$${_discount.toStringAsFixed(2)}'),
+                    _SummaryLine(
+                      label: 'Servicio',
+                      value: '\$${widget.sale.total.toStringAsFixed(2)}',
+                    ),
+                    _SummaryLine(
+                      label: 'Propina',
+                      value: '\$${_tip.toStringAsFixed(2)}',
+                    ),
+                    _SummaryLine(
+                      label: 'Descuento',
+                      value: '-\$${_discount.toStringAsFixed(2)}',
+                    ),
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -7187,12 +7458,18 @@ class _ChargeBookingDialogState extends State<_ChargeBookingDialog> {
                       ? const SizedBox(
                           width: 16,
                           height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.black,
+                          ),
                         )
                       : const Icon(Icons.point_of_sale_outlined),
                   label: Text(
                     'Registrar cobro',
-                    style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w700),
+                    style: GoogleFonts.inter(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ),
@@ -7269,10 +7546,7 @@ class _SimpleAmountField extends StatelessWidget {
 }
 
 class _SummaryLine extends StatelessWidget {
-  const _SummaryLine({
-    required this.label,
-    required this.value,
-  });
+  const _SummaryLine({required this.label, required this.value});
 
   final String label;
   final String value;
@@ -7283,9 +7557,15 @@ class _SummaryLine extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(
         children: [
-          Text(label, style: GoogleFonts.inter(fontSize: 12, color: Colors.black54)),
+          Text(
+            label,
+            style: GoogleFonts.inter(fontSize: 12, color: Colors.black54),
+          ),
           const Spacer(),
-          Text(value, style: GoogleFonts.inter(fontSize: 12, color: Colors.black87)),
+          Text(
+            value,
+            style: GoogleFonts.inter(fontSize: 12, color: Colors.black87),
+          ),
         ],
       ),
     );
@@ -7392,11 +7672,13 @@ class _ClientHistoryDialogState extends State<_ClientHistoryDialog> {
                     separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (_, index) {
                       final item = _history[index];
-                      final time = (item['booking_time'] as String? ?? '').substring(0, 5);
+                      final time = (item['booking_time'] as String? ?? '')
+                          .substring(0, 5);
                       return ListTile(
                         contentPadding: EdgeInsets.zero,
                         title: Text(
-                          (item['services'] as Map?)?['name'] as String? ?? 'Servicio',
+                          (item['services'] as Map?)?['name'] as String? ??
+                              'Servicio',
                           style: GoogleFonts.inter(fontWeight: FontWeight.w600),
                         ),
                         subtitle: Text(
@@ -7404,8 +7686,13 @@ class _ClientHistoryDialogState extends State<_ClientHistoryDialog> {
                           style: GoogleFonts.inter(fontSize: 12),
                         ),
                         trailing: Text(
-                          widget.statusLabel(item['status'] as String? ?? 'scheduled'),
-                          style: GoogleFonts.inter(fontSize: 12, color: Colors.black54),
+                          widget.statusLabel(
+                            item['status'] as String? ?? 'scheduled',
+                          ),
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            color: Colors.black54,
+                          ),
                         ),
                       );
                     },
@@ -7456,17 +7743,19 @@ class _DialogBtn extends StatelessWidget {
     required this.label,
     required this.color,
     required this.onTap,
+    this.textColor,
   });
   final String label;
   final Color color;
   final VoidCallback onTap;
+  final Color? textColor;
 
   @override
   Widget build(BuildContext context) => TextButton(
     onPressed: onTap,
     style: TextButton.styleFrom(
       backgroundColor: color.withValues(alpha: 0.15),
-      foregroundColor: color,
+      foregroundColor: textColor ?? color,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(4),
         side: BorderSide(color: color.withValues(alpha: 0.4)),
@@ -7657,7 +7946,9 @@ class _ScheduleBlockDialogState extends State<_ScheduleBlockDialog> {
                     Expanded(
                       child: DropdownButtonFormField<String>(
                         value: _scope,
-                        decoration: const InputDecoration(labelText: 'Aplicar a'),
+                        decoration: const InputDecoration(
+                          labelText: 'Aplicar a',
+                        ),
                         items: const [
                           DropdownMenuItem(
                             value: 'day',
@@ -7702,12 +7993,16 @@ class _ScheduleBlockDialogState extends State<_ScheduleBlockDialog> {
                                 final minutes = _minutesForHour(hour);
                                 setState(() {
                                   final selectedMinute = _startMinute % 60;
-                                  _startMinute = (hour * 60) +
+                                  _startMinute =
+                                      (hour * 60) +
                                       (minutes.contains(selectedMinute)
                                           ? selectedMinute
                                           : minutes.first);
                                   if (_endMinute <= _startMinute) {
-                                    _endMinute = min(_startMinute + 60, 24 * 60);
+                                    _endMinute = min(
+                                      _startMinute + 60,
+                                      24 * 60,
+                                    );
                                   }
                                 });
                               },
@@ -7736,7 +8031,10 @@ class _ScheduleBlockDialogState extends State<_ScheduleBlockDialog> {
                                   _startMinute =
                                       ((_startMinute ~/ 60) * 60) + minute;
                                   if (_endMinute <= _startMinute) {
-                                    _endMinute = min(_startMinute + 60, 24 * 60);
+                                    _endMinute = min(
+                                      _startMinute + 60,
+                                      24 * 60,
+                                    );
                                   }
                                 });
                               },
@@ -7749,11 +8047,11 @@ class _ScheduleBlockDialogState extends State<_ScheduleBlockDialog> {
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<int>(
-                        value: (_endMinute >= 24 * 60
-                                ? 23
-                                : _endMinute ~/ 60)
+                        value: (_endMinute >= 24 * 60 ? 23 : _endMinute ~/ 60)
                             .clamp(_availableHours.first, _availableHours.last),
-                        decoration: const InputDecoration(labelText: 'Hora final'),
+                        decoration: const InputDecoration(
+                          labelText: 'Hora final',
+                        ),
                         items: _availableHours
                             .map(
                               (hour) => DropdownMenuItem(
@@ -7769,7 +8067,8 @@ class _ScheduleBlockDialogState extends State<_ScheduleBlockDialog> {
                                 final minutes = _minutesForHour(hour);
                                 setState(() {
                                   final selectedMinute = _endMinute % 60;
-                                  _endMinute = (hour * 60) +
+                                  _endMinute =
+                                      (hour * 60) +
                                       (minutes.contains(selectedMinute)
                                           ? selectedMinute
                                           : minutes.last);
@@ -7784,25 +8083,32 @@ class _ScheduleBlockDialogState extends State<_ScheduleBlockDialog> {
                         decoration: const InputDecoration(
                           labelText: 'Minuto final',
                         ),
-                        items: _minutesForHour(
-                          (_endMinute >= 24 * 60 ? 23 : _endMinute ~/ 60).clamp(
-                            _availableHours.first,
-                            _availableHours.last,
-                          ),
-                        )
-                            .map(
-                              (minute) => DropdownMenuItem(
-                                value: minute,
-                                child: Text(minute.toString().padLeft(2, '0')),
-                              ),
-                            )
-                            .toList(),
+                        items:
+                            _minutesForHour(
+                                  (_endMinute >= 24 * 60
+                                          ? 23
+                                          : _endMinute ~/ 60)
+                                      .clamp(
+                                        _availableHours.first,
+                                        _availableHours.last,
+                                      ),
+                                )
+                                .map(
+                                  (minute) => DropdownMenuItem(
+                                    value: minute,
+                                    child: Text(
+                                      minute.toString().padLeft(2, '0'),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
                         onChanged: _saving
                             ? null
                             : (minute) {
                                 if (minute == null) return;
                                 setState(() {
-                                  _endMinute = ((_endMinute ~/ 60) * 60) + minute;
+                                  _endMinute =
+                                      ((_endMinute ~/ 60) * 60) + minute;
                                 });
                               },
                       ),
@@ -7849,7 +8155,9 @@ class _ScheduleBlockDialogState extends State<_ScheduleBlockDialog> {
                             )
                           : const Icon(Icons.save_outlined),
                       label: Text(
-                        widget.initialBlock == null ? 'Guardar bloqueo' : 'Guardar cambios',
+                        widget.initialBlock == null
+                            ? 'Guardar bloqueo'
+                            : 'Guardar cambios',
                       ),
                     ),
                   ],
@@ -7916,8 +8224,8 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
   // ── Paquete de sesiones activo del cliente ──────────────────────────────
   // Se detecta automáticamente al seleccionar cliente + servicio.
   // Si el cliente tiene sesiones disponibles se ofrece usarlas.
-  Map<String, dynamic>? _activePackage;   // fila de client_packages
-  bool _usePackage = false;               // recepción activa la opción
+  Map<String, dynamic>? _activePackage; // fila de client_packages
+  bool _usePackage = false; // recepción activa la opción
   bool _checkingPackage = false;
   bool _showInfo = false;
   bool _serviceOpen = false;
@@ -8025,8 +8333,12 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
   void initState() {
     super.initState();
     _date = widget.editBooking?.date ?? widget.initialDate ?? DateTime.now();
-    _hour = widget.editBooking?.startMinute != null ? (widget.editBooking!.startMinute ~/ 60) : (widget.initialTime?.hour ?? 10);
-    _minute = widget.editBooking?.startMinute != null ? (widget.editBooking!.startMinute % 60) : (widget.initialTime?.minute ?? 0);
+    _hour = widget.editBooking?.startMinute != null
+        ? (widget.editBooking!.startMinute ~/ 60)
+        : (widget.initialTime?.hour ?? 10);
+    _minute = widget.editBooking?.startMinute != null
+        ? (widget.editBooking!.startMinute % 60)
+        : (widget.initialTime?.minute ?? 0);
     final initialTherapistId =
         widget.editBooking?.therapistId ?? widget.initialTherapistId;
     _therapistId =
@@ -8044,11 +8356,11 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
     // Cita nueva: nace 'scheduled' (Agendada). Recepción la pasa a 'confirmed'
     // cuando se valida (botón "Confirmar cita" del detalle).
     _status = widget.editBooking?.status ?? 'scheduled';
-    
+
     if (widget.editBooking != null) {
       _clientCtrl.text = widget.editBooking!.clientName;
-      _clientId        = widget.editBooking!.clientRecordId;
-      _notesCtrl.text  = widget.editBooking!.notes;
+      _clientId = widget.editBooking!.clientRecordId;
+      _notesCtrl.text = widget.editBooking!.notes;
     }
     _normalizeSelectedTime();
     _loadServices();
@@ -8103,7 +8415,11 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
     final clientId = _clientId?.trim() ?? '';
     final serviceId = _serviceId?.trim() ?? '';
     if (clientId.isEmpty || serviceId.isEmpty) {
-      if (mounted) setState(() { _activePackage = null; _usePackage = false; });
+      if (mounted)
+        setState(() {
+          _activePackage = null;
+          _usePackage = false;
+        });
       return;
     }
     setState(() => _checkingPackage = true);
@@ -8127,7 +8443,10 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
         _checkingPackage = false;
       });
     } catch (_) {
-      if (mounted) setState(() { _checkingPackage = false; });
+      if (mounted)
+        setState(() {
+          _checkingPackage = false;
+        });
     }
   }
 
@@ -8221,7 +8540,9 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
       );
       final validation = await _bookingSyncService.validateBookingDraft(draft);
       if (!validation.isValid) {
-        throw Exception(validation.errorMessage ?? 'No se pudo validar la reserva.');
+        throw Exception(
+          validation.errorMessage ?? 'No se pudo validar la reserva.',
+        );
       }
       final result = await _bookingSyncService.upsertBooking(draft);
 
@@ -8232,11 +8553,14 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
       if (_usePackage && _activePackage != null && result != null) {
         final bookingId = result['id']?.toString();
         if (bookingId != null) {
-          await Supabase.instance.client.from('bookings').update({
-            'payment_requirement': 'waived',
-            'waiver_reason': 'package',
-            'client_package_id': _activePackage!['id'],
-          }).eq('id', bookingId);
+          await Supabase.instance.client
+              .from('bookings')
+              .update({
+                'payment_requirement': 'waived',
+                'waiver_reason': 'package',
+                'client_package_id': _activePackage!['id'],
+              })
+              .eq('id', bookingId);
         }
       }
 
@@ -8488,9 +8812,9 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
                                         items: _availableHours,
                                         onChanged: (v) => setState(() {
                                           _hour = v;
-                                          final validMinutes =
-                                              widget.calendarHours
-                                                  .selectableMinutesForHour(v);
+                                          final validMinutes = widget
+                                              .calendarHours
+                                              .selectableMinutesForHour(v);
                                           if (!validMinutes.contains(_minute)) {
                                             _minute = validMinutes.first;
                                           }
@@ -8537,8 +8861,7 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
                                       _TimeDropdown(
                                         value: _endHour,
                                         items: _endHourItems,
-                                        onChanged: (v) =>
-                                            _setEndTime(hour: v),
+                                        onChanged: (v) => _setEndTime(hour: v),
                                       ),
                                       Padding(
                                         padding: const EdgeInsets.symmetric(
@@ -8600,7 +8923,9 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
                                   displayStringForOption: (o) =>
                                       o['full_name'] as String? ?? '',
                                   onSelected: (o) {
-                                    setState(() => _clientId = o['id'] as String);
+                                    setState(
+                                      () => _clientId = o['id'] as String,
+                                    );
                                     _checkActivePackage();
                                   },
                                   fieldViewBuilder:
@@ -8759,52 +9084,64 @@ class _NewBookingDialogState extends State<_NewBookingDialog> {
                       Container(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF2D8A4F).withValues(alpha: 0.08),
+                          color: const Color(
+                            0xFF2D8A4F,
+                          ).withValues(alpha: 0.08),
                           borderRadius: BorderRadius.circular(10),
                           border: Border.all(
-                              color: const Color(0xFF2D8A4F)
-                                  .withValues(alpha: 0.35)),
+                            color: const Color(
+                              0xFF2D8A4F,
+                            ).withValues(alpha: 0.35),
+                          ),
                         ),
-                        child: Row(children: [
-                          const Icon(Icons.local_activity_outlined,
-                              size: 18, color: Color(0xFF2D8A4F)),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  '${_activePackage!['name']}',
-                                  style: GoogleFonts.inter(
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.local_activity_outlined,
+                              size: 18,
+                              color: Color(0xFF2D8A4F),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '${_activePackage!['name']}',
+                                    style: GoogleFonts.inter(
                                       fontSize: 13,
                                       fontWeight: FontWeight.w700,
-                                      color: const Color(0xFF1A6035)),
-                                ),
-                                Text(
-                                  'Restan ${_activePackage!['sessions_remaining']} de '
-                                  '${_activePackage!['sessions_total']} sesiones',
-                                  style: GoogleFonts.inter(
+                                      color: const Color(0xFF1A6035),
+                                    ),
+                                  ),
+                                  Text(
+                                    'Restan ${_activePackage!['sessions_remaining']} de '
+                                    '${_activePackage!['sessions_total']} sesiones',
+                                    style: GoogleFonts.inter(
                                       fontSize: 12,
-                                      color: const Color(0xFF2D8A4F)),
-                                ),
-                              ],
+                                      color: const Color(0xFF2D8A4F),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                          Switch(
-                            value: _usePackage,
-                            activeColor: const Color(0xFF2D8A4F),
-                            onChanged: (v) => setState(() => _usePackage = v),
-                          ),
-                          Text(
-                            _usePackage ? 'Usar sesión' : 'No usar',
-                            style: GoogleFonts.inter(
+                            Switch(
+                              value: _usePackage,
+                              activeColor: const Color(0xFF2D8A4F),
+                              onChanged: (v) => setState(() => _usePackage = v),
+                            ),
+                            Text(
+                              _usePackage ? 'Usar sesión' : 'No usar',
+                              style: GoogleFonts.inter(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
                                 color: _usePackage
                                     ? const Color(0xFF2D8A4F)
-                                    : Colors.black38),
-                          ),
-                        ]),
+                                    : Colors.black38,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                       const SizedBox(height: 12),
                     ],
@@ -9490,8 +9827,9 @@ class _ModuleNav extends StatelessWidget {
   Widget build(BuildContext context) {
     final compact = MediaQuery.sizeOf(context).width < 960;
     final visibleIds = RolePermissions.visibleModulesFor(userRole);
-    final visibleMods =
-        _mods.where((module) => visibleIds.contains(module.$1)).toList();
+    final visibleMods = _mods
+        .where((module) => visibleIds.contains(module.$1))
+        .toList();
     return Container(
       height: 52,
       decoration: BoxDecoration(
@@ -9593,7 +9931,11 @@ class _ModuleNav extends StatelessWidget {
           SizedBox(width: compact ? 4 : 8),
           TextButton.icon(
             onPressed: () => onLogout(),
-            icon: const Icon(Icons.logout_outlined, size: 18, color: Colors.black87),
+            icon: const Icon(
+              Icons.logout_outlined,
+              size: 18,
+              color: Colors.black87,
+            ),
             label: Text(
               'Cerrar sesion',
               style: GoogleFonts.inter(
@@ -9679,7 +10021,10 @@ class _ModuleTabState extends State<_ModuleTab> {
               if ((widget.badgeCount ?? 0) > 0) ...[
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: widget.active
                         ? Colors.white.withValues(alpha: 0.24)
@@ -9771,6 +10116,7 @@ class _PlaceholderModule extends StatelessWidget {
     );
   }
 }
+
 // ─────────────────────────────────────────────────────────────────────────────
 // WhatsApp Integration
 // ─────────────────────────────────────────────────────────────────────────────
@@ -9813,21 +10159,27 @@ class _WhatsAppBtnState extends State<_WhatsAppBtn> {
 
     // Format date
     final dateStr = '${b.date.day} de ${_kMonths[b.date.month - 1]}';
-    
+
     // Replace tags
     msg = msg.replaceAll('[CLIENTE]', b.clientName);
     msg = msg.replaceAll('[SERVICIO]', b.serviceName);
     msg = msg.replaceAll('[FECHA]', dateStr);
     msg = msg.replaceAll('[HORA]', b.timeLabel);
-    msg = msg.replaceAll('[PRECIO]', ''); 
+    msg = msg.replaceAll('[PRECIO]', '');
     msg = msg.replaceAll('[LOCAL]', b.branchName ?? kDefaultBranchName);
-    msg = msg.replaceAll('[DIRECCION]', b.branchAddress ?? kDefaultBranchAddress);
+    msg = msg.replaceAll(
+      '[DIRECCION]',
+      b.branchAddress ?? kDefaultBranchAddress,
+    );
     msg = msg.replaceAll('[MAPS]', b.branchMaps ?? kDefaultBranchMaps);
 
     final phone = b.clientPhone ?? '';
     if (phone.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('El cliente no tiene teléfono registrado')));
+        const SnackBar(
+          content: Text('El cliente no tiene teléfono registrado'),
+        ),
+      );
       return;
     }
 
@@ -9835,7 +10187,9 @@ class _WhatsAppBtnState extends State<_WhatsAppBtn> {
     String cleanPhone = phone.replaceAll(RegExp(r'\D'), '');
     if (cleanPhone.length == 10) cleanPhone = '52$cleanPhone'; // Default to MX
 
-    final url = Uri.parse('https://wa.me/$cleanPhone?text=${Uri.encodeComponent(msg)}');
+    final url = Uri.parse(
+      'https://wa.me/$cleanPhone?text=${Uri.encodeComponent(msg)}',
+    );
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
     }
@@ -9851,16 +10205,23 @@ class _WhatsAppBtnState extends State<_WhatsAppBtn> {
         if (!mounted) return;
         if (_templates.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No hay plantillas de WhatsApp activas')));
+            const SnackBar(
+              content: Text('No hay plantillas de WhatsApp activas'),
+            ),
+          );
           return;
         }
 
         final RenderBox button = context.findRenderObject() as RenderBox;
-        final RenderBox overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+        final RenderBox overlay =
+            Overlay.of(context).context.findRenderObject() as RenderBox;
         final RelativeRect position = RelativeRect.fromRect(
           Rect.fromPoints(
             button.localToGlobal(Offset.zero, ancestor: overlay),
-            button.localToGlobal(button.size.bottomRight(Offset.zero), ancestor: overlay),
+            button.localToGlobal(
+              button.size.bottomRight(Offset.zero),
+              ancestor: overlay,
+            ),
           ),
           Offset.zero & overlay.size,
         );
@@ -9868,10 +10229,14 @@ class _WhatsAppBtnState extends State<_WhatsAppBtn> {
         final selected = await showMenu<WhatsAppTemplate>(
           context: context,
           position: position,
-          items: _templates.map((t) => PopupMenuItem(
-            value: t,
-            child: Text(t.title, style: GoogleFonts.inter(fontSize: 13)),
-          )).toList(),
+          items: _templates
+              .map(
+                (t) => PopupMenuItem(
+                  value: t,
+                  child: Text(t.title, style: GoogleFonts.inter(fontSize: 13)),
+                ),
+              )
+              .toList(),
         );
 
         if (selected != null) {
@@ -9918,9 +10283,7 @@ class _WeekClusterCardState extends State<_WeekClusterCard> {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 120),
           decoration: BoxDecoration(
-            color: _hovered
-                ? const Color(0xFFF5EFE3)
-                : const Color(0xFFFAF6EE),
+            color: _hovered ? const Color(0xFFF5EFE3) : const Color(0xFFFAF6EE),
             border: Border.all(
               color: SaharaTheme.gold.withValues(alpha: _hovered ? 0.55 : 0.35),
               width: 1,
@@ -10153,10 +10516,7 @@ class _WeekClusterSheetTile extends StatelessWidget {
                 ],
               ),
             ),
-            const Icon(
-              Icons.chevron_right_rounded,
-              color: Colors.black38,
-            ),
+            const Icon(Icons.chevron_right_rounded, color: Colors.black38),
           ],
         ),
       ),
@@ -10336,53 +10696,56 @@ class _WhatsAppMessageCenterButtonState
                       _renderPreview(opt.key) ??
                           'Cargando vista previa del mensaje…',
                       style: GoogleFonts.inter(
-                          fontSize: 12, color: Colors.black87, height: 1.4),
+                        fontSize: 12,
+                        color: Colors.black87,
+                        height: 1.4,
+                      ),
                     ),
                   ),
                 ),
                 child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 280),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 28,
-                      height: 28,
-                      decoration: BoxDecoration(
-                        color: opt.color.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(8),
+                  constraints: const BoxConstraints(maxWidth: 280),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: opt.color.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(opt.icon, size: 16, color: opt.color),
                       ),
-                      child: Icon(opt.icon, size: 16, color: opt.color),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            opt.label,
-                            style: GoogleFonts.inter(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.black87,
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              opt.label,
+                              style: GoogleFonts.inter(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.black87,
+                              ),
                             ),
-                          ),
-                          Text(
-                            opt.description,
-                            style: GoogleFonts.inter(
-                              fontSize: 11,
-                              color: Colors.black54,
+                            Text(
+                              opt.description,
+                              style: GoogleFonts.inter(
+                                fontSize: 11,
+                                color: Colors.black54,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
             ),
           )
           .toList(),
@@ -10398,11 +10761,7 @@ class _WhatsAppMessageCenterButtonState
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.chat_rounded,
-              size: 16,
-              color: Color(0xFF128C7E),
-            ),
+            const Icon(Icons.chat_rounded, size: 16, color: Color(0xFF128C7E)),
             const SizedBox(width: 6),
             Text(
               'WhatsApp',

@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/cart_item.dart';
+import '../models/checkout_models.dart';
 import '../models/store_product.dart';
 
 class StoreCheckoutService {
@@ -68,10 +69,32 @@ class StoreCheckoutService {
     return CheckoutConfirmationResult.fromMap(data);
   }
 
+  Future<GiftCardDownloadResult> downloadGiftCard({
+    required String downloadToken,
+  }) async {
+    final response = await Supabase.instance.client.functions.invoke(
+      'gift_card_download',
+      body: <String, dynamic>{'gift_card_token': downloadToken},
+    );
+
+    final raw = response.data;
+    final data = raw is Map
+        ? Map<String, dynamic>.from(raw)
+        : <String, dynamic>{};
+    if (response.status >= 400) {
+      throw CheckoutException(
+        data['error']?.toString() ?? 'No se pudo descargar la gift card.',
+      );
+    }
+
+    return GiftCardDownloadResult.fromMap(data);
+  }
+
   Map<String, dynamic> _serializeCartItem(CartItem item) {
     return <String, dynamic>{
       'product_id': item.product.id,
-      'base_product_id': item.product.checkoutMetadata['base_product_id']?.toString(),
+      'base_product_id': item.product.checkoutMetadata['base_product_id']
+          ?.toString(),
       'name': item.product.name,
       'description': item.product.description,
       'short_description': item.product.shortDescription,
@@ -123,46 +146,6 @@ class CheckoutPricing {
       'service_charge': serviceCharge,
       'total': total,
     };
-  }
-}
-
-class CheckoutSessionResult {
-  const CheckoutSessionResult({
-    required this.orderId,
-    required this.sessionId,
-    required this.checkoutUrl,
-  });
-
-  final String orderId;
-  final String sessionId;
-  final String checkoutUrl;
-
-  factory CheckoutSessionResult.fromMap(Map<String, dynamic> map) {
-    return CheckoutSessionResult(
-      orderId: map['order_id']?.toString() ?? '',
-      sessionId: map['session_id']?.toString() ?? '',
-      checkoutUrl: map['checkout_url']?.toString() ?? '',
-    );
-  }
-}
-
-class CheckoutConfirmationResult {
-  const CheckoutConfirmationResult({
-    required this.orderId,
-    required this.status,
-    required this.paymentStatus,
-  });
-
-  final String orderId;
-  final String status;
-  final String paymentStatus;
-
-  factory CheckoutConfirmationResult.fromMap(Map<String, dynamic> map) {
-    return CheckoutConfirmationResult(
-      orderId: map['order_id']?.toString() ?? '',
-      status: map['status']?.toString() ?? '',
-      paymentStatus: map['payment_status']?.toString() ?? '',
-    );
   }
 }
 
