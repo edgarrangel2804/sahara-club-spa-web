@@ -44,10 +44,13 @@ class ExperienceSection extends StatelessWidget {
               children: [
                 Expanded(flex: 5, child: _philosophyLeft(isMobile)),
                 const SizedBox(width: 80),
-                Expanded(flex: 4, child: Padding(
-                  padding: const EdgeInsets.only(top: 60),
-                  child: _philosophyRight(),
-                )),
+                Expanded(
+                  flex: 4,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 60),
+                    child: _philosophyRight(),
+                  ),
+                ),
               ],
             ),
     );
@@ -138,10 +141,12 @@ class ExperienceSection extends StatelessWidget {
           ? Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: pillars
-                  .map((p) => Padding(
-                        padding: const EdgeInsets.only(bottom: 48),
-                        child: _buildPillar(p),
-                      ))
+                  .map(
+                    (p) => Padding(
+                      padding: const EdgeInsets.only(bottom: 48),
+                      child: _buildPillar(p),
+                    ),
+                  )
                   .toList(),
             )
           : Row(
@@ -150,7 +155,9 @@ class ExperienceSection extends StatelessWidget {
                 final p = pillars[i];
                 return Expanded(
                   child: Container(
-                    margin: EdgeInsets.only(right: i < pillars.length - 1 ? 48 : 0),
+                    margin: EdgeInsets.only(
+                      right: i < pillars.length - 1 ? 48 : 0,
+                    ),
                     child: _buildPillar(p),
                   ),
                 );
@@ -163,6 +170,18 @@ class ExperienceSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: AspectRatio(
+            aspectRatio: 4 / 3,
+            child: Image.asset(
+              _pillarImageFor(p.number),
+              fit: BoxFit.cover,
+              width: double.infinity,
+            ),
+          ),
+        ),
+        const SizedBox(height: 26),
         Text(
           p.number,
           style: GoogleFonts.playfairDisplay(
@@ -193,6 +212,15 @@ class ExperienceSection extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  String _pillarImageFor(String number) {
+    return switch (number) {
+      '01' => 'assets/experiencia/01-presencia.png',
+      '02' => 'assets/experiencia/02-conexion.png',
+      '03' => 'assets/experiencia/03-transformacion.png',
+      _ => 'assets/images/01.png',
+    };
   }
 
   Widget _buildQuote(bool isMobile) {
@@ -238,7 +266,11 @@ class ExperienceSection extends StatelessWidget {
         children: [
           AspectRatio(
             aspectRatio: 4 / 3,
-            child: Image.asset('assets/images/01.png', fit: BoxFit.cover, width: double.infinity),
+            child: Image.asset(
+              'assets/images/01.png',
+              fit: BoxFit.cover,
+              width: double.infinity,
+            ),
           ),
           const SizedBox(height: 3),
           Row(
@@ -294,13 +326,19 @@ class ExperienceSection extends StatelessWidget {
             child: Column(
               children: [
                 Expanded(
-                  child: Image.asset('assets/images/02.png', fit: BoxFit.cover,
-                      width: double.infinity),
+                  child: Image.asset(
+                    'assets/images/02.png',
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                  ),
                 ),
                 const SizedBox(height: 3),
                 Expanded(
-                  child: Image.asset('assets/images/03.png', fit: BoxFit.cover,
-                      width: double.infinity),
+                  child: Image.asset(
+                    'assets/images/03.png',
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                  ),
                 ),
               ],
             ),
@@ -311,13 +349,19 @@ class ExperienceSection extends StatelessWidget {
             child: Column(
               children: [
                 Expanded(
-                  child: Image.asset('assets/images/04.png', fit: BoxFit.cover,
-                      width: double.infinity),
+                  child: Image.asset(
+                    'assets/images/04.png',
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                  ),
                 ),
                 const SizedBox(height: 3),
                 Expanded(
-                  child: Image.asset('assets/images/05.png', fit: BoxFit.cover,
-                      width: double.infinity),
+                  child: Image.asset(
+                    'assets/images/05.png',
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                  ),
                 ),
               ],
             ),

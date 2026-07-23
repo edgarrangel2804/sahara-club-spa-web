@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../features/web_content/web_content_models.dart';
 import '../features/web_content/web_content_repository.dart';
 import '../services/whatsapp_link.dart';
+import 'concierge_chat.dart';
 
 class ContactSection extends StatefulWidget {
   const ContactSection({super.key});
@@ -86,15 +87,9 @@ class _ContactSectionState extends State<ContactSection> {
           : Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  flex: 5,
-                  child: _buildContactInfo(data, isMobile),
-                ),
+                Expanded(flex: 5, child: _buildContactInfo(data, isMobile)),
                 const SizedBox(width: 100),
-                Expanded(
-                  flex: 4,
-                  child: _buildSchedule(data, isMobile),
-                ),
+                Expanded(flex: 4, child: _buildSchedule(data, isMobile)),
               ],
             ),
     );
@@ -118,7 +113,8 @@ class _ContactSectionState extends State<ContactSection> {
     final rawCtaUrl = (item?.ctaUrl ?? '').trim();
     final reserveUrl = (rawCtaUrl.isEmpty || rawCtaUrl.startsWith('#'))
         ? SaharaWhatsApp.buildUri(
-            message: 'Hola, me gustaría reservar mi ritual en Sahara Club Spa ✨',
+            message:
+                'Hola, me gustaría reservar mi ritual en Sahara Club Spa ✨',
           ).toString()
         : rawCtaUrl;
 
@@ -186,6 +182,7 @@ class _ContactSectionState extends State<ContactSection> {
                     label: reserveText.toUpperCase(),
                     filled: true,
                     url: reserveUrl,
+                    onTap: () => conciergeChatOpen.value = true,
                   ),
                 ],
               )
@@ -202,6 +199,7 @@ class _ContactSectionState extends State<ContactSection> {
                     label: reserveText.toUpperCase(),
                     filled: true,
                     url: reserveUrl,
+                    onTap: () => conciergeChatOpen.value = true,
                   ),
                 ],
               ),
@@ -230,7 +228,8 @@ class _ContactSectionState extends State<ContactSection> {
 
   Widget _buildSchedule(_ContactSectionViewData data, bool isMobile) {
     final scheduleItems = data.scheduleItems;
-    final note = data.note ??
+    final note =
+        data.note ??
         'Las citas se asignan con confirmación del equipo. Te contactamos en menos de 2 horas.';
 
     return Column(
@@ -247,10 +246,12 @@ class _ContactSectionState extends State<ContactSection> {
           ),
         ),
         const SizedBox(height: 40),
-        ...scheduleItems.expand((item) => [
-              _scheduleRow(item.title, item.shortDescription),
-              _divider(),
-            ]),
+        ...scheduleItems.expand(
+          (item) => [
+            _scheduleRow(item.title, item.shortDescription),
+            _divider(),
+          ],
+        ),
         if (scheduleItems.isEmpty) ...[
           _scheduleRow('Lunes — Viernes', '9:00 am · 9:00 pm'),
           _divider(),
@@ -380,15 +381,16 @@ class _ContactSectionViewData {
   final List<WebContentItem> hourItems;
 
   factory _ContactSectionViewData.fallback() => _ContactSectionViewData(
-        profile: WebBusinessProfile.empty(),
-        contactItem: null,
-        hourItems: const <WebContentItem>[],
-      );
+    profile: WebBusinessProfile.empty(),
+    contactItem: null,
+    hourItems: const <WebContentItem>[],
+  );
 
-  List<WebContentItem> get scheduleItems => hourItems
-      .where((item) => item.category.trim().toLowerCase() != 'note')
-      .toList()
-    ..sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+  List<WebContentItem> get scheduleItems =>
+      hourItems
+          .where((item) => item.category.trim().toLowerCase() != 'note')
+          .toList()
+        ..sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
 
   String? get note {
     for (final item in hourItems) {
@@ -406,12 +408,14 @@ class _ActionButton extends StatefulWidget {
     required this.label,
     required this.url,
     this.icon,
+    this.onTap,
     required this.filled,
   });
 
   final String label;
   final String url;
   final IconData? icon;
+  final VoidCallback? onTap;
   final bool filled;
 
   @override
@@ -422,6 +426,10 @@ class _ActionButtonState extends State<_ActionButton> {
   bool _hovered = false;
 
   Future<void> _open() async {
+    if (widget.onTap != null) {
+      widget.onTap!();
+      return;
+    }
     final uri = _resolveUrl(widget.url);
     if (uri != null) {
       await launchUrl(uri, mode: LaunchMode.platformDefault);
@@ -433,8 +441,9 @@ class _ActionButtonState extends State<_ActionButton> {
     final hoveredFill = widget.filled
         ? const Color(0xFFE8DCC8)
         : const Color(0xFFC6A76A);
-    final idleFill =
-        widget.filled ? const Color(0xFFC6A76A) : Colors.transparent;
+    final idleFill = widget.filled
+        ? const Color(0xFFC6A76A)
+        : Colors.transparent;
     final textColor = widget.filled ? Colors.black : const Color(0xFFC6A76A);
 
     return MouseRegion(

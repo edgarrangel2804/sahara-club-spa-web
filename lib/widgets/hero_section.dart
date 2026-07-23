@@ -4,7 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../features/web_content/web_content_models.dart';
 import '../features/web_content/web_content_repository.dart';
-import '../services/whatsapp_link.dart';
+import 'concierge_chat.dart';
 import 'hero_media_background.dart';
 
 class HeroSection extends StatefulWidget {
@@ -65,13 +65,9 @@ class _HeroSectionState extends State<HeroSection> {
               height: isMobile ? 620 : 850,
               child: Stack(
                 children: [
-                  const Positioned.fill(
-                    child: HeroMediaBackground(),
-                  ),
+                  const Positioned.fill(child: HeroMediaBackground()),
                   if (imageUrl.isNotEmpty)
-                    Positioned.fill(
-                      child: _HeroOverlayImage(url: imageUrl),
-                    ),
+                    Positioned.fill(child: _HeroOverlayImage(url: imageUrl)),
                   Positioned.fill(
                     child: DecoratedBox(
                       decoration: BoxDecoration(
@@ -79,8 +75,12 @@ class _HeroSectionState extends State<HeroSection> {
                           begin: Alignment.centerLeft,
                           end: Alignment.centerRight,
                           colors: [
-                            Colors.black.withValues(alpha: isMobile ? 0.65 : 0.52),
-                            Colors.black.withValues(alpha: isMobile ? 0.35 : 0.18),
+                            Colors.black.withValues(
+                              alpha: isMobile ? 0.65 : 0.52,
+                            ),
+                            Colors.black.withValues(
+                              alpha: isMobile ? 0.35 : 0.18,
+                            ),
                           ],
                         ),
                       ),
@@ -123,10 +123,7 @@ class _HeroSectionState extends State<HeroSection> {
                               isMobile: isMobile,
                               onTap: hero?.ctaUrl.trim().isNotEmpty == true
                                   ? () => _openCta(hero!.ctaUrl)
-                                  : () => SaharaWhatsApp.openWhatsApp(
-                                        message:
-                                            'Hola, me gustaría reservar mi ritual en Sahara Club Spa ✨',
-                                      ),
+                                  : () => conciergeChatOpen.value = true,
                             ),
                           ],
                         ),
@@ -148,7 +145,9 @@ class _HeroSectionState extends State<HeroSection> {
     VoidCallback? onTap,
   }) {
     return MouseRegion(
-      cursor: onTap == null ? SystemMouseCursors.basic : SystemMouseCursors.click,
+      cursor: onTap == null
+          ? SystemMouseCursors.basic
+          : SystemMouseCursors.click,
       onEnter: (_) => setState(() => _isHoverPrimary = true),
       onExit: (_) => setState(() => _isHoverPrimary = false),
       child: GestureDetector(
@@ -160,7 +159,9 @@ class _HeroSectionState extends State<HeroSection> {
             vertical: isMobile ? 18 : 24,
           ),
           decoration: BoxDecoration(
-            color: _isHoverPrimary ? const Color(0xFFE8DCC8) : const Color(0xFFC6A76A),
+            color: _isHoverPrimary
+                ? const Color(0xFFE8DCC8)
+                : const Color(0xFFC6A76A),
             borderRadius: BorderRadius.circular(0),
           ),
           child: Text(
