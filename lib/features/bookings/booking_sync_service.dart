@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'booking_active_filter.dart';
+
 class BookingSyncException implements Exception {
   const BookingSyncException(this.message);
 
@@ -58,6 +60,26 @@ class BookingUpsertData {
   final String? branchId;
 }
 
+/// Result of a batch attendance-history query for a set of paid booking IDs.
+class BatchAttendanceResult {
+  const BatchAttendanceResult._(this._state, this.attendedIds);
+
+  /// Query succeeded.
+  const BatchAttendanceResult.success(Set<String> attendedIds)
+      : this._(_AttendanceQueryState.success, attendedIds);
+
+  /// Query failed (RLS, network).
+  const BatchAttendanceResult.failure()
+      : this._(_AttendanceQueryState.failure, const {});
+
+  final _AttendanceQueryState _state;
+  final Set<String> attendedIds;
+
+  bool get isSuccess => _state == _AttendanceQueryState.success;
+}
+
+enum _AttendanceQueryState { success, failure }
+
 class BookingSyncService {
   const BookingSyncService();
 
@@ -110,10 +132,7 @@ class BookingSyncService {
 
     if (statusFilter == 'active') {
       query = query.or(
-        'status.eq.scheduled,status.eq.pending,status.eq.pending_reception,'
-        'status.eq.pending_payment,status.eq.payment_received,status.eq.confirmed,'
-        'status.eq.checked_in,status.eq.in_progress,'
-        'status.eq.completed,status.eq.awaiting_payment',
+        activeBookingStatuses.map((s) => 'status.eq.$s').join(','),
       );
     } else if (statusFilter == 'pending') {
       // "Agendadas": engloba el nuevo 'scheduled' + legacy 'pending' /
@@ -132,6 +151,43 @@ class BookingSyncService {
 
     final data = await query.order('booking_date').order('booking_time');
     return (data as List).cast<Map<String, dynamic>>();
+  }
+
+  /// Returns the set of booking IDs that have attendance evidence:
+  /// at least one row in appointment_status_history with new_status IN
+  /// ('completed', 'awaiting_payment').
+  ///
+  /// 'awaiting_payment' proves attendance because the only code path that
+  /// writes it (_persistBookingStatusFlow) sets 'completed' first, then
+  /// creates the sale, then upgrades to 'awaiting_payment'. If RLS blocks
+  /// the upgrade the booking stays at 'completed' — both states mean the
+  /// service was finished.
+  ///
+  /// 'in_progress' is deliberately excluded: it means service started, not
+  /// finished.
+  ///
+  /// Batch query to avoid N+1. Only fetches booking_id.
+  Future<BatchAttendanceResult> fetchAttendedBookingIds({
+    required List<String> bookingIds,
+  }) async {
+    if (bookingIds.isEmpty) {
+      return const BatchAttendanceResult.success({});
+    }
+    try {
+      final rows = await _client
+          .from('appointment_status_history')
+          .select('booking_id')
+          .inFilter('booking_id', bookingIds)
+          .inFilter('new_status', attendedTerminalStatuses.toList());
+      final set = <String>{};
+      for (final r in (rows as List)) {
+        final bid = (r as Map)['booking_id']?.toString();
+        if (bid != null) set.add(bid);
+      }
+      return BatchAttendanceResult.success(set);
+    } catch (_) {
+      return const BatchAttendanceResult.failure();
+    }
   }
 
   Future<String?> findClientRecordIdByName(String fullName) async {
@@ -186,7 +242,8 @@ class BookingSyncService {
         (data.clientProfileId ?? '').trim().isEmpty) {
       return const BookingValidationResult(
         isValid: false,
-        errorMessage: 'Selecciona o crea un cliente antes de guardar la reserva.',
+        errorMessage:
+            'Selecciona o crea un cliente antes de guardar la reserva.',
       );
     }
     if (data.therapistId.trim().isEmpty) {
@@ -286,10 +343,7 @@ class BookingSyncService {
       );
     }
 
-    return BookingValidationResult(
-      isValid: true,
-      warningMessage: warning,
-    );
+    return BookingValidationResult(isValid: true, warningMessage: warning);
   }
 
   Future<Map<String, dynamic>?> upsertBooking(BookingUpsertData data) async {
@@ -317,7 +371,9 @@ class BookingSyncService {
     );
     final validation = await validateBookingDraft(normalizedData);
     if (!validation.isValid) {
-      throw BookingSyncException(validation.errorMessage ?? 'Reserva invalida.');
+      throw BookingSyncException(
+        validation.errorMessage ?? 'Reserva invalida.',
+      );
     }
 
     final currentUserId = _client.auth.currentUser?.id;
@@ -338,7 +394,8 @@ class BookingSyncService {
     };
 
     try {
-      if (normalizedData.bookingId != null && normalizedData.bookingId!.isNotEmpty) {
+      if (normalizedData.bookingId != null &&
+          normalizedData.bookingId!.isNotEmpty) {
         return await _client
             .from('bookings')
             .update(payload)
@@ -456,7 +513,8 @@ class BookingSyncService {
   static int _likelyTijuanaUtcOffsetHours(DateTime local) {
     final dstStart = _secondSunday(local.year, 3);
     final dstEnd = _firstSunday(local.year, 11);
-    final inDst = !local.isBefore(DateTime(local.year, 3, dstStart, 2)) &&
+    final inDst =
+        !local.isBefore(DateTime(local.year, 3, dstStart, 2)) &&
         local.isBefore(DateTime(local.year, 11, dstEnd, 2));
     return inDst ? -7 : -8;
   }
@@ -466,7 +524,8 @@ class BookingSyncService {
     return 1 + ((DateTime.sunday - first.weekday) % 7);
   }
 
-  static int _secondSunday(int year, int month) => _firstSunday(year, month) + 7;
+  static int _secondSunday(int year, int month) =>
+      _firstSunday(year, month) + 7;
 
   static String _yyyyMMdd(DateTime date) {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';

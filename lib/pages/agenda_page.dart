@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_mode.dart';
 import '../features/auth/role_permissions.dart';
 import '../features/bookings/booking_sync_service.dart';
+import '../features/bookings/appointment_history_rules.dart';
 import '../features/mensajes/chat_service.dart';
 import '../theme/sahara_theme.dart';
 import '../features/clients/clients_module.dart';
@@ -175,7 +176,7 @@ class _Booking {
   final String notes;
   final String? clientPhone;
 
-  const _Booking({
+  _Booking({
     required this.id,
     required this.clientId,
     this.profileClientId,
@@ -203,6 +204,7 @@ class _Booking {
     this.depositRequiredCents,
     this.depositPaidCents,
     this.bookingSource,
+    this.historyVerification = HistoryVerificationState.successNotAttended,
   });
 
   final String? sucursalId;
@@ -220,12 +222,86 @@ class _Booking {
   // vistazo el origen.
   final String? bookingSource;
 
+  /// Attendance verification state, populated by batch query after load.
+  /// Defaults to [HistoryVerificationState.successNotAttended] for non-paid
+  /// statuses (irrelevant) and is updated for paid bookings.
+  HistoryVerificationState historyVerification =
+      HistoryVerificationState.successNotAttended;
+
+  // ── Delegated getters (single source: AppointmentHistoryRules) ──────────
+  bool get isHistoricalAttendedAndPaid =>
+      AppointmentHistoryRules.isHistoricalAttendedAndPaid(
+          status, historyVerification);
+
+  bool get isInteractionLocked =>
+      AppointmentHistoryRules.isInteractionLocked(status, historyVerification);
+
+  String get statusLabel =>
+      AppointmentHistoryRules.statusLabel(status, historyVerification);
+
+  Color get cardBg =>
+      _baseCardBg(status) ??
+      AppointmentHistoryRules.cardBg(status, historyVerification);
+
+  Color get cardAccent =>
+      _baseCardAccent(status) ??
+      AppointmentHistoryRules.cardAccent(status, historyVerification);
+
+  // ── Base colours (operational states not covered by the helper) ─────────
+  static Color? _baseCardBg(String status) {
+    switch (status) {
+      case 'scheduled':
+      case 'pending':
+      case 'pending_reception':
+      case 'pending_payment':
+        return const Color(0xFFD6E6F7); // azul pastel
+      case 'confirmed':
+        return const Color(0xFFD6EFD8); // verde pistache
+      case 'checked_in':
+      case 'in_progress':
+        return const Color(0xFFFFF3B0); // amarillo claro
+      case 'completed':
+        return const Color(0xFFE8E5DE); // gris suave
+      case 'cancelled':
+      case 'no_show':
+        return const Color(0xFFF4D7D7); // coral pastel
+      case 'rescheduled':
+        return const Color(0xFFD6E6F7); // azul cielo
+      default:
+        return null; // delegate to helper
+    }
+  }
+
+  static Color? _baseCardAccent(String status) {
+    switch (status) {
+      case 'scheduled':
+      case 'pending':
+      case 'pending_reception':
+      case 'pending_payment':
+        return const Color(0xFF5C8CC9); // azul medio
+      case 'confirmed':
+        return const Color(0xFF5DAA6E); // verde pistache
+      case 'checked_in':
+      case 'in_progress':
+        return const Color(0xFFD9A23B); // ámbar medio
+      case 'completed':
+        return const Color(0xFF8C8478); // gris medio
+      case 'cancelled':
+      case 'no_show':
+        return const Color(0xFFC77878); // coral medio
+      case 'rescheduled':
+        return const Color(0xFF5C8CC9); // azul medio
+      default:
+        return null; // delegate to helper
+    }
+  }
+
 
   factory _Booking.fromMap(Map<String, dynamic> m) {
     try {
       final t = (m['booking_time'] as String? ?? '09:00:00').split(':');
       final dateStr = m['booking_date'] as String? ?? DateTime.now().toIso8601String().split('T')[0];
-      
+
       return _Booking(
         id: m['id'] as String? ?? '',
         clientId:
@@ -269,7 +345,6 @@ class _Booking {
       );
     } catch (e) {
       debugPrint('Error parsing booking ${m['id']}: $e');
-      // Return a minimal valid booking to avoid crashing the entire list
       return _Booking(
         id: m['id'] as String? ?? 'error',
         clientId: '', clientName: 'Error de datos',
@@ -278,56 +353,6 @@ class _Booking {
         date: DateTime.now(), startMinute: 0, durationMinutes: 30,
         status: 'error', notes: '',
       );
-    }
-  }
-
-  // Paleta pastel premium. Fondos suaves para legibilidad con texto negro;
-  // accents de tono medio para el borde izquierdo de la tarjeta.
-  Color get cardBg {
-    switch (status) {
-      case 'scheduled':
-      case 'pending':
-      case 'pending_reception':
-      case 'pending_payment':
-        return const Color(0xFFD6E6F7); // azul pastel (Agendada)
-      case 'confirmed':
-        return const Color(0xFFD6EFD8); // verde pistache (Confirmada)
-      case 'checked_in':
-      case 'in_progress':
-        return const Color(0xFFFFF3B0); // amarillo claro (En servicio)
-      case 'completed':
-        return const Color(0xFFE8E5DE); // gris suave (Finalizada)
-      case 'cancelled':
-      case 'no_show':
-        return const Color(0xFFF4D7D7); // coral pastel (Cancelada)
-      case 'rescheduled':
-        return const Color(0xFFD6E6F7); // azul cielo (Reagendada)
-      default:
-        return const Color(0xFFEDEAE3); // arena Sahara
-    }
-  }
-
-  Color get cardAccent {
-    switch (status) {
-      case 'scheduled':
-      case 'pending':
-      case 'pending_reception':
-      case 'pending_payment':
-        return const Color(0xFF5C8CC9); // azul medio (Agendada)
-      case 'confirmed':
-        return const Color(0xFF5DAA6E); // verde pistache
-      case 'checked_in':
-      case 'in_progress':
-        return const Color(0xFFD9A23B); // ámbar medio (En servicio)
-      case 'completed':
-        return const Color(0xFF8C8478); // gris medio (Finalizada)
-      case 'cancelled':
-      case 'no_show':
-        return const Color(0xFFC77878); // coral medio (Cancelada)
-      case 'rescheduled':
-        return const Color(0xFF5C8CC9); // azul medio (Reagendada)
-      default:
-        return SaharaTheme.gold;
     }
   }
 
@@ -1245,6 +1270,18 @@ class _AgendaPageState extends State<AgendaPage> {
   }
 
   Future<bool> _updateBookingStatus(_Booking booking, String newStatus) async {
+    // Backend guard: historical / locked bookings cannot change status.
+    if (booking.isInteractionLocked) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Esta cita está bloqueada y no puede modificarse.'),
+            backgroundColor: Color(0xFF6D2335),
+          ),
+        );
+      }
+      return false;
+    }
     try {
       final finalStatus = await _persistBookingStatusFlow(booking, newStatus);
 
@@ -1477,6 +1514,9 @@ class _AgendaPageState extends State<AgendaPage> {
         _loading = false;
         _hasLoadedOnce = true;
       });
+      // Best-effort enrichment: determines which paid bookings were actually
+      // attended. Runs after the initial render so the grid appears immediately.
+      _loadAttendedHistory(parsed);
     } catch (e) {
       debugPrint('loadBookings: $e');
       if (mounted) {
@@ -1489,6 +1529,56 @@ class _AgendaPageState extends State<AgendaPage> {
           ),
         );
       }
+    }
+  }
+
+  /// Fetches attendance history in batch for the given bookings.
+  ///
+  /// Only queries for bookings with status='paid'. On success, sets
+  /// [hasAttendedStatusHistory] to true/false based on the result.
+  /// On failure, leaves it as null (unverified) so the UI can apply
+  /// safe degradation (locked but not labelled as historical).
+  Future<void> _loadAttendedHistory(List<_Booking> bookings) async {
+    final paidIds = bookings
+        .where((b) => b.status == 'paid')
+        .map((b) => b.id)
+        .where((id) => id.isNotEmpty)
+        .toList();
+    if (paidIds.isEmpty) return;
+    // Set all paid bookings to loading while the query runs.
+    for (final b in bookings) {
+      if (b.status == 'paid') {
+        b.historyVerification = HistoryVerificationState.loading;
+      }
+    }
+    setState(() {}); // show "verificando" labels immediately
+    try {
+      final result = await _bookingSyncService.fetchAttendedBookingIds(
+        bookingIds: paidIds,
+      );
+      if (!mounted) return;
+      var changed = false;
+      for (final b in bookings) {
+        if (b.status != 'paid') continue;
+        final newState = result.isSuccess
+            ? (result.attendedIds.contains(b.id)
+                ? HistoryVerificationState.successAttended
+                : HistoryVerificationState.successNotAttended)
+            : HistoryVerificationState.failure;
+        if (b.historyVerification != newState) {
+          b.historyVerification = newState;
+          changed = true;
+        }
+      }
+      if (changed) setState(() {});
+    } catch (_) {
+      if (!mounted) return;
+      for (final b in bookings) {
+        if (b.status == 'paid') {
+          b.historyVerification = HistoryVerificationState.failure;
+        }
+      }
+      setState(() {});
     }
   }
 
@@ -2306,6 +2396,18 @@ class _AgendaPageState extends State<AgendaPage> {
     DateTime newDate,
     int newMinute,
   ) async {
+    // Backend guard: historical / locked bookings cannot be moved.
+    if (b.isInteractionLocked) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Esta cita está bloqueada y no puede moverse.'),
+            backgroundColor: Color(0xFF6D2335),
+          ),
+        );
+      }
+      return false;
+    }
     final bookingDate = _isoDateOnly(newDate);
     final bookingTime = _isoTimeOnly(newMinute);
     try {
@@ -2729,7 +2831,7 @@ class _AgendaReservationChatDrawer extends StatelessWidget {
                           ),
                         ),
                         child: Text(
-                          _statusLabel(booking.status),
+                          booking.statusLabel,
                           style: GoogleFonts.inter(
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
@@ -4385,7 +4487,9 @@ class _WeekGridState extends State<_WeekGrid> {
               left: dayIdx * _dayWidth + 1,
               width: _dayWidth - 2,
               height: height,
-              child: Draggable<_Booking>(
+              child: b.isInteractionLocked
+                  ? _BookingCard(booking: b, onTap: () => widget.onBookingTap(ctx, b))
+                  : Draggable<_Booking>(
                 data: b,
                 onDragStarted: () => setState(() => _dragging = b),
                 onDraggableCanceled: (velocity, offset) => setState(() {
@@ -4967,7 +5071,9 @@ class _DayGridState extends State<_DayGrid> {
         left: 1,
         right: 1,
         height: height,
-        child: Draggable<_Booking>(
+        child: b.isInteractionLocked
+            ? _BookingCard(booking: b, onTap: () => widget.onBookingTap(ctx, b))
+            : Draggable<_Booking>(
           data: b,
           onDragStarted: () => setState(() => _dragging = b),
           onDraggableCanceled: (velocity, offset) => setState(() {
@@ -6690,7 +6796,7 @@ class _BookingDetailDialog extends StatelessWidget {
                 _DetailRow(icon: Icons.sticky_note_2_outlined, text: b.notes),
               _DetailRow(
                 icon: Icons.circle,
-                text: statusLabel(b.status),
+                text: b.statusLabel,
                 color: b.cardAccent,
               ),
               // Bloque de anticipo / waiver
@@ -6802,7 +6908,8 @@ class _BookingDetailDialog extends StatelessWidget {
                       color: const Color(0xFF4A4A4A),
                       onTap: onViewTicket,
                     ),
-                  _DialogBtn(
+                  if (!b.isInteractionLocked)
+                    _DialogBtn(
                     // Abre el formulario completo de la cita (prellenado):
                     // servicio, terapeuta, fecha, hora, duración, estatus y
                     // notas. Es el mismo dialog de creación en modo "Editar
