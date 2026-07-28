@@ -84,6 +84,8 @@ class ReceptionAlert {
         return 'Pago de anticipo';
       case 'requires_reception':
         return 'Requiere recepción';
+      case 'gift_card_purchased':
+        return 'Compra de gift card';
       default:
         return 'Evento';
     }
@@ -101,6 +103,8 @@ class ReceptionAlert {
         return Icons.payments_outlined;
       case 'requires_reception':
         return Icons.priority_high_rounded;
+      case 'gift_card_purchased':
+        return Icons.card_giftcard_outlined;
       default:
         return Icons.notifications_outlined;
     }
@@ -118,6 +122,8 @@ class ReceptionAlert {
         return const Color(0xFF1A9E65); // verde
       case 'requires_reception':
         return const Color(0xFFB4232A); // rojo intenso (acción humana)
+      case 'gift_card_purchased':
+        return const Color(0xFF7C3AED); // violeta (compra en tienda web)
       default:
         return Colors.black54;
     }

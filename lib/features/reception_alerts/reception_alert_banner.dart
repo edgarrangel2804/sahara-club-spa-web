@@ -270,6 +270,7 @@ class _ChannelChip extends StatelessWidget {
       'web' => ('Página web', Icons.language_outlined),
       'app' => ('App', Icons.phone_iphone_outlined),
       'external' => ('Externo', Icons.public_outlined),
+      'system' => ('Tienda', Icons.storefront_outlined),
       _ => (channel, Icons.notifications_outlined),
     };
     return Container(

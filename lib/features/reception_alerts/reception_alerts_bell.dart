@@ -326,6 +326,40 @@ class _AlertTile extends StatelessWidget {
     return 'hace ${diff.inDays} d';
   }
 
+  String _channelLabel(String c) {
+    switch (c) {
+      case 'whatsapp':
+        return 'WhatsApp';
+      case 'web':
+        return 'Página web';
+      case 'app':
+        return 'App';
+      case 'external':
+        return 'Externo';
+      case 'system':
+        return 'Tienda';
+      default:
+        return c;
+    }
+  }
+
+  IconData _channelIcon(String c) {
+    switch (c) {
+      case 'whatsapp':
+        return Icons.chat_outlined;
+      case 'web':
+        return Icons.language_outlined;
+      case 'app':
+        return Icons.phone_iphone_outlined;
+      case 'external':
+        return Icons.public_outlined;
+      case 'system':
+        return Icons.storefront_outlined;
+      default:
+        return Icons.notifications_outlined;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final dateLine = [
@@ -441,11 +475,11 @@ class _AlertTile extends StatelessWidget {
                   const SizedBox(height: 6),
                   Row(
                     children: [
-                      Icon(Icons.chat_outlined,
+                      Icon(_channelIcon(alert.channel),
                           size: 11, color: Colors.black38),
                       const SizedBox(width: 3),
                       Text(
-                        alert.channel == 'whatsapp' ? 'WhatsApp' : alert.channel,
+                        _channelLabel(alert.channel),
                         style: GoogleFonts.inter(
                           fontSize: 10,
                           color: Colors.black38,
