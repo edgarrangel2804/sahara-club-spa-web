@@ -180,9 +180,11 @@ class _AlertsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Pendientes (no resueltas) arriba; las resueltas como historial debajo.
+    // La campana solo muestra notificaciones PENDIENTES. Las atendidas
+    // ('resolved') ya no llegan aquí (se filtran en fetchRecent) y no se
+    // listan: al atender una, desaparece de la campana. El historial queda
+    // en la BD y en la agenda.
     final pending = alerts.where((a) => !a.isResolved).toList();
-    final resolved = alerts.where((a) => a.isResolved).toList();
     final unseen = alerts.where((a) => a.isUnseen).length;
 
     return Material(
@@ -267,7 +269,7 @@ class _AlertsPanel extends StatelessWidget {
             const Divider(height: 1, color: Color(0xFFE0DDD8)),
             // Lista
             Flexible(
-              child: alerts.isEmpty
+              child: pending.isEmpty
                   ? _empty()
                   : ListView(
                       padding: EdgeInsets.zero,
@@ -280,27 +282,6 @@ class _AlertsPanel extends StatelessWidget {
                             onTap: () => onOpenAlert(a),
                           ),
                         ),
-                        if (resolved.isNotEmpty) ...[
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
-                            child: Text(
-                              'ATENDIDAS',
-                              style: GoogleFonts.inter(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 1,
-                                color: Colors.black38,
-                              ),
-                            ),
-                          ),
-                          ...resolved.map(
-                            (a) => _AlertTile(
-                              alert: a,
-                              onMarkResolved: null,
-                              onTap: () => onOpenAlert(a),
-                            ),
-                          ),
-                        ],
                       ],
                     ),
             ),
