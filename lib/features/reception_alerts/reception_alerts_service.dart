@@ -12,13 +12,18 @@ class ReceptionAlertsService {
   SupabaseClient get _client => Supabase.instance.client;
 
   Future<List<ReceptionAlert>> fetchRecent({int limit = 50}) async {
-    // La campana solo muestra notificaciones PENDIENTES (unseen/seen). Las
-    // atendidas ('resolved') se ocultan: una vez que recepción las atiende,
-    // desaparecen de la campana. Siguen en la BD para historial/auditoría.
+    // La campana solo muestra notificaciones PENDIENTES (unseen/seen) y de los
+    // últimos 20 días. Las atendidas ('resolved') se ocultan al instante; las
+    // de más de 20 días no se muestran (y un job en la BD las borra por hora).
+    final cutoff = DateTime.now()
+        .toUtc()
+        .subtract(const Duration(days: 20))
+        .toIso8601String();
     final rows = await _client
         .from('reception_alerts')
         .select()
         .neq('status', 'resolved')
+        .gte('created_at', cutoff)
         .order('created_at', ascending: false)
         .limit(limit);
     return (rows as List)
