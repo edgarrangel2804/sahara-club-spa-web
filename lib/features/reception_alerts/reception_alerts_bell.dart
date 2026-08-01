@@ -15,6 +15,7 @@ class ReceptionAlertsBell extends StatefulWidget {
     required this.onMarkResolved,
     required this.onMarkAllSeen,
     required this.onOpenAlert,
+    required this.onDelete,
     this.compact = false,
   });
 
@@ -24,6 +25,7 @@ class ReceptionAlertsBell extends StatefulWidget {
   final ValueChanged<String> onMarkResolved;
   final VoidCallback onMarkAllSeen;
   final ValueChanged<ReceptionAlert> onOpenAlert;
+  final ValueChanged<String> onDelete;
   final bool compact;
 
   @override
@@ -93,6 +95,10 @@ class _ReceptionAlertsBellState extends State<ReceptionAlertsBell> {
                   onOpenAlert: (a) {
                     _removePanel();
                     widget.onOpenAlert(a);
+                  },
+                  onDelete: (id) {
+                    widget.onDelete(id);
+                    _entry?.markNeedsBuild();
                   },
                 ),
               ),
@@ -170,6 +176,7 @@ class _AlertsPanel extends StatelessWidget {
     required this.onMarkAllSeen,
     required this.onMarkResolved,
     required this.onOpenAlert,
+    required this.onDelete,
   });
 
   final List<ReceptionAlert> alerts;
@@ -177,6 +184,7 @@ class _AlertsPanel extends StatelessWidget {
   final VoidCallback onMarkAllSeen;
   final ValueChanged<String> onMarkResolved;
   final ValueChanged<ReceptionAlert> onOpenAlert;
+  final ValueChanged<String> onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -280,6 +288,7 @@ class _AlertsPanel extends StatelessWidget {
                             alert: a,
                             onMarkResolved: () => onMarkResolved(a.id),
                             onTap: () => onOpenAlert(a),
+                            onDelete: () => onDelete(a.id),
                           ),
                         ),
                       ],
@@ -312,11 +321,13 @@ class _AlertTile extends StatelessWidget {
     required this.alert,
     required this.onMarkResolved,
     required this.onTap,
+    required this.onDelete,
   });
 
   final ReceptionAlert alert;
   final VoidCallback? onMarkResolved;
   final VoidCallback onTap;
+  final VoidCallback onDelete;
 
   String _timeAgo(DateTime dt) {
     final diff = DateTime.now().difference(dt);
@@ -430,6 +441,20 @@ class _AlertTile extends StatelessWidget {
                         style: GoogleFonts.inter(
                           fontSize: 10,
                           color: Colors.black38,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      // Ícono de basura: borra esta notificación (una por una).
+                      InkWell(
+                        onTap: onDelete,
+                        borderRadius: BorderRadius.circular(20),
+                        child: Tooltip(
+                          message: 'Borrar notificación',
+                          child: const Padding(
+                            padding: EdgeInsets.all(3),
+                            child: Icon(Icons.delete_outline,
+                                size: 16, color: Colors.black38),
+                          ),
                         ),
                       ),
                     ],

@@ -66,7 +66,19 @@ class ReceptionAlertsService {
           table: 'reception_alerts',
           callback: (_) => onChanged(),
         )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.delete,
+          schema: 'public',
+          table: 'reception_alerts',
+          callback: (_) => onChanged(),
+        )
         .subscribe();
+  }
+
+  /// Borra una notificación (ícono de basura). Requiere rol recepción/admin
+  /// (política RLS reception_alerts_delete_by_role).
+  Future<void> deleteAlert(String id) async {
+    await _client.from('reception_alerts').delete().eq('id', id);
   }
 
   Future<void> markSeen(String id) async {

@@ -1018,6 +1018,20 @@ class _AgendaPageState extends State<AgendaPage> {
     await _loadAlerts();
   }
 
+  // Ícono de basura: borra la notificación (una por una).
+  Future<void> _deleteAlert(String id) async {
+    // Quita del estado al instante para que desaparezca de inmediato.
+    setState(() {
+      _alerts = _alerts.where((a) => a.id != id).toList();
+      _alertsUnseenCount = _alerts.where((a) => a.isUnseen).length;
+      _floatingAlerts.removeWhere((a) => a.id == id);
+    });
+    try {
+      await _alertsService.deleteAlert(id);
+    } catch (_) {}
+    await _loadAlerts();
+  }
+
   Future<void> _markAllAlertsSeen() async {
     try {
       await _alertsService.markAllSeen();
@@ -1673,6 +1687,7 @@ class _AgendaPageState extends State<AgendaPage> {
             onAlertMarkResolved: _markAlertResolved,
             onAlertMarkAllSeen: _markAllAlertsSeen,
             onAlertOpen: _openAlertTarget,
+            onAlertDelete: _deleteAlert,
             onModuleTap: (m) {
               setState(() => _activeModule = m);
               // Al volver a la agenda, recargamos: editar un cliente en el
@@ -9565,6 +9580,7 @@ class _ModuleNav extends StatelessWidget {
     required this.onAlertMarkResolved,
     required this.onAlertMarkAllSeen,
     required this.onAlertOpen,
+    required this.onAlertDelete,
     required this.onModuleTap,
     required this.onLogout,
   });
@@ -9579,6 +9595,7 @@ class _ModuleNav extends StatelessWidget {
   final ValueChanged<String> onAlertMarkResolved;
   final VoidCallback onAlertMarkAllSeen;
   final ValueChanged<ReceptionAlert> onAlertOpen;
+  final ValueChanged<String> onAlertDelete;
   final ValueChanged<String> onModuleTap;
   final Future<void> Function() onLogout;
 
@@ -9696,6 +9713,7 @@ class _ModuleNav extends StatelessWidget {
             onMarkResolved: onAlertMarkResolved,
             onMarkAllSeen: onAlertMarkAllSeen,
             onOpenAlert: onAlertOpen,
+            onDelete: onAlertDelete,
           ),
           SizedBox(width: compact ? 4 : 8),
           TextButton.icon(
