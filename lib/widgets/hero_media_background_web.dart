@@ -30,10 +30,13 @@ class _HeroMediaBackgroundState extends State<HeroMediaBackground> {
         ..loop = true
         ..preload = 'metadata'
         ..setAttribute('playsinline', 'true')
-        ..poster = kHeroPosterWebUrl
+        // Sin poster: el póster anterior (portada.png) era la imagen vieja del
+        // hero y "se amontonaba" sobre el video nuevo al cargar. Dejamos un
+        // fondo oscuro de marca mientras el video arranca.
         ..style.width = '100%'
         ..style.height = '100%'
         ..style.objectFit = 'cover'
+        ..style.backgroundColor = '#0E0E0E'
         ..style.border = 'none',
     );
   }
