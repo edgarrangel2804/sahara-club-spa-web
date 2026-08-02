@@ -1,0 +1,4 @@
+-- Hotfix 20260801: la alerta de gift card muestra el teléfono COMPLETO del
+-- comprador (antes lo enmascaraba a los últimos 4). Recepción necesita el
+-- número completo para hacer correcciones. Panel interno (RLS recepción/admin).
+-- Reemplaza notify_reception_on_gift_card_created (ver funcion en BD).
