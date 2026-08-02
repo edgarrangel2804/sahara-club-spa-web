@@ -304,7 +304,7 @@ async function notifyReceptionReschedule(
 ): Promise<number> {
   const brief = await loadBookingBrief(bookingId)
   const alert = [
-    "🔄 *Reagenda IA (revalidar)*",
+    "🔄 *Solicitud de reagenda*",
     "",
     `*Cliente:* ${customerName ?? "Cliente WhatsApp"}`,
     `*Teléfono:* ${customerPhone}`,
@@ -312,7 +312,7 @@ async function notifyReceptionReschedule(
     `*Nueva fecha:* ${newDate}`,
     `*Nueva hora:* ${newTime}`,
     "",
-    "La cita quedó en revisión (pending_reception). Validar en agenda Sahara.",
+    "El cliente SOLICITA reagendar. El bot NO movió la cita: recepción debe revisar y ejecutar el cambio en agenda.",
   ].join("\n")
   return await notifyReceptionRaw(alert)
 }
@@ -323,7 +323,7 @@ async function notifyReceptionCancel(
 ): Promise<number> {
   const brief = await loadBookingBrief(bookingId)
   const alert = [
-    "❌ *Cancelación IA*",
+    "❌ *Solicitud de cancelación*",
     "",
     `*Cliente:* ${customerName ?? "Cliente WhatsApp"}`,
     `*Teléfono:* ${customerPhone}`,
@@ -331,7 +331,7 @@ async function notifyReceptionCancel(
     brief.date ? `*Fecha:* ${brief.date}${brief.time ? ` ${brief.time}` : ""}` : "",
     reason ? `*Motivo:* ${reason}` : "",
     "",
-    "El cliente canceló su cita desde WhatsApp.",
+    "El cliente SOLICITA cancelar. El bot NO canceló la cita: recepción debe revisar y ejecutar.",
   ].filter(Boolean).join("\n")
   return await notifyReceptionRaw(alert)
 }
@@ -343,6 +343,7 @@ async function logReceptionAlert(
   eventType:
     | "booking_pending_reception"
     | "booking_cancelled"
+    | "cancel_requested"
     | "reschedule_requested"
     | "requires_reception",
   opts: { bookingId?: string; phone?: string; clientName?: string | null; message?: string },
@@ -357,6 +358,31 @@ async function logReceptionAlert(
     })
   } catch (e) {
     console.warn("logReceptionAlert failed:", (e as Error).message)
+  }
+}
+
+// Verifica que una cita pertenezca al teléfono del cliente (match por últimos
+// 10 dígitos). Defensa para no notificar cancelaciones/reagendas de citas ajenas.
+async function bookingBelongsToPhone(bookingId: string, phone: string): Promise<boolean> {
+  try {
+    const tail = phone.replace(/\D/g, "").slice(-10)
+    if (tail.length < 10) return false
+    const { data: bk } = await supabase
+      .from("bookings")
+      .select("client_record_id")
+      .eq("id", bookingId)
+      .maybeSingle()
+    const clientId = (bk as { client_record_id?: string } | null)?.client_record_id
+    if (!clientId) return false
+    const { data: cl } = await supabase
+      .from("clients")
+      .select("phone")
+      .eq("id", clientId)
+      .maybeSingle()
+    const cphone = String((cl as { phone?: string } | null)?.phone ?? "")
+    return cphone.replace(/\D/g, "").slice(-10) === tail
+  } catch {
+    return false
   }
 }
 
@@ -589,7 +615,7 @@ const TOOLS = [
   {
     name: "reschedule_my_booking",
     description:
-      "Mueve una cita EXISTENTE del cliente a nueva fecha/hora. Úsala solo cuando el cliente pida cambiar/mover una cita suya. PRIMERO obtén el booking_id con consult_my_appointments y confirma cuál cita quiere mover. Solo funciona si ai_manageable=true (citas no confirmadas). Valida disponibilidad: si available=false devuelve suggested_slots para ofrecer. Si available=true, deja la cita en revisión de recepción con la nueva fecha/hora.",
+      "SOLICITA a recepción reagendar una cita del cliente. NO mueve la cita — el bot NUNCA cambia citas; solo registra la solicitud para que RECEPCIÓN la revise y ejecute. Úsala cuando el cliente pida cambiar/mover una cita suya: PRIMERO obtén el booking_id con consult_my_appointments y confirma cuál cita y a qué nueva fecha/hora. Al usarla, informa al cliente que RECEPCIÓN revisará su solicitud y le confirmará en breve. NUNCA afirmes que la cita ya quedó reagendada.",
     input_schema: {
       type: "object",
       properties: {
@@ -603,7 +629,7 @@ const TOOLS = [
   {
     name: "cancel_my_booking",
     description:
-      "Cancela una cita EXISTENTE del cliente. Úsala solo cuando el cliente pida explícitamente cancelar una cita suya, y DESPUÉS de confirmar con él cuál (obtén el booking_id con consult_my_appointments). Solo funciona si ai_manageable=true. Si devuelve error 'requires_reception', informa que recepción le ayudará con esa cita.",
+      "SOLICITA a recepción cancelar una cita del cliente. NO cancela la cita — el bot NUNCA cancela; solo registra la solicitud para que RECEPCIÓN la revise y ejecute (puede haber anticipo o política de 24h). Úsala cuando el cliente pida explícitamente cancelar una cita suya, DESPUÉS de confirmar cuál (booking_id de consult_my_appointments). Al usarla, informa al cliente que RECEPCIÓN revisará su solicitud y le confirmará. NUNCA afirmes que la cita ya fue cancelada.",
     input_schema: {
       type: "object",
       properties: {
@@ -1149,68 +1175,56 @@ async function execTool(
       const newDate = String(input.new_date ?? "").trim()
       const newTime = String(input.new_time ?? "").trim()
       if (!bookingId || !newDate || !newTime) return { error: "missing_params" }
-      const timeNorm = newTime.length === 5 ? `${newTime}:00` : newTime
-      const { data, error } = await supabase.rpc("reschedule_my_booking_from_ai", {
-        p_phone: phone,
-        p_booking_id: bookingId,
-        p_new_date: newDate,
-        p_new_time: timeNorm,
-      })
-      if (error) return { error: error.message }
-      const result = (data as Record<string, unknown> | null) ?? { ok: false, error: "rpc_returned_null" }
-      // Si se reagendó con éxito, alerta a recepción (re-validación de slot nuevo).
-      if (result.ok === true && result.rescheduled === true) {
-        try {
-          await notifyReceptionReschedule(phone, ctx.clientName ?? null, bookingId, newDate, newTime)
-        } catch (e) {
-          console.warn("reschedule reception alert failed:", (e as Error).message)
+      // POLÍTICA: el bot NUNCA reagenda. Solo verifica que la cita sea del
+      // cliente y notifica a recepción, que revisa y EJECUTA el cambio.
+      if (!(await bookingBelongsToPhone(bookingId, phone))) {
+        return {
+          ok: false, error: "booking_not_found_for_client",
+          note: "No encontré esa cita a tu nombre. Pide al cliente confirmar cuál es (consult_my_appointments).",
         }
-        await logReceptionAlert("reschedule_requested", {
-          bookingId, phone, clientName: ctx.clientName ?? null,
-          message: `Nueva fecha solicitada: ${newDate} ${newTime}`,
-        })
-      } else if (result.error === "requires_reception") {
-        // El cliente quiso reagendar una cita confirmada → recepción debe actuar.
-        await logReceptionAlert("requires_reception", {
-          bookingId, phone, clientName: ctx.clientName ?? null,
-          message: `El cliente pidió reagendar a ${newDate} ${newTime}, pero la cita ya está confirmada.`,
-        })
       }
-      return result
+      await logReceptionAlert("reschedule_requested", {
+        bookingId, phone, clientName: ctx.clientName ?? null,
+        message: `El cliente solicita reagendar a ${newDate} ${newTime}. Recepción debe revisar y ejecutar el cambio.`,
+      })
+      try {
+        await notifyReceptionReschedule(phone, ctx.clientName ?? null, bookingId, newDate, newTime)
+      } catch (e) {
+        console.warn("reschedule reception notify failed:", (e as Error).message)
+      }
+      return {
+        ok: true, requested: true, executed: false,
+        note: "Solicitud de reagenda registrada para RECEPCIÓN. Informa al cliente que recepción revisará su solicitud y le confirmará en breve. NUNCA afirmes que la cita ya fue reagendada.",
+      }
     }
     case "cancel_my_booking": {
       const phone = String(ctx.phone ?? "").trim()
       if (!phone) return { error: "phone_missing_from_context" }
       const bookingId = String(input.booking_id ?? "").trim()
       if (!bookingId) return { error: "missing_booking_id" }
-      const { data, error } = await supabase.rpc("cancel_my_booking_from_ai", {
-        p_phone: phone,
-        p_booking_id: bookingId,
-        p_reason: input.reason ? String(input.reason) : null,
-      })
-      if (error) return { error: error.message }
-      const result = (data as Record<string, unknown> | null) ?? { ok: false, error: "rpc_returned_null" }
-      if (result.ok === true && result.cancelled === true) {
-        try {
-          await notifyReceptionCancel(phone, ctx.clientName ?? null, bookingId, String(input.reason ?? ""))
-        } catch (e) {
-          console.warn("cancel reception alert failed:", (e as Error).message)
+      // POLÍTICA: el bot NUNCA cancela. Solo verifica propiedad y notifica a
+      // recepción, que revisa (anticipo / política 24h) y EJECUTA.
+      if (!(await bookingBelongsToPhone(bookingId, phone))) {
+        return {
+          ok: false, error: "booking_not_found_for_client",
+          note: "No encontré esa cita a tu nombre. Pide al cliente confirmar cuál es (consult_my_appointments).",
         }
-        await logReceptionAlert("booking_cancelled", {
-          bookingId, phone, clientName: ctx.clientName ?? null,
-          message: input.reason ? String(input.reason) : undefined,
-        })
-      } else if (result.error === "requires_reception") {
-        // El cliente quiso cancelar una cita confirmada → recepción debe actuar
-        // (puede haber anticipo / política 24h). No se canceló automáticamente.
-        await logReceptionAlert("requires_reception", {
-          bookingId, phone, clientName: ctx.clientName ?? null,
-          message: input.reason
-            ? `Quiere cancelar (cita confirmada). Motivo: ${String(input.reason)}`
-            : "El cliente quiere cancelar una cita ya confirmada.",
-        })
       }
-      return result
+      await logReceptionAlert("cancel_requested", {
+        bookingId, phone, clientName: ctx.clientName ?? null,
+        message: input.reason
+          ? `El cliente solicita cancelar. Motivo: ${String(input.reason)}. Recepción debe revisar y ejecutar.`
+          : "El cliente solicita cancelar su cita. Recepción debe revisar y ejecutar.",
+      })
+      try {
+        await notifyReceptionCancel(phone, ctx.clientName ?? null, bookingId, String(input.reason ?? ""))
+      } catch (e) {
+        console.warn("cancel reception notify failed:", (e as Error).message)
+      }
+      return {
+        ok: true, requested: true, executed: false,
+        note: "Solicitud de cancelación registrada para RECEPCIÓN. Informa al cliente que recepción revisará su solicitud y le confirmará. NUNCA afirmes que la cita ya fue cancelada.",
+      }
     }
     case "create_gift_card_checkout": {
       const phone = String(ctx.phone ?? "").trim()

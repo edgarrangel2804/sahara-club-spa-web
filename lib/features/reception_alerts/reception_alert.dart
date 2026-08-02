@@ -78,6 +78,8 @@ class ReceptionAlert {
         return 'Cita nueva por validar';
       case 'booking_cancelled':
         return 'Cancelación';
+      case 'cancel_requested':
+        return 'Solicitud de cancelación';
       case 'reschedule_requested':
         return 'Reagendamiento';
       case 'deposit_paid':
@@ -97,6 +99,8 @@ class ReceptionAlert {
         return Icons.event_available_outlined;
       case 'booking_cancelled':
         return Icons.event_busy_outlined;
+      case 'cancel_requested':
+        return Icons.cancel_outlined;
       case 'reschedule_requested':
         return Icons.update_outlined;
       case 'deposit_paid':
@@ -116,6 +120,8 @@ class ReceptionAlert {
         return const Color(0xFF2D6CDF); // azul (acción: validar + asignar)
       case 'booking_cancelled':
         return const Color(0xFFD64545); // rojo
+      case 'cancel_requested':
+        return const Color(0xFFE2571E); // naranja (solicitud: recepción ejecuta)
       case 'reschedule_requested':
         return const Color(0xFFE08A00); // ámbar
       case 'deposit_paid':
