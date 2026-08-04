@@ -128,18 +128,25 @@ async function handleBookingDepositPayment(
         // Cargar detalles
         const { data: full } = await supabase
           .from("bookings")
-          .select("id, booking_date, booking_time, " +
+          .select("id, booking_date, booking_time, therapist_id, " +
             "service:services(name), client:clients(full_name, phone)")
           .eq("id", bookingId)
           .maybeSingle()
         const f = full as {
-          booking_date: string; booking_time: string;
+          booking_date: string; booking_time: string; therapist_id: string | null;
           service: { name?: string } | null;
           client: { full_name?: string; phone?: string } | null;
         } | null
         const customerName = f?.client?.full_name ?? "Cliente"
         const phone = f?.client?.phone ?? "(sin teléfono)"
         const svc = f?.service?.name ?? "Servicio"
+        // Terapeuta (si la cita ya tiene una asignada). therapist_id → staff.
+        let therapistName = ""
+        if (f?.therapist_id) {
+          const { data: th } = await supabase
+            .from("staff").select("full_name").eq("id", f.therapist_id).maybeSingle()
+          therapistName = (th as { full_name?: string } | null)?.full_name ?? ""
+        }
         const message = [
           "💰 *Pago anticipo recibido*",
           "",
@@ -148,10 +155,11 @@ async function handleBookingDepositPayment(
           `*Servicio:* ${svc}`,
           `*Fecha:* ${f?.booking_date}`,
           `*Hora:* ${f?.booking_time}`,
+          therapistName ? `*Terapeuta:* ${therapistName}` : "",
           `*Monto:* $${finalAmount} MXN`,
           "",
           "Pendiente de confirmar en agenda Sahara.",
-        ].join("\n")
+        ].filter(Boolean).join("\n")
         // Invocamos send_whatsapp_template_message via función shared… o más
         // simple: usamos Meta API directo. Aquí usamos la URL del webhook send.
         // Solo notificación de texto libre porque backup ya tiene ventana 24h.
@@ -310,6 +318,12 @@ serve(async (req) => {
       } catch (e) {
         console.warn("gift card whatsapp delivery failed:", (e as Error).message)
       }
+      // Avisa a los números admin de la compra de gift card (best-effort).
+      try {
+        await notifyAdminsGiftCard(supabase, orderId)
+      } catch (e) {
+        console.warn("gift card admin notify failed:", (e as Error).message)
+      }
     }
 
     if (event.type === "checkout.session.expired") {
@@ -329,6 +343,77 @@ serve(async (req) => {
     return jsonResponse({ error: "No se pudo procesar el webhook de Stripe." }, 400)
   }
 })
+
+// Aviso INMEDIATO a los números admin cuando se compra una gift card (tras el
+// pago confirmado por Stripe). Mismo criterio que el aviso de anticipo: usa
+// human_backup_numbers + ai_admin_numbers (dedup), gated en human_backup_enabled.
+// Best-effort: nunca rompe el flujo de pago/emisión.
+async function notifyAdminsGiftCard(
+  supabase: ReturnType<typeof createAdminClient>,
+  orderId: string,
+) {
+  // Solo órdenes que realmente emitieron gift card(s).
+  const { data: cards } = await supabase
+    .from("gift_cards")
+    .select("code, initial_balance, currency")
+    .eq("order_id", orderId)
+  const list = (cards ?? []) as Array<{ code?: string; initial_balance?: number; currency?: string }>
+  if (list.length === 0) return
+
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id, customer_name, customer_phone, total, currency, paid_at, created_at")
+    .eq("id", orderId)
+    .maybeSingle()
+  const o = order as {
+    id?: string; customer_name?: string; customer_phone?: string
+    total?: number; currency?: string; paid_at?: string; created_at?: string
+  } | null
+
+  const { data: settings } = await supabase
+    .from("ai_settings")
+    .select("human_backup_numbers, human_backup_enabled, ai_admin_numbers")
+    .eq("id", 1).maybeSingle()
+  const enabled = (settings as { human_backup_enabled?: boolean } | null)?.human_backup_enabled === true
+  if (!enabled) return
+  const backups = ((settings as { human_backup_numbers?: string[] } | null)?.human_backup_numbers ?? []) as string[]
+  const admins = ((settings as { ai_admin_numbers?: string[] } | null)?.ai_admin_numbers ?? []) as string[]
+  const seen = new Set<string>()
+  const targets: string[] = []
+  for (const nums of [backups, admins]) {
+    for (const n of nums) {
+      const tail = String(n).replace(/\D/g, "").slice(-10)
+      if (tail.length === 10 && !seen.has(tail)) { seen.add(tail); targets.push(n) }
+    }
+  }
+  if (targets.length === 0) return
+
+  const whenIso = o?.paid_at ?? o?.created_at ?? new Date().toISOString()
+  const when = new Date(whenIso).toLocaleString("es-MX", { timeZone: "America/Tijuana" })
+  const amount = typeof o?.total === "number" ? o.total : (list[0]?.initial_balance ?? 0)
+  const currency = o?.currency ?? list[0]?.currency ?? "MXN"
+  const codes = list.map((c) => c.code).filter(Boolean).join(", ")
+  const message = [
+    "🎁 *Gift Card comprada*",
+    "",
+    `*Comprador:* ${o?.customer_name ?? "Cliente"}`,
+    `*Teléfono:* ${o?.customer_phone ?? "(sin teléfono)"}`,
+    `*Monto:* $${amount} ${currency}`,
+    `*Fecha y hora:* ${when} (Tijuana)`,
+    `*Orden:* #${String(o?.id ?? orderId).slice(0, 8)}`,
+    codes ? `*Código(s):* ${codes}` : "*Código:* (pendiente de generar)",
+    "",
+    "Registrada también en la campana de recepción.",
+  ].join("\n")
+
+  for (const t of targets) {
+    try {
+      await sendBackupText(String(t), message)
+    } catch (e) {
+      console.warn("gift card admin notify failed for", t, (e as Error).message)
+    }
+  }
+}
 
 // Manda la tarjeta de regalo (código + link a la tarjeta con QR) al teléfono del
 // comprador por WhatsApp. Best-effort: si el comprador no tiene ventana de 24h

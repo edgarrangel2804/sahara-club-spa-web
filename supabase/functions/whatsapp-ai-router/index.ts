@@ -1194,7 +1194,7 @@ async function execTool(
       }
       return {
         ok: true, requested: true, executed: false,
-        note: "Solicitud de reagenda registrada para RECEPCIÓN. Informa al cliente que recepción revisará su solicitud y le confirmará en breve. NUNCA afirmes que la cita ya fue reagendada.",
+        note: "Solicitud de reagendamiento registrada para RECEPCIÓN. Responde al cliente EXACTAMENTE con este texto, palabra por palabra y sin agregar nada más: \"Tu solicitud de reagendamiento fue recibida. Recepción revisará tu caso y continuará con el proceso.\" NUNCA afirmes que la cita ya fue reagendada.",
       }
     }
     case "cancel_my_booking": {
@@ -1223,7 +1223,7 @@ async function execTool(
       }
       return {
         ok: true, requested: true, executed: false,
-        note: "Solicitud de cancelación registrada para RECEPCIÓN. Informa al cliente que recepción revisará su solicitud y le confirmará. NUNCA afirmes que la cita ya fue cancelada.",
+        note: "Solicitud de cancelación registrada para RECEPCIÓN. Responde al cliente EXACTAMENTE con este texto, palabra por palabra y sin agregar nada más: \"Tu solicitud de cancelación fue recibida. Recepción revisará tu caso y continuará con el proceso.\" NUNCA afirmes que la cita ya fue cancelada.",
       }
     }
     case "create_gift_card_checkout": {
